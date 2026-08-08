@@ -11,6 +11,7 @@
 #include <NetworkClientSecure.h>
 #include <Update.h>
 #include <mbedtls/sha256.h>
+#include <esp_timer.h>
 #include <time.h>
 #include "driver/temperature_sensor.h"
 #include "esp_ota_ops.h"
@@ -31,7 +32,7 @@ SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 
 namespace Milestone {
 
-constexpr char FIRMWARE_VERSION[] = "1.5.5";
+constexpr char FIRMWARE_VERSION[] = "1.5.6";
 constexpr char AP_SSID[] = "MILESTONE-D1-SETUP";
 constexpr char HOSTNAME[] = "milestone-d1";
 constexpr char PREFS_NS[] = "milestone";
@@ -252,6 +253,7 @@ bool ntpFailed = false;
 volatile bool ntpSyncEvent = false;
 bool savedWifiScanActive = false;
 bool savedWifiScanCompleted = false;
+bool portalWifiScanActive = false;
 bool savedWifiPreserveAp = false;
 uint8_t activeWifiIndex = NO_WIFI_INDEX;
 uint8_t wifiCandidateOrder[MAX_SAVED_NETWORKS] = {};
@@ -300,6 +302,7 @@ uint32_t scrollStartedMs = 0;
 uint32_t lastDdayCalcMs = 0;
 uint32_t lastLedMs = 0;
 uint32_t savedWifiScanDeadlineMs = 0;
+uint32_t portalWifiScanDeadlineMs = 0;
 uint32_t lastTemperatureReadMs = 0;
 uint32_t temperatureSampleSequence = 0;
 uint32_t thermalProcessedSequence = 0;
@@ -328,6 +331,10 @@ uint32_t viewSaveDueMs = 0;
 bool resetConfirmation = false;
 uint32_t resetConfirmStartedMs = 0;
 bool resetConfirmPressEligible = false;
+uint64_t cachedNightMinute = UINT64_MAX;
+bool cachedNightMode = false;
+int16_t appliedDisplayContrast = -1;
+uint32_t appliedLedColor = UINT32_MAX;
 
 String jsonEscape(const String &value) {
   String out;
@@ -362,6 +369,10 @@ bool elapsed(uint32_t now, uint32_t since, uint32_t period) {
 
 bool deadlineReached(uint32_t now, uint32_t deadline) {
   return static_cast<int32_t>(now - deadline) >= 0;
+}
+
+uint64_t uptimeSeconds() {
+  return static_cast<uint64_t>(esp_timer_get_time()) / 1000000ULL;
 }
 
 int clampInt(int value, int low, int high) {
@@ -803,13 +814,23 @@ bool isNightTime(const tm &local) {
   return minute >= config.nightStartMin || minute < config.nightEndMin;
 }
 
-uint8_t activeLedBrightness() {
-  uint8_t level = config.ledBrightness;
+void invalidateTimeDisplayCache() {
+  cachedNightMinute = UINT64_MAX;
+  appliedDisplayContrast = -1;
+}
+
+bool nightModeActive() {
+  if (!timeIsValid()) return false;
+  const uint64_t minute = static_cast<uint64_t>(time(nullptr)) / 60ULL;
+  if (minute == cachedNightMinute) return cachedNightMode;
   tm local{};
-  if (timeIsValid() && getLocalTime(&local, 10) && isNightTime(local)) {
-    level = config.ledNightLevel;
-  }
-  return level;
+  cachedNightMode = getLocalTime(&local, 10) && isNightTime(local);
+  cachedNightMinute = minute;
+  return cachedNightMode;
+}
+
+uint8_t activeLedBrightness() {
+  return nightModeActive() ? config.ledNightLevel : config.ledBrightness;
 }
 
 uint8_t ledPulse(uint32_t periodMs, uint8_t minimum = 72) {
@@ -862,7 +883,10 @@ void writeStatusLed(uint8_t red, uint8_t green, uint8_t blue, uint8_t animationS
   red = static_cast<uint8_t>((static_cast<uint32_t>(red) * brightness * animationScale) / 65025UL);
   green = static_cast<uint8_t>((static_cast<uint32_t>(green) * brightness * animationScale) / 65025UL);
   blue = static_cast<uint8_t>((static_cast<uint32_t>(blue) * brightness * animationScale) / 65025UL);
-  statusLed.setPixelColor(0, statusLed.Color(red, green, blue));
+  const uint32_t color = statusLed.Color(red, green, blue);
+  if (color == appliedLedColor) return;
+  appliedLedColor = color;
+  statusLed.setPixelColor(0, color);
   statusLed.show();
 }
 
@@ -871,8 +895,7 @@ void processLed() {
   if (!elapsed(now, lastLedMs, LED_REFRESH_MS)) return;
   lastLedMs = now;
   if (!config.ledEnabled && !thermalWarning && !temperatureSensorFault && !thermalSafeMode) {
-    statusLed.clear();
-    statusLed.show();
+    writeStatusLed(0, 0, 0);
     return;
   }
 
@@ -949,10 +972,10 @@ void processLed() {
 
 void updateContrast() {
   if (!oledReady) return;
-  tm local{};
-  uint8_t level = config.brightness;
-  if (timeIsValid() && getLocalTime(&local, 10) && isNightTime(local)) level = config.nightLevel;
+  const uint8_t level = nightModeActive() ? config.nightLevel : config.brightness;
+  if (appliedDisplayContrast == level) return;
   display.setContrast(level);
+  appliedDisplayContrast = level;
 }
 
 void getBurninOffset(int8_t &x, int8_t &y) {
@@ -1310,8 +1333,7 @@ void drawDdayView(bool withMessage, int8_t ox, int8_t oy) {
   tm local{};
   if (timeIsValid() && getLocalTime(&local, 20)) {
     char dateBuffer[20];
-    snprintf(dateBuffer, sizeof(dateBuffer), "%04d.%02d.%02d", local.tm_year + 1900,
-             local.tm_mon + 1, local.tm_mday);
+    strftime(dateBuffer, sizeof(dateBuffer), "%Y.%m.%d", &local);
     display.setFont(u8g2_font_unifont_t_korean2);
     drawCenteredUtf8(String(dateBuffer) + " " + weekdayKorean(local.tm_wday), 92 + oy, ox);
     String clockLine = formatTimeLine(false);
@@ -1368,7 +1390,7 @@ void drawClockOnly(int8_t ox, int8_t oy) {
   if (display.getUTF8Width(clock.c_str()) > 126) display.setFont(u8g2_font_6x10_tf);
   drawCenteredUtf8(clock, 61 + oy, ox);
   char dateBuffer[20];
-  snprintf(dateBuffer, sizeof(dateBuffer), "%04d.%02d.%02d", local.tm_year + 1900, local.tm_mon + 1, local.tm_mday);
+  strftime(dateBuffer, sizeof(dateBuffer), "%Y.%m.%d", &local);
   display.setFont(u8g2_font_6x10_tf);
   int dateWidth = display.getStrWidth(dateBuffer);
   display.drawStr((128 - dateWidth) / 2 + ox, 83 + oy, dateBuffer);
@@ -1382,8 +1404,7 @@ void drawMessageClock(int8_t ox, int8_t oy) {
     tm local{};
     if (getLocalTime(&local, 20)) {
       char dateBuffer[16];
-      snprintf(dateBuffer, sizeof(dateBuffer), "%04d.%02d.%02d", local.tm_year + 1900,
-               local.tm_mon + 1, local.tm_mday);
+      strftime(dateBuffer, sizeof(dateBuffer), "%Y.%m.%d", &local);
       dateTitle = dateBuffer;
     }
   }
@@ -1428,7 +1449,7 @@ void drawDashboard(int8_t ox, int8_t oy) {
     display.setFont(config.showSeconds ? u8g2_font_6x10_tf : u8g2_font_logisoso20_tf);
     drawCenteredUtf8(formatTimeLine(false), 72 + oy, ox);
     char dateBuffer[20];
-    snprintf(dateBuffer, sizeof(dateBuffer), "%04d.%02d.%02d", local.tm_year + 1900, local.tm_mon + 1, local.tm_mday);
+    strftime(dateBuffer, sizeof(dateBuffer), "%Y.%m.%d", &local);
     display.setFont(u8g2_font_unifont_t_korean2);
     drawCenteredUtf8(String(dateBuffer) + " " + weekdayKorean(local.tm_wday), 96 + oy, ox);
   } else {
@@ -1454,12 +1475,13 @@ void formatByteCount(uint32_t bytes, char *output, size_t outputSize) {
 }
 
 void formatUptime(char *output, size_t outputSize) {
-  const uint32_t totalSeconds = millis() / 1000UL;
-  const uint32_t days = totalSeconds / 86400UL;
+  const uint64_t totalSeconds = uptimeSeconds();
+  const uint64_t days = totalSeconds / 86400ULL;
   const uint8_t hours = (totalSeconds / 3600UL) % 24UL;
   const uint8_t minutes = (totalSeconds / 60UL) % 60UL;
   const uint8_t seconds = totalSeconds % 60UL;
-  snprintf(output, outputSize, "%lud %02u:%02u:%02u", static_cast<unsigned long>(days), hours, minutes, seconds);
+  snprintf(output, outputSize, "%llud %02u:%02u:%02u", static_cast<unsigned long long>(days),
+           hours, minutes, seconds);
 }
 
 void formatEpochShort(uint64_t epoch, char *output, size_t outputSize) {
@@ -1546,13 +1568,8 @@ void drawDeviceInfo(int8_t ox, int8_t oy) {
     drawDeviceInfoLine(83, "MIN", value, ox, oy);
     formatByteCount(ESP.getMaxAllocHeap(), value, sizeof(value));
     drawDeviceInfoLine(101, "BLOCK", value, ox, oy);
-    const uint32_t psramSize = ESP.getPsramSize();
-    if (psramSize == 0) snprintf(value, sizeof(value), "NOT PRESENT");
-    else {
-      formatByteCount(ESP.getFreePsram(), bytes, sizeof(bytes));
-      snprintf(value, sizeof(value), "%s FREE", bytes);
-    }
-    drawDeviceInfoLine(119, "PSRAM", value, ox, oy);
+    formatByteCount(uxTaskGetStackHighWaterMark(nullptr), value, sizeof(value));
+    drawDeviceInfoLine(119, "STACK", value, ox, oy);
   } else if (page == 2) {
     drawDeviceInfoHeader("STORAGE", page, ox, oy);
     formatByteCount(ESP.getFlashChipSize(), value, sizeof(value));
@@ -1805,8 +1822,11 @@ void ntpTimeAvailable(struct timeval *) {
   ntpSyncEvent = true;
 }
 
+void cancelPortalWifiScan();
+
 void beginNtpRequest() {
   if (WiFi.status() != WL_CONNECTED) return;
+  cancelPortalWifiScan();
   ntpSyncEvent = false;
   ntpFailed = false;
   ntpRequestActive = true;
@@ -1821,12 +1841,21 @@ void markNtpSuccess() {
   ntpFailed = false;
   config.lastSync = static_cast<uint64_t>(time(nullptr));
   prefs.putULong64("last_sync", config.lastSync);
+  invalidateTimeDisplayCache();
   int days;
   computeDday(days, true);
   logLine("NTP synchronized");
 }
 
+void cancelPortalWifiScan() {
+  if (!portalWifiScanActive) return;
+  WiFi.scanDelete();
+  portalWifiScanActive = false;
+  portalWifiScanDeadlineMs = 0;
+}
+
 void beginStationConnection(const String &ssid, const String &password, bool preserveAp) {
+  cancelPortalWifiScan();
   stopMdns();
   internetVerified = false;
   ntpFailed = false;
@@ -1964,6 +1993,7 @@ void startPortal() {
 
 void stopPortal() {
   if (!portalActive) return;
+  cancelPortalWifiScan();
   dnsServer.stop();
   server.stop();
   WiFi.softAPdisconnect(true);
@@ -2005,8 +2035,19 @@ bool requireSetupApRequest(bool jsonResponse = true) {
 
 bool validToken() {
   if (!server.hasHeader("Cookie")) return false;
-  String expected = String("MILESTONE_TOKEN=") + sessionToken;
-  return server.header("Cookie").indexOf(expected) >= 0;
+  const String expected = String("MILESTONE_TOKEN=") + sessionToken;
+  const String cookies = server.header("Cookie");
+  int start = 0;
+  while (start <= static_cast<int>(cookies.length())) {
+    int end = cookies.indexOf(';', start);
+    if (end < 0) end = cookies.length();
+    String cookie = cookies.substring(start, end);
+    cookie.trim();
+    if (cookie == expected) return true;
+    if (end == static_cast<int>(cookies.length())) break;
+    start = end + 1;
+  }
+  return false;
 }
 
 void sendJson(int status, const String &json) {
@@ -2163,6 +2204,7 @@ void deferFirmwareInstall(const String &reason) {
 }
 
 bool prepareUpdateNetworkRequest(const char *resource) {
+  cancelPortalWifiScan();
   IPAddress address;
   if (WiFi.hostByName(UPDATE_GITHUB_HOST, address) != 1) {
     failFirmwareUpdate(String(resource) + " DNS failed");
@@ -2347,6 +2389,8 @@ bool installFirmwareUpdate() {
   // pauses HTTP status polling, but it must not disconnect the user at start.
   stopMdns();
   WiFi.scanDelete();
+  portalWifiScanActive = false;
+  portalWifiScanDeadlineMs = 0;
   WiFi.setSleep(false);
   updatePromptVisible = false;
   updateDownloadedBytes = 0;
@@ -2475,11 +2519,14 @@ void handleStatus() {
   else wifiLabel = "disconnected";
   String ip = portalActive ? WiFi.softAPIP().toString() : (WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString() : "");
   String json = "{";
+  json.reserve(768);
   json += "\"firmware\":\"" + String(FIRMWARE_VERSION) + "\",";
   json += "\"state\":\"" + String(runtimeStateName(runtimeState)) + "\",";
   json += "\"wifi\":\"" + jsonEscape(wifiLabel) + "\",";
   json += "\"ip\":\"" + jsonEscape(ip) + "\",";
-  json += "\"uptime_sec\":" + String(millis() / 1000UL) + ",";
+  char uptimeText[24];
+  snprintf(uptimeText, sizeof(uptimeText), "%llu", static_cast<unsigned long long>(uptimeSeconds()));
+  json += "\"uptime_sec\":" + String(uptimeText) + ",";
   json += "\"cpu_mhz\":" + String(getCpuFrequencyMhz()) + ",";
   if (isnan(chipTemperatureC)) json += "\"temperature_c\":null,";
   else json += "\"temperature_c\":" + String(chipTemperatureC, 1) + ",";
@@ -2488,8 +2535,6 @@ void handleStatus() {
   json += "\"heap_min\":" + String(ESP.getMinFreeHeap()) + ",";
   json += "\"heap_largest\":" + String(ESP.getMaxAllocHeap()) + ",";
   json += "\"stack_free\":" + String(uxTaskGetStackHighWaterMark(nullptr)) + ",";
-  json += "\"psram_total\":" + String(ESP.getPsramSize()) + ",";
-  json += "\"psram_free\":" + String(ESP.getFreePsram()) + ",";
   json += "\"flash_total\":" + String(ESP.getFlashChipSize()) + ",";
   json += "\"sketch_size\":" + String(ESP.getSketchSize()) + ",";
   json += "\"ota_free\":" + String(ESP.getFreeSketchSpace()) + ",";
@@ -2512,6 +2557,7 @@ void handleStatus() {
 void handleGetConfig() {
   if (!requireSetupApRequest()) return;
   String json = "{";
+  json.reserve(1024);
   String preferredSsid = config.savedNetworkCount > 0 ? config.savedNetworks[0].ssid : "";
   json += "\"wifi_ssid\":\"" + jsonEscape(preferredSsid) + "\",";
   json += "\"saved_networks\":[";
@@ -2563,6 +2609,14 @@ void handleWifiScan() {
   }
   int count = WiFi.scanComplete();
   if (count == WIFI_SCAN_RUNNING) {
+    if (!portalWifiScanActive) {
+      portalWifiScanActive = true;
+      portalWifiScanDeadlineMs = millis() + WIFI_SCAN_TIMEOUT_MS;
+    } else if (deadlineReached(millis(), portalWifiScanDeadlineMs)) {
+      cancelPortalWifiScan();
+      sendJson(504, "{\"error\":\"Wi-Fi 검색 시간이 초과되었습니다. 다시 시도하세요.\"}");
+      return;
+    }
     sendJson(202, "{\"state\":\"scanning\"}");
     return;
   }
@@ -2573,12 +2627,18 @@ void handleWifiScan() {
       sendJson(500, "{\"error\":\"Wi-Fi 검색을 시작하지 못했습니다.\"}");
       return;
     }
+    portalWifiScanActive = true;
+    portalWifiScanDeadlineMs = millis() + WIFI_SCAN_TIMEOUT_MS;
     sendJson(202, "{\"state\":\"scanning\"}");
     return;
   }
+  portalWifiScanActive = false;
+  portalWifiScanDeadlineMs = 0;
   String json = "{\"networks\":[";
+  json.reserve(2048);
   bool first = true;
-  for (int i = 0; i < count; ++i) {
+  const int resultCount = min(count, 40);
+  for (int i = 0; i < resultCount; ++i) {
     String ssid = WiFi.SSID(i);
     if (ssid.length() == 0) continue;
     if (!first) json += ',';
@@ -2591,8 +2651,32 @@ void handleWifiScan() {
   sendJson(200, json);
 }
 
-bool argBool(const char *name) {
-  return server.hasArg(name) && (server.arg(name) == "1" || server.arg(name) == "true" || server.arg(name) == "on");
+bool parseUintArg(const char *name, uint32_t &value) {
+  if (!server.hasArg(name)) return false;
+  const String text = server.arg(name);
+  if (text.length() == 0) return false;
+  uint64_t parsed = 0;
+  for (size_t i = 0; i < text.length(); ++i) {
+    if (!isDigit(text[i])) return false;
+    parsed = parsed * 10ULL + static_cast<uint8_t>(text[i] - '0');
+    if (parsed > UINT32_MAX) return false;
+  }
+  value = static_cast<uint32_t>(parsed);
+  return true;
+}
+
+bool parseBoolArg(const char *name, bool &value) {
+  if (!server.hasArg(name)) return false;
+  const String text = server.arg(name);
+  if (text == "0") {
+    value = false;
+    return true;
+  }
+  if (text == "1") {
+    value = true;
+    return true;
+  }
+  return false;
 }
 
 bool allowedValue(uint32_t value, const uint32_t *allowed, size_t count) {
@@ -2603,31 +2687,47 @@ bool allowedValue(uint32_t value, const uint32_t *allowed, size_t count) {
 void handlePostConfig() {
   if (!requireSetupApRequest()) return;
   if (!validToken()) return sendJson(403, "{\"error\":\"유효하지 않은 세션 토큰입니다.\"}");
+  if (!server.hasArg("title") || !server.hasArg("target") || !server.hasArg("message") ||
+      !server.hasArg("cycle_order")) {
+    return sendJson(400, "{\"error\":\"필수 설정 항목이 누락되었습니다.\"}");
+  }
   Config next = config;
   next.title = server.arg("title");
   next.target = server.arg("target");
   next.message = server.arg("message");
-  int mode = server.arg("mode").toInt();
-  int cycleMask = server.arg("cycle_mask").toInt();
-  int cycleInterval = server.arg("cycle_interval").toInt();
-  int scrollSpeed = server.arg("scroll_speed").toInt();
-  int brightness = server.arg("brightness").toInt();
-  int nightLevel = server.arg("night_level").toInt();
-  int ledBrightness = server.arg("led_brightness").toInt();
-  int ledNightLevel = server.arg("led_night_level").toInt();
-  int nightStart = server.arg("night_start").toInt();
-  int nightEnd = server.arg("night_end").toInt();
-  int screenOff = server.arg("screen_off").toInt();
-  uint32_t ntpPeriod = static_cast<uint32_t>(server.arg("ntp_period").toInt());
-  uint32_t ddayPeriod = static_cast<uint32_t>(server.arg("dday_period").toInt());
-  uint32_t retryPeriod = static_cast<uint32_t>(server.arg("retry_period").toInt());
+  uint32_t mode, cycleMask, cycleInterval, scrollSpeed, brightness, nightLevel;
+  uint32_t ledBrightness, ledNightLevel, nightStart, nightEnd, screenOff;
+  uint32_t ntpPeriod, ddayPeriod, retryPeriod;
+  bool ddayTextStyle, afterComplete, messageLeft, messageScroll, hour24, showSeconds;
+  bool showChipTemperature, bootSync, wifiSleep, ledEnabled, burninShift;
+  if (!parseUintArg("mode", mode) || !parseUintArg("cycle_mask", cycleMask) ||
+      !parseUintArg("cycle_interval", cycleInterval) || !parseUintArg("scroll_speed", scrollSpeed) ||
+      !parseUintArg("brightness", brightness) || !parseUintArg("night_level", nightLevel) ||
+      !parseUintArg("led_brightness", ledBrightness) || !parseUintArg("led_night_level", ledNightLevel) ||
+      !parseUintArg("night_start", nightStart) || !parseUintArg("night_end", nightEnd) ||
+      !parseUintArg("screen_off", screenOff) || !parseUintArg("ntp_period", ntpPeriod) ||
+      !parseUintArg("dday_period", ddayPeriod) || !parseUintArg("retry_period", retryPeriod) ||
+      !parseBoolArg("dday_style", ddayTextStyle) || !parseBoolArg("after_mode", afterComplete) ||
+      !parseBoolArg("msg_align", messageLeft) || !parseBoolArg("msg_scroll", messageScroll) ||
+      !parseBoolArg("hour24", hour24) || !parseBoolArg("show_seconds", showSeconds) ||
+      !parseBoolArg("show_temp", showChipTemperature) || !parseBoolArg("boot_sync", bootSync) ||
+      !parseBoolArg("wifi_sleep", wifiSleep) || !parseBoolArg("led_enabled", ledEnabled) ||
+      !parseBoolArg("burnin", burninShift)) {
+    return sendJson(400, "{\"error\":\"설정 값이 누락되었거나 숫자·선택 형식이 잘못되었습니다.\"}");
+  }
   int year, month, day;
   if (utf8Codepoints(next.title) > 24 || next.title.length() > 96 || next.title.length() == 0) return sendJson(400, "{\"error\":\"목표 이름은 1~24자여야 합니다.\"}");
   if (utf8Codepoints(next.message) > 60 || next.message.length() > 240) return sendJson(400, "{\"error\":\"문구는 60자 이하여야 합니다.\"}");
   if (!parseDate(next.target, year, month, day)) return sendJson(400, "{\"error\":\"목표 날짜 형식이 잘못되었습니다.\"}");
-  if (mode < 0 || mode > 7) return sendJson(400, "{\"error\":\"표시 모드가 잘못되었습니다.\"}");
+  if (mode > 7) return sendJson(400, "{\"error\":\"표시 모드가 잘못되었습니다.\"}");
   if (cycleMask < 1 || cycleMask > 127) return sendJson(400, "{\"error\":\"순환 화면을 하나 이상 선택하세요.\"}");
   if (!(cycleInterval == 0 || (cycleInterval >= 3 && cycleInterval <= 60))) return sendJson(400, "{\"error\":\"자동 전환은 0초 또는 3~60초여야 합니다.\"}");
+  if (scrollSpeed < 5 || scrollSpeed > 80 || brightness < 1 || brightness > 255 ||
+      nightLevel < 1 || nightLevel > 255 || ledBrightness < 1 || ledBrightness > 64 ||
+      ledNightLevel < 1 || ledNightLevel > 32 || nightStart > 1439 || nightEnd > 1439 ||
+      screenOff > 1440) {
+    return sendJson(400, "{\"error\":\"밝기·시간·스크롤 설정 범위를 확인하세요.\"}");
+  }
   uint8_t parsedOrder[VIEW_COUNT];
   if (!parseCycleOrder(server.arg("cycle_order"), parsedOrder)) return sendJson(400, "{\"error\":\"순환 순서는 0~6을 중복 없이 입력하세요.\"}");
   const uint32_t allowedNtp[] = {0, 3600, 10800, 21600, 43200, 86400};
@@ -2635,31 +2735,31 @@ void handlePostConfig() {
   const uint32_t allowedRetry[] = {60, 300, 900, 1800};
   if (!allowedValue(ntpPeriod, allowedNtp, 6) || !allowedValue(ddayPeriod, allowedDday, 5) || !allowedValue(retryPeriod, allowedRetry, 4)) return sendJson(400, "{\"error\":\"동기화·디데이·재시도 주기가 잘못되었습니다.\"}");
   next.mode = static_cast<TopMode>(mode);
-  next.ddayTextStyle = server.arg("dday_style") == "1";
-  next.afterComplete = server.arg("after_mode") == "1";
-  next.messageLeft = server.arg("msg_align") == "1";
-  next.messageScroll = argBool("msg_scroll");
-  next.scrollSpeed = clampInt(scrollSpeed, 5, 80);
-  next.hour24 = server.arg("hour24") != "0";
-  next.showSeconds = server.arg("show_seconds") == "1";
-  next.showChipTemperature = argBool("show_temp");
-  next.bootSync = argBool("boot_sync");
+  next.ddayTextStyle = ddayTextStyle;
+  next.afterComplete = afterComplete;
+  next.messageLeft = messageLeft;
+  next.messageScroll = messageScroll;
+  next.scrollSpeed = static_cast<uint8_t>(scrollSpeed);
+  next.hour24 = hour24;
+  next.showSeconds = showSeconds;
+  next.showChipTemperature = showChipTemperature;
+  next.bootSync = bootSync;
   next.ntpPeriodSec = ntpPeriod;
   next.ddayPeriodSec = ddayPeriod;
   next.retryPeriodSec = retryPeriod;
-  next.wifiSleep = argBool("wifi_sleep");
-  next.brightness = clampInt(brightness, 1, 255);
-  next.nightLevel = clampInt(nightLevel, 1, 255);
-  next.ledEnabled = argBool("led_enabled");
-  next.ledBrightness = clampInt(ledBrightness, 1, 64);
-  next.ledNightLevel = clampInt(ledNightLevel, 1, 32);
-  next.nightStartMin = clampInt(nightStart, 0, 1439);
-  next.nightEndMin = clampInt(nightEnd, 0, 1439);
-  next.burninShift = argBool("burnin");
-  next.screenOffMin = clampInt(screenOff, 0, 1440);
-  next.cycleMask = cycleMask;
+  next.wifiSleep = wifiSleep;
+  next.brightness = static_cast<uint8_t>(brightness);
+  next.nightLevel = static_cast<uint8_t>(nightLevel);
+  next.ledEnabled = ledEnabled;
+  next.ledBrightness = static_cast<uint8_t>(ledBrightness);
+  next.ledNightLevel = static_cast<uint8_t>(ledNightLevel);
+  next.nightStartMin = static_cast<uint16_t>(nightStart);
+  next.nightEndMin = static_cast<uint16_t>(nightEnd);
+  next.burninShift = burninShift;
+  next.screenOffMin = static_cast<uint16_t>(screenOff);
+  next.cycleMask = static_cast<uint8_t>(cycleMask);
   memcpy(next.cycleOrder, parsedOrder, sizeof(parsedOrder));
-  next.cycleIntervalSec = cycleInterval;
+  next.cycleIntervalSec = static_cast<uint8_t>(cycleInterval);
   config = next;
   currentCycleIndex = config.cycleIndex;
   if (config.mode == TopMode::SELECTED_CYCLE) {
@@ -2671,6 +2771,8 @@ void handlePostConfig() {
   if (currentView == View::DEVICE_INFO) deviceInfoStartedMs = millis();
   saveConfigAll();
   lastTemperatureReadMs = 0;
+  invalidateTimeDisplayCache();
+  appliedLedColor = UINT32_MAX;
   scrollStartedMs = millis();
   lastCycleMs = millis();
   wakeDisplay();
@@ -2752,6 +2854,8 @@ void handleSettingsReset() {
   lastCycleMs = millis();
   lastInteractionMs = millis();
   lastTemperatureReadMs = 0;
+  invalidateTimeDisplayCache();
+  appliedLedColor = UINT32_MAX;
   wakeDisplay();
   updateContrast();
   logLine("display, time, and LED settings restored to defaults; saved Wi-Fi retained");
@@ -3051,6 +3155,17 @@ void processNetwork() {
       startSavedWifiSequence(false);
     }
   }
+
+  const bool updateRetryDue = nextUpdateRetryMs != 0 && deadlineReached(now, nextUpdateRetryMs);
+  const bool updateCanPause = updateState == UpdateState::IDLE || updateState == UpdateState::AVAILABLE;
+  if (config.wifiSleep && runtimeState == RuntimeState::RUNNING_ONLINE &&
+      WiFi.status() == WL_CONNECTED && !portalActive && !ntpRequestActive &&
+      pendingUpdateCheckReason == UpdateCheckReason::NONE && !updateInstallRequested &&
+      !updatePromptVisible && updateCanPause && !bootUpdateCheckPending &&
+      !updateCheckAfterNetworkReady && !firmwareUpdateCheckDue() && !updateRetryDue) {
+    wifiSleepDeferredForUpdate = false;
+    enterWifiSleep();
+  }
 }
 
 void processFirmwareUpdate() {
@@ -3139,6 +3254,8 @@ void enterThermalSafeMode(bool sensorFault = false) {
   pendingSsid = "";
   pendingPass = "";
   savedWifiScanActive = false;
+  portalWifiScanActive = false;
+  portalWifiScanDeadlineMs = 0;
   WiFi.scanDelete();
   if (!thermalThrottled) {
     thermalThrottled = setCpuFrequencyMhz(THERMAL_THROTTLE_CPU_MHZ);
@@ -3429,12 +3546,11 @@ void setupFirmware() {
   writeStatusLed(40, 255, 180);
   delay(250);
   logLine(String("booting firmware ") + FIRMWARE_VERSION);
-  Serial.printf("[MILESTONE] reset=%s (%d), heap=%lu, min_heap=%lu, largest=%lu, psram=%lu\n",
+  Serial.printf("[MILESTONE] reset=%s (%d), heap=%lu, min_heap=%lu, largest=%lu\n",
                 resetReasonName(esp_reset_reason()), static_cast<int>(esp_reset_reason()),
                 static_cast<unsigned long>(ESP.getFreeHeap()),
                 static_cast<unsigned long>(ESP.getMinFreeHeap()),
-                static_cast<unsigned long>(ESP.getMaxAllocHeap()),
-                static_cast<unsigned long>(ESP.getFreePsram()));
+                static_cast<unsigned long>(ESP.getMaxAllocHeap()));
   // ESP32 requires the STA hostname to be set before Wi-Fi is started.
   WiFi.setHostname(HOSTNAME);
   pinMode(PIN_BOOT, INPUT_PULLUP);
