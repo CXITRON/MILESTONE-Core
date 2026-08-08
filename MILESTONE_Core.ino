@@ -70,7 +70,7 @@ constexpr uint32_t UPDATE_RETRY_MS = 6UL * 60UL * 60UL * 1000UL;
 constexpr uint32_t UPDATE_HTTP_TIMEOUT_MS = 15UL * 1000UL;
 constexpr uint32_t UPDATE_DOWNLOAD_STALL_MS = 20UL * 1000UL;
 constexpr size_t UPDATE_MANIFEST_MAX_BYTES = 2048;
-constexpr size_t UPDATE_DOWNLOAD_BUFFER_BYTES = 4096;
+constexpr size_t UPDATE_DOWNLOAD_BUFFER_BYTES = 2048;
 constexpr uint32_t UPDATE_MIN_FREE_HEAP = 55000;
 constexpr uint32_t UPDATE_MIN_LARGEST_BLOCK = 32768;
 constexpr float THERMAL_WARNING_C = 70.0f;
@@ -254,6 +254,7 @@ String latestFirmwareVersion;
 String latestFirmwareSha256;
 String latestFirmwareNotes;
 String updateError;
+String lastOtaResult;
 uint32_t latestFirmwareSize = 0;
 uint32_t updateDownloadedBytes = 0;
 uint32_t updatePromptStartedMs = 0;
@@ -266,6 +267,10 @@ bool updateCheckAfterNetworkReady = false;
 bool updatePromptVisible = false;
 bool updateInstallRequested = false;
 bool wifiSleepDeferredForUpdate = false;
+
+// Keep the OTA transfer buffer out of loopTask's limited stack. TLS, HTTPClient,
+// SHA-256 and String locals already consume a substantial part of that stack.
+uint8_t updateDownloadBuffer[UPDATE_DOWNLOAD_BUFFER_BYTES];
 
 uint32_t stateStartedMs = 0;
 uint32_t bootSplashStartedMs = 0;
@@ -1538,7 +1543,9 @@ void drawDeviceInfo(int8_t ox, int8_t oy) {
     drawDeviceInfoLine(29, "CLOCK", timeIsValid() ? "VALID" : "NOT SET", ox, oy);
     formatEpochShort(config.lastSync, value, sizeof(value));
     drawDeviceInfoLine(45, "SYNC", value, ox, oy);
-    drawDeviceInfoLine(61, "OTA", updateStateName(updateState), ox, oy);
+    String otaSummary = String(updateStateName(updateState));
+    if (lastOtaResult.length()) otaSummary += "/" + lastOtaResult;
+    drawDeviceInfoLine(61, "OTA", otaSummary.c_str(), ox, oy);
     drawDeviceInfoLine(77, "LATEST", latestFirmwareVersion.length() ? latestFirmwareVersion.c_str() : "UNKNOWN", ox, oy);
     formatEpochShort(lastUpdateCheckEpoch, value, sizeof(value));
     drawDeviceInfoLine(93, "CHECK", value, ox, oy);
@@ -1695,6 +1702,11 @@ void drawMainScreen() {
     drawBootSplashFrame();
     return;
   }
+  if (updateState == UpdateState::DOWNLOADING || updateState == UpdateState::VERIFYING ||
+      updateState == UpdateState::READY_TO_REBOOT || updateState == UpdateState::ERROR_STATE) {
+    drawUpdateScreen();
+    return;
+  }
   if (portalActive) {
     drawPortalScreen();
     return;
@@ -1702,9 +1714,7 @@ void drawMainScreen() {
   if (updateState == UpdateState::CURRENT && updateCurrentVisibleMs == 0) {
     updateCurrentVisibleMs = millis();
   }
-  if (updateState == UpdateState::CHECKING || updateState == UpdateState::DOWNLOADING ||
-      updateState == UpdateState::VERIFYING || updateState == UpdateState::READY_TO_REBOOT ||
-      updateState == UpdateState::CURRENT || updateState == UpdateState::ERROR_STATE ||
+  if (updateState == UpdateState::CHECKING || updateState == UpdateState::CURRENT ||
       (updateState == UpdateState::AVAILABLE && updatePromptVisible)) {
     drawUpdateScreen();
     return;
@@ -2077,11 +2087,24 @@ void setUpdateState(UpdateState state) {
   logLine(String("update state -> ") + updateStateName(state));
 }
 
+void clearOtaAttemptRecord() {
+  prefs.remove("ota_stage");
+  prefs.remove("ota_target");
+}
+
+void recordOtaStage(const char *stage) {
+  prefs.putString("ota_stage", stage);
+  logLine(String("OTA stage -> ") + stage);
+}
+
 void failFirmwareUpdate(const String &reason) {
   updateError = reason;
   updateInstallRequested = false;
   updatePromptVisible = false;
   nextUpdateRetryMs = millis() + UPDATE_RETRY_MS;
+  lastOtaResult = "failed";
+  prefs.putString("ota_result", lastOtaResult);
+  clearOtaAttemptRecord();
   setUpdateState(UpdateState::ERROR_STATE);
   logLine(String("firmware update failed: ") + reason);
 }
@@ -2216,7 +2239,7 @@ bool checkFirmwareManifest(UpdateCheckReason reason) {
   lastUpdateCheckEpoch = static_cast<uint64_t>(time(nullptr));
   prefs.putULong64("ota_last_ok", lastUpdateCheckEpoch);
   prefs.putString("ota_latest", latestFirmwareVersion);
-  prefs.putString("ota_result", "ok");
+  prefs.putString("ota_check", "ok");
   bootUpdateCheckPending = false;
   nextUpdateRetryMs = 0;
   updateError = "";
@@ -2238,17 +2261,6 @@ bool checkFirmwareManifest(UpdateCheckReason reason) {
   }
   logLine(String("firmware is current: ") + FIRMWARE_VERSION);
   return true;
-}
-
-void suspendPortalForFirmwareUpdate() {
-  if (!portalActive) return;
-  dnsServer.stop();
-  server.stop();
-  WiFi.softAPdisconnect(true);
-  portalActive = false;
-  portalClosingAfterSuccess = false;
-  wifiTestState = WifiTestState::IDLE;
-  if (WiFi.status() == WL_CONNECTED) WiFi.mode(WIFI_STA);
 }
 
 bool installFirmwareUpdate() {
@@ -2276,12 +2288,18 @@ bool installFirmwareUpdate() {
   }
   if (!prepareUpdateNetworkRequest("firmware")) return false;
 
-  suspendPortalForFirmwareUpdate();
+  // Keep the setup AP and the already loaded portal page alive until the
+  // verified image is ready to reboot. The synchronous transfer temporarily
+  // pauses HTTP status polling, but it must not disconnect the user at start.
   stopMdns();
   WiFi.scanDelete();
   WiFi.setSleep(false);
   updatePromptVisible = false;
   updateDownloadedBytes = 0;
+  lastOtaResult = "installing";
+  prefs.putString("ota_result", lastOtaResult);
+  prefs.putString("ota_target", latestFirmwareVersion);
+  recordOtaStage("starting");
   setUpdateState(UpdateState::DOWNLOADING);
   drawUpdateScreen();
 
@@ -2317,12 +2335,12 @@ bool installFirmwareUpdate() {
     failFirmwareUpdate(String("OTA begin: ") + Update.errorString());
     return false;
   }
+  recordOtaStage("downloading");
 
   mbedtls_sha256_context shaContext;
   mbedtls_sha256_init(&shaContext);
   mbedtls_sha256_starts(&shaContext, 0);
   NetworkClient *stream = http.getStreamPtr();
-  uint8_t buffer[UPDATE_DOWNLOAD_BUFFER_BYTES];
   uint32_t lastDataMs = millis();
   bool failed = false;
   String failure;
@@ -2330,11 +2348,11 @@ bool installFirmwareUpdate() {
     int available = stream->available();
     if (available > 0) {
       size_t remaining = latestFirmwareSize - updateDownloadedBytes;
-      size_t wanted = min(min(static_cast<size_t>(available), sizeof(buffer)), remaining);
-      int count = stream->read(buffer, wanted);
+      size_t wanted = min(min(static_cast<size_t>(available), sizeof(updateDownloadBuffer)), remaining);
+      int count = stream->read(updateDownloadBuffer, wanted);
       if (count <= 0) continue;
-      mbedtls_sha256_update(&shaContext, buffer, count);
-      if (Update.write(buffer, count) != static_cast<size_t>(count)) {
+      mbedtls_sha256_update(&shaContext, updateDownloadBuffer, count);
+      if (Update.write(updateDownloadBuffer, count) != static_cast<size_t>(count)) {
         failed = true;
         failure = String("OTA write: ") + Update.errorString();
         break;
@@ -2349,6 +2367,7 @@ bool installFirmwareUpdate() {
         failure = "temperature protection stopped update";
         break;
       }
+      delay(1);  // Feed loopTask/Wi-Fi watchdogs even while data is continuous.
     } else {
       if (!http.connected() || elapsed(millis(), lastDataMs, UPDATE_DOWNLOAD_STALL_MS)) {
         failed = true;
@@ -2369,6 +2388,7 @@ bool installFirmwareUpdate() {
     failFirmwareUpdate(failure.length() ? failure : "firmware length mismatch");
     return false;
   }
+  recordOtaStage("verifying");
   setUpdateState(UpdateState::VERIFYING);
   drawUpdateScreen();
   if (!sha256Hex(digest).equalsIgnoreCase(latestFirmwareSha256)) {
@@ -2381,7 +2401,9 @@ bool installFirmwareUpdate() {
     return false;
   }
 
-  prefs.putString("ota_result", "installed");
+  lastOtaResult = "installed";
+  prefs.putString("ota_result", lastOtaResult);
+  recordOtaStage("rebooting");
   setUpdateState(UpdateState::READY_TO_REBOOT);
   drawUpdateScreen();
   processLed();
@@ -2427,6 +2449,7 @@ void handleStatus() {
                                     ? static_cast<uint32_t>((updateDownloadedBytes * 100ULL) / latestFirmwareSize) : 0;
   json += "\"update_progress\":" + String(updateProgress) + ",";
   json += "\"update_error\":\"" + jsonEscape(updateError) + "\",";
+  json += "\"last_ota_result\":\"" + jsonEscape(lastOtaResult) + "\",";
   json += "\"last_update_check\":\"" + jsonEscape(formatEpoch(lastUpdateCheckEpoch)) + "\"}";
   sendJson(200, json);
 }
@@ -3335,6 +3358,21 @@ void setupFirmware() {
   sntp_set_time_sync_notification_cb(ntpTimeAvailable);
 
   prefs.begin(PREFS_NS, false);
+  lastOtaResult = prefs.getString("ota_result", "");
+  const String previousOtaStage = prefs.getString("ota_stage", "");
+  const String previousOtaTarget = prefs.getString("ota_target", "");
+  if (previousOtaStage.length()) {
+    if (previousOtaStage == "rebooting" && previousOtaTarget == FIRMWARE_VERSION) {
+      lastOtaResult = "installed";
+      logLine(String("OTA boot confirmed: ") + FIRMWARE_VERSION);
+    } else {
+      lastOtaResult = String("interrupted-") + previousOtaStage;
+      logLine(String("previous OTA interrupted at ") + previousOtaStage +
+              " target=" + previousOtaTarget + " reset=" + resetReasonName(esp_reset_reason()));
+    }
+    prefs.putString("ota_result", lastOtaResult);
+    clearOtaAttemptRecord();
+  }
   bool provisioned = loadConfig() && config.savedNetworkCount > 0;
   lastUpdateCheckEpoch = prefs.getULong64("ota_last_ok", 0);
   latestFirmwareVersion = prefs.getString("ota_latest", "");
