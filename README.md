@@ -168,6 +168,8 @@ https://github.com/CXITRON/MILESTONE-Core
 
 업데이트 파일은 HTTPS 인증서로 서버를 검증하고, manifest에 기록된 크기와 SHA-256이 모두 일치해야만 다음 부팅 펌웨어로 확정됩니다. HTTP로 낮아지는 주소, 비정상 manifest, 용량 부족, RAM 부족, 연결 중단, 고온·온도 센서 오류 상태에서는 설치하지 않습니다.
 
+GitHub Release 자산 서버의 Let’s Encrypt 인증서 체인 검증을 위해 ISRG Root X1을 포함합니다. DNS, TLS, HTTP 요청 실패는 서로 구분해 화면과 설정 포털에 표시하며, 세부 TLS 오류와 요청 당시의 여유 RAM은 시리얼 로그에 기록합니다.
+
 Wi-Fi 절전을 사용해도 업데이트 확인 시에는 저장된 Wi-Fi에 잠시 연결하고, 작업이 끝나면 다시 절전 상태로 돌아갑니다. HTTPS 인증서의 유효기간을 확인하려면 정확한 시간이 필요하므로, 부팅 시간 동기화를 꺼 두었더라도 전원이 완전히 끊겨 시각이 유효하지 않으면 업데이트 확인을 위해 NTP를 한 번 수행합니다.
 
 ### Release 파일 만들기
@@ -248,6 +250,7 @@ release/MILESTONE_Core.json
 - 다운로드 중 연결 단절·과열·센서 오류 발생 시 기존 펌웨어를 유지하고 중단
 - 색상만이 아니라 점멸 횟수와 속도로 구별되는 업데이트 LED 상태 추가
 - 업데이트 manifest 자동 생성 스크립트와 Release 게시 절차 추가
+- GitHub Release 리디렉션 대상 검증용 ISRG Root X1 인증서와 DNS·TLS·HTTP 오류 진단 추가
 - 기존 설정 스키마, 저장된 Wi-Fi, 여섯 가지 화면을 그대로 유지
 - 기기 세부정보 화면은 OTA 검증용 1.5.1에서 추가 예정
 

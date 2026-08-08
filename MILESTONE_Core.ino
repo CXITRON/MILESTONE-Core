@@ -31,6 +31,7 @@ constexpr char PREFS_NS[] = "milestone";
 constexpr char UPDATE_MANIFEST_URL[] = "https://github.com/CXITRON/MILESTONE-Core/releases/latest/download/MILESTONE_Core.json";
 constexpr char UPDATE_RELEASE_BASE_URL[] = "https://github.com/CXITRON/MILESTONE-Core/releases/download/v";
 constexpr char UPDATE_ASSET_NAME[] = "MILESTONE_Core.bin";
+constexpr char UPDATE_GITHUB_HOST[] = "github.com";
 constexpr uint16_t CONFIG_VERSION = 5;
 constexpr uint8_t VIEW_COUNT = 6;
 constexpr uint8_t MAX_SAVED_NETWORKS = 8;
@@ -1872,6 +1873,34 @@ void failFirmwareUpdate(const String &reason) {
   logLine(String("firmware update failed: ") + reason);
 }
 
+bool prepareUpdateNetworkRequest(const char *resource) {
+  IPAddress address;
+  if (WiFi.hostByName(UPDATE_GITHUB_HOST, address) != 1) {
+    failFirmwareUpdate(String(resource) + " DNS failed");
+    return false;
+  }
+  logLine(String(resource) + " DNS " + address.toString() +
+          " heap=" + ESP.getFreeHeap() + " max=" + ESP.getMaxAllocHeap());
+  return true;
+}
+
+String describeHttpFailure(const char *resource, int response, NetworkClientSecure &secureClient) {
+  char tlsDetails[160] = {};
+  const int tlsError = secureClient.lastError(tlsDetails, sizeof(tlsDetails));
+  const String httpDetails = response < 0 ? HTTPClient::errorToString(response) : String();
+
+  String diagnostic = String(resource) + " request failed: code=" + response;
+  if (httpDetails.length()) diagnostic += " (" + httpDetails + ")";
+  diagnostic += " heap=" + String(ESP.getFreeHeap()) + " max=" + String(ESP.getMaxAllocHeap());
+  logLine(diagnostic);
+  if (tlsError != 0) {
+    logLine(String(resource) + " TLS " + tlsError + ": " + tlsDetails);
+    return String(resource) + " TLS failed";
+  }
+  if (response < 0 && httpDetails.length()) return String(resource) + " " + httpDetails;
+  return String(resource) + " HTTP " + response;
+}
+
 bool readBoundedHttpBody(HTTPClient &http, String &body, size_t maximumBytes) {
   const int contentLength = http.getSize();
   if (contentLength > static_cast<int>(maximumBytes)) return false;
@@ -1923,6 +1952,7 @@ bool checkFirmwareManifest(UpdateCheckReason reason) {
     failFirmwareUpdate("not enough internal RAM");
     return false;
   }
+  if (!prepareUpdateNetworkRequest("manifest")) return false;
 
   setUpdateState(UpdateState::CHECKING);
   drawUpdateScreen();
@@ -1942,8 +1972,9 @@ bool checkFirmwareManifest(UpdateCheckReason reason) {
   http.addHeader("User-Agent", String("MILESTONE-Core/") + FIRMWARE_VERSION);
   int response = http.GET();
   if (response != HTTP_CODE_OK) {
+    const String failure = describeHttpFailure("manifest", response, secureClient);
     http.end();
-    failFirmwareUpdate(String("manifest HTTP ") + response);
+    failFirmwareUpdate(failure);
     return false;
   }
   String manifest;
@@ -2025,6 +2056,7 @@ bool installFirmwareUpdate() {
     failFirmwareUpdate("OTA partition too small");
     return false;
   }
+  if (!prepareUpdateNetworkRequest("firmware")) return false;
 
   suspendPortalForFirmwareUpdate();
   stopMdns();
@@ -2051,8 +2083,9 @@ bool installFirmwareUpdate() {
   http.addHeader("User-Agent", String("MILESTONE-Core/") + FIRMWARE_VERSION);
   int response = http.GET();
   if (response != HTTP_CODE_OK) {
+    const String failure = describeHttpFailure("firmware", response, secureClient);
     http.end();
-    failFirmwareUpdate(String("firmware HTTP ") + response);
+    failFirmwareUpdate(failure);
     return false;
   }
   int responseSize = http.getSize();
