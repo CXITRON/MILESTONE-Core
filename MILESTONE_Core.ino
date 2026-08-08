@@ -1,0 +1,3100 @@
+#include <Arduino.h>
+#include <Wire.h>
+#include <U8g2lib.h>
+#include <WiFi.h>
+#include <WebServer.h>
+#include <DNSServer.h>
+#include <Preferences.h>
+#include <ESPmDNS.h>
+#include <Adafruit_NeoPixel.h>
+#include <HTTPClient.h>
+#include <NetworkClientSecure.h>
+#include <Update.h>
+#include <mbedtls/sha256.h>
+#include <time.h>
+#include "driver/temperature_sensor.h"
+#include "esp_sntp.h"
+
+#include "PortalPage.h"
+#include "UpdateCertificates.h"
+
+// CYTRON//MILESTONE — MILESTONE Core
+// Target: Waveshare ESP32-S3-Zero / ESP32-S3 Zero
+// OLED: SH1107 128x128 I2C, verified at 0x3C
+
+namespace Milestone {
+
+constexpr char FIRMWARE_VERSION[] = "1.5.0";
+constexpr char AP_SSID[] = "MILESTONE-D1-SETUP";
+constexpr char HOSTNAME[] = "milestone-d1";
+constexpr char PREFS_NS[] = "milestone";
+constexpr char UPDATE_MANIFEST_URL[] = "https://github.com/CXITRON/MILESTONE-Core/releases/latest/download/MILESTONE_Core.json";
+constexpr char UPDATE_RELEASE_BASE_URL[] = "https://github.com/CXITRON/MILESTONE-Core/releases/download/v";
+constexpr char UPDATE_ASSET_NAME[] = "MILESTONE_Core.bin";
+constexpr uint16_t CONFIG_VERSION = 5;
+constexpr uint8_t VIEW_COUNT = 6;
+constexpr uint8_t MAX_SAVED_NETWORKS = 8;
+constexpr uint8_t NO_WIFI_INDEX = 0xFF;
+
+constexpr uint8_t PIN_SDA = 8;
+constexpr uint8_t PIN_SCL = 9;
+constexpr uint8_t PIN_BOOT = 0;
+constexpr uint8_t PIN_RGB_LED = 21;
+constexpr uint8_t OLED_ADDR_PRIMARY = 0x3C;
+constexpr uint8_t OLED_ADDR_SECONDARY = 0x3D;
+
+constexpr uint32_t AP_TIMEOUT_MS = 10UL * 60UL * 1000UL;
+constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 20UL * 1000UL;
+constexpr uint32_t NTP_TIMEOUT_MS = 18UL * 1000UL;
+constexpr uint32_t PORTAL_SUCCESS_HOLD_MS = 3000UL;
+constexpr uint32_t DISPLAY_REFRESH_MS = 250UL;
+constexpr uint32_t BUTTON_DEBOUNCE_MS = 30UL;
+constexpr uint32_t RESET_CONFIRM_WINDOW_MS = 5000UL;
+constexpr uint32_t RESET_CONFIRM_HOLD_MS = 3000UL;
+constexpr uint32_t LED_REFRESH_MS = 20UL;
+constexpr uint32_t WIFI_SCAN_TIMEOUT_MS = 12UL * 1000UL;
+constexpr uint32_t TEMPERATURE_REFRESH_MS = 5UL * 1000UL;
+constexpr uint32_t THERMAL_CRITICAL_HOLD_MS = 10UL * 1000UL;
+constexpr uint32_t THERMAL_THROTTLE_RECOVERY_HOLD_MS = 30UL * 1000UL;
+constexpr uint32_t THERMAL_RECOVERY_HOLD_MS = 60UL * 1000UL;
+constexpr uint32_t TEMPERATURE_FAULT_SAFE_HOLD_MS = 60UL * 1000UL;
+constexpr uint32_t UPDATE_PROMPT_MS = 15UL * 1000UL;
+constexpr uint32_t UPDATE_WEEKLY_SEC = 7UL * 24UL * 60UL * 60UL;
+constexpr uint32_t UPDATE_RETRY_MS = 6UL * 60UL * 60UL * 1000UL;
+constexpr uint32_t UPDATE_HTTP_TIMEOUT_MS = 15UL * 1000UL;
+constexpr uint32_t UPDATE_DOWNLOAD_STALL_MS = 20UL * 1000UL;
+constexpr size_t UPDATE_MANIFEST_MAX_BYTES = 2048;
+constexpr size_t UPDATE_DOWNLOAD_BUFFER_BYTES = 4096;
+constexpr uint32_t UPDATE_MIN_FREE_HEAP = 55000;
+constexpr uint32_t UPDATE_MIN_LARGEST_BLOCK = 32768;
+constexpr float THERMAL_WARNING_C = 70.0f;
+constexpr float THERMAL_WARNING_CLEAR_C = 65.0f;
+constexpr float THERMAL_THROTTLE_C = 80.0f;
+constexpr float THERMAL_CRITICAL_C = 90.0f;
+constexpr float THERMAL_THROTTLE_RECOVERY_C = 75.0f;
+constexpr float THERMAL_SAFE_RECOVERY_C = 70.0f;
+constexpr float TEMPERATURE_HIGH_RANGE_ENTER_C = 85.0f;
+constexpr float TEMPERATURE_HIGH_RANGE_EXIT_C = 65.0f;
+constexpr uint32_t THERMAL_THROTTLE_CPU_MHZ = 80;
+constexpr uint8_t TEMPERATURE_FAULT_SAMPLE_COUNT = 3;
+constexpr time_t MIN_VALID_EPOCH = 1704067200;  // 2024-01-01 UTC
+constexpr char TZ_INFO[] = "KST-9";
+
+enum class View : uint8_t {
+  DDAY_TIME = 0,
+  DDAY_MESSAGE = 1,
+  MESSAGE_ONLY = 2,
+  CLOCK_ONLY = 3,
+  MESSAGE_CLOCK = 4,
+  DASHBOARD = 5
+};
+
+enum class TopMode : uint8_t {
+  DDAY_TIME = 0,
+  DDAY_MESSAGE = 1,
+  MESSAGE_ONLY = 2,
+  CLOCK_ONLY = 3,
+  MESSAGE_CLOCK = 4,
+  DASHBOARD = 5,
+  SELECTED_CYCLE = 6
+};
+
+enum class RuntimeState : uint8_t {
+  BOOTING,
+  UNPROVISIONED,
+  SETUP_AP,
+  CONNECTING,
+  TIME_SYNCING,
+  RUNNING_ONLINE,
+  RUNNING_OFFLINE,
+  WIFI_SLEEP,
+  ERROR_DISPLAY
+};
+
+enum class WifiTestState : uint8_t {
+  IDLE,
+  CONNECTING,
+  TIME_SYNCING,
+  SUCCESS,
+  FAILED
+};
+
+enum class UpdateState : uint8_t {
+  IDLE,
+  CHECKING,
+  AVAILABLE,
+  DOWNLOADING,
+  VERIFYING,
+  READY_TO_REBOOT,
+  ERROR_STATE
+};
+
+enum class UpdateCheckReason : uint8_t {
+  NONE,
+  BOOT,
+  WEEKLY,
+  MANUAL
+};
+
+enum class LedState : uint8_t {
+  BOOTING,
+  SETUP,
+  CONNECTING,
+  TIME_SYNCING,
+  ONLINE,
+  WIFI_SLEEP,
+  WIFI_ERROR,
+  NTP_ERROR,
+  DISPLAY_ERROR,
+  THERMAL_WARNING,
+  TEMPERATURE_SENSOR_ERROR,
+  THERMAL_CRITICAL,
+  UPDATE_CHECKING,
+  UPDATE_AVAILABLE,
+  UPDATE_DOWNLOADING,
+  UPDATE_ERROR,
+  BUTTON_HOLD,
+  RESET_WARNING
+};
+
+struct SavedNetwork {
+  String ssid;
+  String password;
+};
+
+struct Config {
+  uint16_t version = CONFIG_VERSION;
+  SavedNetwork savedNetworks[MAX_SAVED_NETWORKS];
+  uint8_t savedNetworkCount = 0;
+  TopMode mode = TopMode::DDAY_TIME;
+  View lastView = View::DDAY_TIME;
+  String title = "2027 수능";
+  String target = "2026-11-19";
+  String message = "오늘도 한 칸 앞으로";
+  bool ddayTextStyle = false;
+  bool afterComplete = false;
+  bool messageLeft = false;
+  bool messageScroll = true;
+  uint8_t scrollSpeed = 24;
+  bool hour24 = true;
+  bool showSeconds = false;
+  bool showChipTemperature = true;
+  bool bootSync = true;
+  uint32_t ntpPeriodSec = 21600;
+  uint32_t ddayPeriodSec = 0;  // 0 = recalculate at local midnight.
+  uint32_t retryPeriodSec = 300;
+  bool wifiSleep = false;
+  uint8_t brightness = 180;
+  uint8_t nightLevel = 45;
+  bool ledEnabled = true;
+  uint8_t ledBrightness = 24;
+  uint8_t ledNightLevel = 6;
+  uint16_t nightStartMin = 1320;  // 22:00
+  uint16_t nightEndMin = 420;     // 07:00
+  bool burninShift = true;
+  uint16_t screenOffMin = 0;
+  uint8_t cycleMask = 0x3F;
+  uint8_t cycleOrder[VIEW_COUNT] = {0, 1, 2, 3, 4, 5};
+  uint8_t cycleIntervalSec = 8;
+  uint8_t cycleIndex = 0;
+  uint64_t lastSync = 0;
+  int32_t lastDday = 0;
+};
+
+Preferences prefs;
+Config config;
+// This generic 1.5-inch module uses SH1107 column offset 0.  The plain
+// SH1107_128X128 profile applies a 96-pixel offset and wraps the leftmost
+// 32 pixels onto the right edge on this panel.
+U8G2_SH1107_PIMORONI_128X128_F_HW_I2C display(U8G2_R0, U8X8_PIN_NONE, PIN_SCL, PIN_SDA);
+Adafruit_NeoPixel statusLed(1, PIN_RGB_LED, NEO_GRB + NEO_KHZ800);
+WebServer server(80);
+DNSServer dnsServer;
+
+RuntimeState runtimeState = RuntimeState::BOOTING;
+WifiTestState wifiTestState = WifiTestState::IDLE;
+String wifiTestError;
+String pendingSsid;
+String pendingPass;
+String apPassword;
+String sessionToken;
+View currentView = View::DDAY_TIME;
+uint8_t currentCycleIndex = 0;
+uint8_t oledAddress = 0;
+bool oledReady = false;
+bool portalActive = false;
+bool mdnsActive = false;
+bool ntpRequestActive = false;
+bool displaySleeping = false;
+bool portalClosingAfterSuccess = false;
+bool initialStationAttempt = true;
+bool internetVerified = false;
+bool ntpFailed = false;
+volatile bool ntpSyncEvent = false;
+bool savedWifiScanActive = false;
+bool savedWifiScanCompleted = false;
+bool savedWifiPreserveAp = false;
+uint8_t activeWifiIndex = NO_WIFI_INDEX;
+uint8_t wifiCandidateOrder[MAX_SAVED_NETWORKS] = {};
+uint8_t wifiCandidateCount = 0;
+uint8_t wifiCandidatePosition = 0;
+
+UpdateState updateState = UpdateState::IDLE;
+UpdateCheckReason pendingUpdateCheckReason = UpdateCheckReason::NONE;
+String latestFirmwareVersion;
+String latestFirmwareSha256;
+String latestFirmwareNotes;
+String updateError;
+uint32_t latestFirmwareSize = 0;
+uint32_t updateDownloadedBytes = 0;
+uint32_t updatePromptStartedMs = 0;
+uint32_t updateStateStartedMs = 0;
+uint32_t nextUpdateRetryMs = 0;
+uint64_t lastUpdateCheckEpoch = 0;
+bool bootUpdateCheckPending = true;
+bool updateCheckAfterNetworkReady = false;
+bool updatePromptVisible = false;
+bool updateInstallRequested = false;
+bool wifiSleepDeferredForUpdate = false;
+
+uint32_t stateStartedMs = 0;
+uint32_t portalStartedMs = 0;
+uint32_t portalSuccessMs = 0;
+uint32_t wifiDeadlineMs = 0;
+uint32_t ntpDeadlineMs = 0;
+uint32_t nextRetryMs = 0;
+uint32_t lastDisplayMs = 0;
+uint32_t lastCycleMs = 0;
+uint32_t lastInteractionMs = 0;
+uint32_t scrollStartedMs = 0;
+uint32_t lastDdayCalcMs = 0;
+uint32_t lastLedMs = 0;
+uint32_t savedWifiScanDeadlineMs = 0;
+uint32_t lastTemperatureReadMs = 0;
+uint32_t temperatureSampleSequence = 0;
+uint32_t thermalProcessedSequence = 0;
+temperature_sensor_handle_t chipTemperatureSensor = nullptr;
+float chipTemperatureC = NAN;
+bool thermalWarning = false;
+bool thermalThrottled = false;
+bool thermalSafeMode = false;
+bool thermalSafeModeFromSensorFault = false;
+bool temperatureSensorHighRange = false;
+bool temperatureSensorFault = false;
+uint8_t temperatureReadFailureCount = 0;
+uint32_t normalCpuFrequencyMhz = 240;
+uint32_t thermalCriticalStartedMs = 0;
+uint32_t thermalRecoveryStartedMs = 0;
+uint32_t temperatureFaultStartedMs = 0;
+int lastDdayYear = -1;
+int lastDdayYearDay = -1;
+
+bool buttonRawPressed = false;
+bool buttonStablePressed = false;
+uint32_t buttonRawChangedMs = 0;
+uint32_t buttonPressedMs = 0;
+bool resetConfirmation = false;
+uint32_t resetConfirmStartedMs = 0;
+bool resetConfirmPressEligible = false;
+
+String jsonEscape(const String &value) {
+  String out;
+  out.reserve(value.length() + 8);
+  for (size_t i = 0; i < value.length(); ++i) {
+    const char c = value[i];
+    switch (c) {
+      case '\\': out += "\\\\"; break;
+      case '"': out += "\\\""; break;
+      case '\n': out += "\\n"; break;
+      case '\r': out += "\\r"; break;
+      case '\t': out += "\\t"; break;
+      default:
+        if (static_cast<uint8_t>(c) < 0x20) out += ' ';
+        else out += c;
+    }
+  }
+  return out;
+}
+
+uint16_t utf8Codepoints(const String &value) {
+  uint16_t count = 0;
+  for (size_t i = 0; i < value.length(); ++i) {
+    if ((static_cast<uint8_t>(value[i]) & 0xC0) != 0x80) ++count;
+  }
+  return count;
+}
+
+bool elapsed(uint32_t now, uint32_t since, uint32_t period) {
+  return static_cast<uint32_t>(now - since) >= period;
+}
+
+bool deadlineReached(uint32_t now, uint32_t deadline) {
+  return static_cast<int32_t>(now - deadline) >= 0;
+}
+
+int clampInt(int value, int low, int high) {
+  return value < low ? low : (value > high ? high : value);
+}
+
+bool isLeapYear(int year) {
+  return (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+}
+
+bool parseDate(const String &text, int &year, int &month, int &day) {
+  if (text.length() != 10 || text[4] != '-' || text[7] != '-') return false;
+  for (uint8_t i : {0, 1, 2, 3, 5, 6, 8, 9}) {
+    if (!isDigit(text[i])) return false;
+  }
+  year = text.substring(0, 4).toInt();
+  month = text.substring(5, 7).toInt();
+  day = text.substring(8, 10).toInt();
+  if (year < 2024 || year > 2099 || month < 1 || month > 12) return false;
+  const uint8_t days[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+  int maxDay = days[month - 1] + ((month == 2 && isLeapYear(year)) ? 1 : 0);
+  return day >= 1 && day <= maxDay;
+}
+
+String cycleOrderToString(const Config &cfg) {
+  String result;
+  for (uint8_t i = 0; i < VIEW_COUNT; ++i) {
+    if (i) result += ',';
+    result += String(cfg.cycleOrder[i]);
+  }
+  return result;
+}
+
+bool parseCycleOrderCount(const String &text, uint8_t *out, uint8_t expectedCount) {
+  bool seen[VIEW_COUNT] = {false, false, false, false, false, false};
+  uint8_t count = 0;
+  int start = 0;
+  while (start <= static_cast<int>(text.length()) && count < expectedCount) {
+    int comma = text.indexOf(',', start);
+    if (comma < 0) comma = text.length();
+    String part = text.substring(start, comma);
+    part.trim();
+    if (part.length() != 1 || part[0] < '0' || part[0] >= '0' + expectedCount) return false;
+    uint8_t value = part[0] - '0';
+    if (seen[value]) return false;
+    seen[value] = true;
+    out[count++] = value;
+    start = comma + 1;
+  }
+  if (count != expectedCount) return false;
+  for (uint8_t i = 0; i < expectedCount; ++i) if (!seen[i]) return false;
+  return true;
+}
+
+bool parseCycleOrder(const String &text, uint8_t out[VIEW_COUNT]) {
+  return parseCycleOrderCount(text, out, VIEW_COUNT);
+}
+
+const char *runtimeStateName(RuntimeState state) {
+  switch (state) {
+    case RuntimeState::BOOTING: return "BOOTING";
+    case RuntimeState::UNPROVISIONED: return "UNPROVISIONED";
+    case RuntimeState::SETUP_AP: return "SETUP_AP";
+    case RuntimeState::CONNECTING: return "CONNECTING";
+    case RuntimeState::TIME_SYNCING: return "TIME_SYNCING";
+    case RuntimeState::RUNNING_ONLINE: return "RUNNING_ONLINE";
+    case RuntimeState::RUNNING_OFFLINE: return "RUNNING_OFFLINE";
+    case RuntimeState::WIFI_SLEEP: return "WIFI_SLEEP";
+    default: return "ERROR_DISPLAY";
+  }
+}
+
+const char *wifiTestStateName(WifiTestState state) {
+  switch (state) {
+    case WifiTestState::IDLE: return "idle";
+    case WifiTestState::CONNECTING: return "connecting";
+    case WifiTestState::TIME_SYNCING: return "time_syncing";
+    case WifiTestState::SUCCESS: return "success";
+    default: return "failed";
+  }
+}
+
+const char *updateStateName(UpdateState state) {
+  switch (state) {
+    case UpdateState::IDLE: return "idle";
+    case UpdateState::CHECKING: return "checking";
+    case UpdateState::AVAILABLE: return "available";
+    case UpdateState::DOWNLOADING: return "downloading";
+    case UpdateState::VERIFYING: return "verifying";
+    case UpdateState::READY_TO_REBOOT: return "rebooting";
+    default: return "error";
+  }
+}
+
+bool timeIsValid() {
+  return time(nullptr) >= MIN_VALID_EPOCH;
+}
+
+void logLine(const String &message) {
+  Serial.print("[MILESTONE] ");
+  Serial.println(message);
+}
+
+void setRuntimeState(RuntimeState next) {
+  if (runtimeState == next) return;
+  runtimeState = next;
+  stateStartedMs = millis();
+  logLine(String("state -> ") + runtimeStateName(next));
+}
+
+void loadDefaults(Config &cfg) {
+  cfg = Config();
+}
+
+String savedWifiSsidKey(uint8_t index) {
+  return String("wifi_ssid") + String(index);
+}
+
+String savedWifiPassKey(uint8_t index) {
+  return String("wifi_pass") + String(index);
+}
+
+int findSavedNetwork(const String &ssid) {
+  for (uint8_t i = 0; i < config.savedNetworkCount; ++i) {
+    if (config.savedNetworks[i].ssid == ssid) return i;
+  }
+  return -1;
+}
+
+void saveWifiNetworks() {
+  prefs.putUChar("wifi_count", config.savedNetworkCount);
+  for (uint8_t i = 0; i < MAX_SAVED_NETWORKS; ++i) {
+    const String ssidKey = savedWifiSsidKey(i);
+    const String passKey = savedWifiPassKey(i);
+    if (i < config.savedNetworkCount) {
+      prefs.putString(ssidKey.c_str(), config.savedNetworks[i].ssid);
+      prefs.putString(passKey.c_str(), config.savedNetworks[i].password);
+    } else {
+      prefs.remove(ssidKey.c_str());
+      prefs.remove(passKey.c_str());
+    }
+  }
+  // Version 1-3 keys are intentionally left untouched. Schema 4 ignores them,
+  // and retaining them makes a power loss during migration recoverable.
+}
+
+void removeSavedNetworkAt(uint8_t index) {
+  if (index >= config.savedNetworkCount) return;
+  for (uint8_t i = index; i + 1 < config.savedNetworkCount; ++i) {
+    config.savedNetworks[i] = config.savedNetworks[i + 1];
+  }
+  --config.savedNetworkCount;
+  config.savedNetworks[config.savedNetworkCount] = SavedNetwork();
+}
+
+void upsertSavedNetwork(const String &ssid, const String &password) {
+  int existing = findSavedNetwork(ssid);
+  SavedNetwork network;
+  network.ssid = ssid;
+  network.password = password;
+  if (existing >= 0) removeSavedNetworkAt(static_cast<uint8_t>(existing));
+  uint8_t newCount = config.savedNetworkCount < MAX_SAVED_NETWORKS
+                       ? config.savedNetworkCount + 1
+                       : MAX_SAVED_NETWORKS;
+  for (uint8_t i = newCount - 1; i > 0; --i) {
+    config.savedNetworks[i] = config.savedNetworks[i - 1];
+  }
+  config.savedNetworks[0] = network;
+  config.savedNetworkCount = newCount;
+  activeWifiIndex = 0;
+  saveWifiNetworks();
+}
+
+void promoteSavedNetwork(uint8_t index) {
+  if (index == NO_WIFI_INDEX || index >= config.savedNetworkCount || index == 0) return;
+  SavedNetwork network = config.savedNetworks[index];
+  for (uint8_t i = index; i > 0; --i) {
+    config.savedNetworks[i] = config.savedNetworks[i - 1];
+  }
+  config.savedNetworks[0] = network;
+  activeWifiIndex = 0;
+  saveWifiNetworks();
+}
+
+void saveConfigAll() {
+  saveWifiNetworks();
+  prefs.putUChar("mode", static_cast<uint8_t>(config.mode));
+  prefs.putUChar("last_view", static_cast<uint8_t>(config.lastView));
+  prefs.putString("title", config.title);
+  prefs.putString("target", config.target);
+  prefs.putString("message", config.message);
+  prefs.putBool("dday_text", config.ddayTextStyle);
+  prefs.putBool("after_done", config.afterComplete);
+  prefs.putBool("msg_left", config.messageLeft);
+  prefs.putBool("msg_scroll", config.messageScroll);
+  prefs.putUChar("scroll_spd", config.scrollSpeed);
+  prefs.putBool("hour24", config.hour24);
+  prefs.putBool("seconds", config.showSeconds);
+  prefs.putBool("show_temp", config.showChipTemperature);
+  prefs.putBool("boot_sync", config.bootSync);
+  prefs.putUInt("ntp_sec", config.ntpPeriodSec);
+  prefs.putUInt("dday_sec", config.ddayPeriodSec);
+  prefs.putUInt("retry_sec", config.retryPeriodSec);
+  prefs.putBool("wifi_sleep", config.wifiSleep);
+  prefs.putUChar("bright", config.brightness);
+  prefs.putUChar("night_lvl", config.nightLevel);
+  prefs.putBool("led_en", config.ledEnabled);
+  prefs.putUChar("led_lvl", config.ledBrightness);
+  prefs.putUChar("led_night", config.ledNightLevel);
+  prefs.putUShort("night_start", config.nightStartMin);
+  prefs.putUShort("night_end", config.nightEndMin);
+  prefs.putBool("burnin", config.burninShift);
+  prefs.putUShort("screen_off", config.screenOffMin);
+  prefs.putUChar("cycle_mask", config.cycleMask);
+  prefs.putString("cycle_ord", cycleOrderToString(config));
+  prefs.putUChar("cycle_int", config.cycleIntervalSec);
+  prefs.putUChar("cycle_idx", config.cycleIndex);
+  prefs.putULong64("last_sync", config.lastSync);
+  prefs.putInt("last_dday", config.lastDday);
+  // Commit the schema marker last so an interrupted migration is retried safely.
+  prefs.putUShort("cfg_ver", config.version);
+}
+
+void saveViewState() {
+  prefs.putUChar("last_view", static_cast<uint8_t>(config.lastView));
+  prefs.putUChar("cycle_idx", config.cycleIndex);
+}
+
+bool loadConfig() {
+  loadDefaults(config);
+  if (!prefs.isKey("cfg_ver")) return false;
+  uint16_t version = prefs.getUShort("cfg_ver", 0);
+  if (version < 1 || version > CONFIG_VERSION) {
+    logLine("unknown config schema; defaults restored");
+    return false;
+  }
+  const bool migrateV1 = version == 1;
+  const bool migrateToV3 = version < 3;
+  const bool migrateToV4 = version < 4;
+  const bool migrateToV5 = version < 5;
+  config.version = CONFIG_VERSION;
+  if (migrateToV4) {
+    String legacySsid = prefs.getString("wifi_ssid", "");
+    String legacyPass = prefs.getString("wifi_pass", "");
+    if (legacySsid.length() > 0 && legacySsid.length() <= 32 && legacyPass.length() <= 63) {
+      config.savedNetworks[0].ssid = legacySsid;
+      config.savedNetworks[0].password = legacyPass;
+      config.savedNetworkCount = 1;
+    }
+  } else {
+    uint8_t storedCount = prefs.getUChar("wifi_count", 0);
+    if (storedCount > MAX_SAVED_NETWORKS) storedCount = MAX_SAVED_NETWORKS;
+    for (uint8_t i = 0; i < storedCount; ++i) {
+      String ssid = prefs.getString(savedWifiSsidKey(i).c_str(), "");
+      String password = prefs.getString(savedWifiPassKey(i).c_str(), "");
+      if (ssid.length() == 0 || ssid.length() > 32 || password.length() > 63) continue;
+      config.savedNetworks[config.savedNetworkCount].ssid = ssid;
+      config.savedNetworks[config.savedNetworkCount].password = password;
+      ++config.savedNetworkCount;
+    }
+  }
+  uint8_t storedMode = prefs.getUChar("mode", 0);
+  if (migrateV1 && storedMode == 4) storedMode = static_cast<uint8_t>(TopMode::SELECTED_CYCLE);
+  config.mode = static_cast<TopMode>(clampInt(storedMode, 0, 6));
+  config.lastView = static_cast<View>(clampInt(prefs.getUChar("last_view", 0), 0, migrateV1 ? 3 : 5));
+  config.title = prefs.getString("title", config.title);
+  config.target = prefs.getString("target", config.target);
+  config.message = prefs.getString("message", config.message);
+  config.ddayTextStyle = prefs.getBool("dday_text", false);
+  config.afterComplete = prefs.getBool("after_done", false);
+  config.messageLeft = prefs.getBool("msg_left", false);
+  config.messageScroll = prefs.getBool("msg_scroll", true);
+  config.scrollSpeed = clampInt(prefs.getUChar("scroll_spd", 24), 5, 80);
+  config.hour24 = prefs.getBool("hour24", true);
+  config.showSeconds = prefs.getBool("seconds", false);
+  config.showChipTemperature = prefs.getBool("show_temp", true);
+  config.bootSync = prefs.getBool("boot_sync", true);
+  config.ntpPeriodSec = prefs.getUInt("ntp_sec", 21600);
+  const uint32_t allowedNtp[] = {0, 3600, 10800, 21600, 43200, 86400};
+  bool validNtpPeriod = false;
+  for (uint8_t i = 0; i < 6; ++i) validNtpPeriod |= config.ntpPeriodSec == allowedNtp[i];
+  if (!validNtpPeriod) config.ntpPeriodSec = 21600;
+  config.ddayPeriodSec = prefs.getUInt("dday_sec", 0);
+  const uint32_t allowedDday[] = {0, 60, 600, 1800, 3600};
+  bool validDdayPeriod = false;
+  for (uint8_t i = 0; i < 5; ++i) validDdayPeriod |= config.ddayPeriodSec == allowedDday[i];
+  if (!validDdayPeriod) config.ddayPeriodSec = 0;
+  config.retryPeriodSec = prefs.getUInt("retry_sec", 300);
+  const uint32_t allowedRetry[] = {60, 300, 900, 1800};
+  bool validRetryPeriod = false;
+  for (uint8_t i = 0; i < 4; ++i) validRetryPeriod |= config.retryPeriodSec == allowedRetry[i];
+  if (!validRetryPeriod) config.retryPeriodSec = 300;
+  config.wifiSleep = prefs.getBool("wifi_sleep", false);
+  config.brightness = clampInt(prefs.getUChar("bright", 180), 1, 255);
+  config.nightLevel = clampInt(prefs.getUChar("night_lvl", 45), 1, 255);
+  config.ledEnabled = prefs.getBool("led_en", true);
+  config.ledBrightness = clampInt(prefs.getUChar("led_lvl", 24), 1, 64);
+  config.ledNightLevel = clampInt(prefs.getUChar("led_night", 6), 1, 32);
+  config.nightStartMin = clampInt(prefs.getUShort("night_start", 1320), 0, 1439);
+  config.nightEndMin = clampInt(prefs.getUShort("night_end", 420), 0, 1439);
+  config.burninShift = prefs.getBool("burnin", true);
+  config.screenOffMin = clampInt(prefs.getUShort("screen_off", 0), 0, 1440);
+  config.cycleMask = prefs.getUChar("cycle_mask", migrateV1 ? 0x0F : 0x3F) & 0x3F;
+  if (config.cycleMask == 0) config.cycleMask = 1;
+  if (migrateV1) {
+    uint8_t legacyOrder[4] = {0, 1, 2, 3};
+    uint8_t parsedLegacy[4];
+    if (parseCycleOrderCount(prefs.getString("cycle_ord", "0,1,2,3"), parsedLegacy, 4)) {
+      memcpy(legacyOrder, parsedLegacy, sizeof(parsedLegacy));
+    }
+    memcpy(config.cycleOrder, legacyOrder, sizeof(legacyOrder));
+    config.cycleOrder[4] = 4;
+    config.cycleOrder[5] = 5;
+  } else {
+    uint8_t parsed[VIEW_COUNT];
+    if (parseCycleOrder(prefs.getString("cycle_ord", "0,1,2,3,4,5"), parsed)) {
+      memcpy(config.cycleOrder, parsed, sizeof(parsed));
+    }
+  }
+  uint8_t interval = prefs.getUChar("cycle_int", 8);
+  config.cycleIntervalSec = (interval == 0 || (interval >= 3 && interval <= 60)) ? interval : 8;
+  config.cycleIndex = prefs.getUChar("cycle_idx", 0) % VIEW_COUNT;
+  config.lastSync = prefs.getULong64("last_sync", 0);
+  config.lastDday = prefs.getInt("last_dday", 0);
+  int y, m, d;
+  if (!parseDate(config.target, y, m, d)) config.target = "2026-11-19";
+  if (migrateToV3 || migrateToV4 || migrateToV5) {
+    saveConfigAll();
+    logLine(String("configuration migrated from schema ") + String(version) + " to " + String(CONFIG_VERSION));
+  }
+  return true;
+}
+
+bool detectOledAddress() {
+  for (uint8_t address : {OLED_ADDR_PRIMARY, OLED_ADDR_SECONDARY}) {
+    Wire.beginTransmission(address);
+    if (Wire.endTransmission() == 0) {
+      oledAddress = address;
+      return true;
+    }
+  }
+  return false;
+}
+
+bool initDisplay() {
+  Wire.begin(PIN_SDA, PIN_SCL, 400000);
+  if (!detectOledAddress()) {
+    logLine("OLED not found at 0x3C or 0x3D");
+    return false;
+  }
+  display.setI2CAddress(oledAddress << 1);  // U8g2 expects the 8-bit address.
+  display.setBusClock(400000);
+  display.begin();
+  display.enableUTF8Print();
+  display.setContrast(config.brightness);
+  display.clearBuffer();
+  display.setFont(u8g2_font_6x10_tf);
+  display.drawStr(15, 52, "CYTRON//MILESTONE");
+  display.drawStr(26, 72, "MILESTONE D1");
+  display.sendBuffer();
+  logLine(String("OLED ready at 0x") + String(oledAddress, HEX));
+  return true;
+}
+
+void wakeDisplay() {
+  lastInteractionMs = millis();
+  if (displaySleeping && oledReady) {
+    display.setPowerSave(0);
+    displaySleeping = false;
+  }
+}
+
+bool isNightTime(const tm &local) {
+  uint16_t minute = local.tm_hour * 60 + local.tm_min;
+  if (config.nightStartMin == config.nightEndMin) return false;
+  if (config.nightStartMin < config.nightEndMin) {
+    return minute >= config.nightStartMin && minute < config.nightEndMin;
+  }
+  return minute >= config.nightStartMin || minute < config.nightEndMin;
+}
+
+uint8_t activeLedBrightness() {
+  uint8_t level = config.ledBrightness;
+  tm local{};
+  if (timeIsValid() && getLocalTime(&local, 10) && isNightTime(local)) {
+    level = config.ledNightLevel;
+  }
+  return level;
+}
+
+uint8_t ledPulse(uint32_t periodMs, uint8_t minimum = 72) {
+  if (periodMs < 2) return 255;
+  uint32_t phase = millis() % periodMs;
+  uint32_t half = periodMs / 2;
+  uint32_t triangle = phase < half ? phase : periodMs - phase;
+  uint32_t range = 255U - minimum;
+  return static_cast<uint8_t>(minimum + (triangle * range) / half);
+}
+
+LedState currentLedState() {
+  if (thermalSafeMode) return LedState::THERMAL_CRITICAL;
+  if (resetConfirmation) return LedState::RESET_WARNING;
+  if (buttonStablePressed) return LedState::BUTTON_HOLD;
+  if (temperatureSensorFault) return LedState::TEMPERATURE_SENSOR_ERROR;
+  if (thermalWarning) return LedState::THERMAL_WARNING;
+  if (updateState == UpdateState::DOWNLOADING || updateState == UpdateState::VERIFYING ||
+      updateState == UpdateState::READY_TO_REBOOT) return LedState::UPDATE_DOWNLOADING;
+  if (updateState == UpdateState::CHECKING) return LedState::UPDATE_CHECKING;
+  if (updateState == UpdateState::ERROR_STATE && !elapsed(millis(), updateStateStartedMs, 10000UL)) return LedState::UPDATE_ERROR;
+  if (updateState == UpdateState::AVAILABLE && updatePromptVisible) return LedState::UPDATE_AVAILABLE;
+  if (!oledReady) return LedState::DISPLAY_ERROR;
+  if (wifiTestState == WifiTestState::CONNECTING) return LedState::CONNECTING;
+  if (wifiTestState == WifiTestState::TIME_SYNCING) return LedState::TIME_SYNCING;
+  if (portalClosingAfterSuccess) return LedState::ONLINE;
+  if (portalActive) return LedState::SETUP;
+  switch (runtimeState) {
+    case RuntimeState::BOOTING: return LedState::BOOTING;
+    case RuntimeState::UNPROVISIONED:
+    case RuntimeState::SETUP_AP: return LedState::SETUP;
+    case RuntimeState::CONNECTING: return LedState::CONNECTING;
+    case RuntimeState::TIME_SYNCING: return LedState::TIME_SYNCING;
+    case RuntimeState::RUNNING_ONLINE:
+      return WiFi.status() == WL_CONNECTED && internetVerified && timeIsValid() && !ntpFailed
+               ? LedState::ONLINE
+               : LedState::NTP_ERROR;
+    case RuntimeState::WIFI_SLEEP: return LedState::WIFI_SLEEP;
+    case RuntimeState::ERROR_DISPLAY: return LedState::DISPLAY_ERROR;
+    case RuntimeState::RUNNING_OFFLINE:
+      return WiFi.status() == WL_CONNECTED ? LedState::NTP_ERROR : LedState::WIFI_ERROR;
+  }
+  return LedState::WIFI_ERROR;
+}
+
+void writeStatusLed(uint8_t red, uint8_t green, uint8_t blue, uint8_t animationScale = 255) {
+  uint16_t brightness = activeLedBrightness();
+  if (thermalSafeMode && brightness < 32) brightness = 32;
+  else if ((thermalWarning || temperatureSensorFault) && brightness < 20) brightness = 20;
+  red = static_cast<uint8_t>((static_cast<uint32_t>(red) * brightness * animationScale) / 65025UL);
+  green = static_cast<uint8_t>((static_cast<uint32_t>(green) * brightness * animationScale) / 65025UL);
+  blue = static_cast<uint8_t>((static_cast<uint32_t>(blue) * brightness * animationScale) / 65025UL);
+  statusLed.setPixelColor(0, statusLed.Color(red, green, blue));
+  statusLed.show();
+}
+
+void processLed() {
+  uint32_t now = millis();
+  if (!elapsed(now, lastLedMs, LED_REFRESH_MS)) return;
+  lastLedMs = now;
+  if (!config.ledEnabled && !thermalWarning && !temperatureSensorFault && !thermalSafeMode) {
+    statusLed.clear();
+    statusLed.show();
+    return;
+  }
+
+  switch (currentLedState()) {
+    case LedState::BOOTING:
+      writeStatusLed(40, 255, 180, ledPulse(1400, 96));
+      break;
+    case LedState::SETUP:
+      writeStatusLed(0, 210, 255, ledPulse(1800, 88));
+      break;
+    case LedState::CONNECTING:
+      writeStatusLed(35, 90, 255, ledPulse(1100, 72));
+      break;
+    case LedState::TIME_SYNCING:
+      writeStatusLed(155, 65, 255, ledPulse(1100, 72));
+      break;
+    case LedState::ONLINE:
+      writeStatusLed(35, 255, 165);
+      break;
+    case LedState::WIFI_SLEEP:
+      writeStatusLed(20, 120, 125);
+      break;
+    case LedState::WIFI_ERROR:
+      writeStatusLed(255, 28, 35, ledPulse(1800, 96));
+      break;
+    case LedState::NTP_ERROR:
+      writeStatusLed(255, 120, 15, ledPulse(1800, 96));
+      break;
+    case LedState::DISPLAY_ERROR:
+      writeStatusLed(255, 0, 90, ledPulse(650, 80));
+      break;
+    case LedState::THERMAL_WARNING:
+      writeStatusLed(255, 95, 0, ledPulse(900, 96));
+      break;
+    case LedState::TEMPERATURE_SENSOR_ERROR:
+      writeStatusLed(255, 45, 0, ledPulse(600, 80));
+      break;
+    case LedState::THERMAL_CRITICAL:
+      writeStatusLed(255, 8, 8, ledPulse(420, 72));
+      break;
+    case LedState::UPDATE_CHECKING: {
+      const uint32_t phase = millis() % 1600UL;
+      const uint8_t on = (phase < 120 || (phase >= 260 && phase < 380)) ? 255 : 24;
+      writeStatusLed(45, 105, 255, on);
+      break;
+    }
+    case LedState::UPDATE_AVAILABLE: {
+      const uint32_t phase = millis() % 2200UL;
+      const uint8_t on = (phase < 180 || (phase >= 360 && phase < 540)) ? 255 : 20;
+      writeStatusLed(235, 235, 255, on);
+      break;
+    }
+    case LedState::UPDATE_DOWNLOADING:
+      writeStatusLed(115, 65, 255, ledPulse(520, 52));
+      break;
+    case LedState::UPDATE_ERROR: {
+      const uint32_t phase = millis() % 1800UL;
+      const uint8_t on = (phase < 110 || (phase >= 220 && phase < 330) || (phase >= 440 && phase < 550)) ? 255 : 24;
+      writeStatusLed(255, 25, 35, on);
+      break;
+    }
+    case LedState::BUTTON_HOLD: {
+      uint32_t heldMs = millis() - buttonPressedMs;
+      if (resetConfirmation || heldMs >= 8000) writeStatusLed(255, 15, 25, ledPulse(500, 100));
+      else if (heldMs >= 3000) writeStatusLed(0, 220, 255);
+      else writeStatusLed(210, 210, 210);
+      break;
+    }
+    case LedState::RESET_WARNING:
+      writeStatusLed(255, 10, 20, ledPulse(500, 100));
+      break;
+  }
+}
+
+void updateContrast() {
+  if (!oledReady) return;
+  tm local{};
+  uint8_t level = config.brightness;
+  if (timeIsValid() && getLocalTime(&local, 10) && isNightTime(local)) level = config.nightLevel;
+  display.setContrast(level);
+}
+
+void getBurninOffset(int8_t &x, int8_t &y) {
+  x = 0;
+  y = 0;
+  if (!config.burninShift) return;
+  uint8_t phase = (millis() / 60000UL) % 9;
+  x = static_cast<int8_t>(phase % 3) - 1;
+  y = static_cast<int8_t>(phase / 3) - 1;
+}
+
+bool stopChipTemperatureSensor() {
+  if (chipTemperatureSensor == nullptr) return true;
+  esp_err_t disableResult = temperature_sensor_disable(chipTemperatureSensor);
+  if (disableResult != ESP_OK && disableResult != ESP_ERR_INVALID_STATE) {
+    logLine(String("chip temperature sensor disable failed: ") + String(static_cast<int>(disableResult)));
+  }
+  esp_err_t uninstallResult = temperature_sensor_uninstall(chipTemperatureSensor);
+  if (uninstallResult != ESP_OK) {
+    logLine(String("chip temperature sensor uninstall failed: ") + String(static_cast<int>(uninstallResult)));
+    return false;
+  }
+  chipTemperatureSensor = nullptr;
+  return true;
+}
+
+bool initChipTemperatureSensor(bool highRange) {
+  if (chipTemperatureSensor != nullptr) return true;
+  temperature_sensor_config_t sensorConfig = TEMPERATURE_SENSOR_CONFIG_DEFAULT(20, 100);
+  if (highRange) {
+    sensorConfig.range_min = 50;
+    sensorConfig.range_max = 125;
+  }
+  esp_err_t result = temperature_sensor_install(&sensorConfig, &chipTemperatureSensor);
+  if (result != ESP_OK) {
+    chipTemperatureSensor = nullptr;
+    logLine(String("chip temperature sensor install failed: ") + String(static_cast<int>(result)));
+    return false;
+  }
+  result = temperature_sensor_enable(chipTemperatureSensor);
+  if (result != ESP_OK) {
+    temperature_sensor_uninstall(chipTemperatureSensor);
+    chipTemperatureSensor = nullptr;
+    logLine(String("chip temperature sensor enable failed: ") + String(static_cast<int>(result)));
+    return false;
+  }
+  temperatureSensorHighRange = highRange;
+  return true;
+}
+
+bool switchChipTemperatureRange(bool highRange) {
+  if (chipTemperatureSensor != nullptr && temperatureSensorHighRange == highRange) return true;
+  if (!stopChipTemperatureSensor()) return false;
+  return initChipTemperatureSensor(highRange);
+}
+
+bool readChipTemperatureOnce(float &reading) {
+  return initChipTemperatureSensor(temperatureSensorHighRange) &&
+         temperature_sensor_get_celsius(chipTemperatureSensor, &reading) == ESP_OK &&
+         !isnan(reading);
+}
+
+bool refreshChipTemperature() {
+  uint32_t now = millis();
+  if (lastTemperatureReadMs != 0 && !elapsed(now, lastTemperatureReadMs, TEMPERATURE_REFRESH_MS)) return false;
+  lastTemperatureReadMs = now;
+  float reading = NAN;
+  bool success = readChipTemperatureOnce(reading);
+  if (!success) {
+    const bool alternateHighRange = !temperatureSensorHighRange;
+    success = switchChipTemperatureRange(alternateHighRange) && readChipTemperatureOnce(reading);
+  }
+  if (success && reading >= 20.0f && reading <= 125.0f) {
+    chipTemperatureC = reading;
+    temperatureReadFailureCount = 0;
+    temperatureSensorFault = false;
+    if (!temperatureSensorHighRange && reading >= TEMPERATURE_HIGH_RANGE_ENTER_C) {
+      switchChipTemperatureRange(true);
+    } else if (temperatureSensorHighRange && reading <= TEMPERATURE_HIGH_RANGE_EXIT_C) {
+      switchChipTemperatureRange(false);
+    }
+  } else {
+    chipTemperatureC = NAN;
+    if (temperatureReadFailureCount < UINT8_MAX) ++temperatureReadFailureCount;
+    if (temperatureReadFailureCount >= TEMPERATURE_FAULT_SAMPLE_COUNT) temperatureSensorFault = true;
+  }
+  ++temperatureSampleSequence;
+  return true;
+}
+
+void drawChipTemperature(int statusX, int y) {
+  if (!config.showChipTemperature && !thermalWarning && !temperatureSensorFault) return;
+  refreshChipTemperature();
+  char buffer[8];
+  if (temperatureSensorFault) {
+    snprintf(buffer, sizeof(buffer), "!TC");
+  } else if (isnan(chipTemperatureC)) {
+    snprintf(buffer, sizeof(buffer), "--C");
+  } else {
+    int rounded = static_cast<int>(chipTemperatureC >= 0.0f ? chipTemperatureC + 0.5f : chipTemperatureC - 0.5f);
+    snprintf(buffer, sizeof(buffer), thermalWarning ? "!%dC" : "%dC", rounded);
+  }
+  display.setFont(u8g2_font_5x8_tf);
+  int width = display.getStrWidth(buffer);
+  display.drawStr(statusX - width - 4, y + 7, buffer);
+}
+
+void drawStatusIcon(int x, int y) {
+  if (portalActive) {
+    display.setFont(u8g2_font_5x8_tf);
+    display.drawStr(x - 2, y + 7, "AP");
+    return;
+  }
+  if (ntpRequestActive || runtimeState == RuntimeState::TIME_SYNCING) {
+    display.drawCircle(x + 5, y + 5, 4);
+    display.drawLine(x + 7, y + 1, x + 10, y + 1);
+    display.drawLine(x + 10, y + 1, x + 10, y + 4);
+    return;
+  }
+  if (runtimeState == RuntimeState::WIFI_SLEEP) {
+    display.drawCircle(x + 5, y + 5, 4);
+    return;
+  }
+  if (WiFi.status() != WL_CONNECTED) {
+    if (!timeIsValid()) {
+      display.setFont(u8g2_font_6x10_tf);
+      display.drawStr(x + 2, y + 8, "?");
+    } else {
+      display.drawLine(x + 1, y + 1, x + 9, y + 9);
+      display.drawLine(x + 9, y + 1, x + 1, y + 9);
+    }
+    return;
+  }
+  if (ntpFailed || !internetVerified) {
+    display.setFont(u8g2_font_6x10_tf);
+    display.drawStr(x + 2, y + 8, "!");
+    return;
+  }
+  if (!timeIsValid()) {
+    display.setFont(u8g2_font_6x10_tf);
+    display.drawStr(x + 2, y + 8, "?");
+    return;
+  }
+  if (runtimeState == RuntimeState::RUNNING_ONLINE) {
+    display.drawDisc(x + 5, y + 5, 4);
+    return;
+  }
+  display.setFont(u8g2_font_6x10_tf);
+  display.drawStr(x + 2, y + 8, "!");
+}
+
+void drawTopTitle(const String &title, int8_t offsetX, int8_t offsetY) {
+  display.setFont(u8g2_font_unifont_t_korean2);
+  String shown = title;
+  const int titleWidth = (thermalWarning || temperatureSensorFault) ? 84 : (config.showChipTemperature ? 89 : 103);
+  while (shown.length() > 0 && display.getUTF8Width(shown.c_str()) > titleWidth) {
+    int last = shown.length() - 1;
+    while (last > 0 && (static_cast<uint8_t>(shown[last]) & 0xC0) == 0x80) --last;
+    shown.remove(last);
+  }
+  display.drawUTF8(clampInt(static_cast<int>(offsetX), 0, 127), 15 + offsetY, shown.c_str());
+  drawChipTemperature(116 + offsetX, 2 + offsetY);
+  drawStatusIcon(116 + offsetX, 2 + offsetY);
+  display.drawHLine(0, 17 + offsetY, 128);
+}
+
+String formatDday(int days) {
+  if (days > 0) {
+    if (config.ddayTextStyle) return String(days) + "일 남음";
+    return String("D-") + days;
+  }
+  if (days == 0) return "D-DAY";
+  if (config.afterComplete) return "";
+  return String("D+") + (-days);
+}
+
+bool computeDday(int &result, bool force = false) {
+  if (!timeIsValid()) {
+    result = config.lastDday;
+    return false;
+  }
+  int year, month, day;
+  if (!parseDate(config.target, year, month, day)) return false;
+  tm nowLocal{};
+  if (!getLocalTime(&nowLocal, 20)) return false;
+  bool due = force || lastDdayYear < 0;
+  if (!due && config.ddayPeriodSec == 0) {
+    due = nowLocal.tm_year != lastDdayYear || nowLocal.tm_yday != lastDdayYearDay;
+  } else if (!due) {
+    due = elapsed(millis(), lastDdayCalcMs, config.ddayPeriodSec * 1000UL);
+  }
+  if (!due) {
+    result = config.lastDday;
+    return true;
+  }
+  tm today = nowLocal;
+  today.tm_hour = 0;
+  today.tm_min = 0;
+  today.tm_sec = 0;
+  today.tm_isdst = -1;
+  tm target{};
+  target.tm_year = year - 1900;
+  target.tm_mon = month - 1;
+  target.tm_mday = day;
+  target.tm_hour = 0;
+  target.tm_isdst = -1;
+  result = static_cast<int>(difftime(mktime(&target), mktime(&today)) / 86400.0);
+  lastDdayCalcMs = millis();
+  lastDdayYear = nowLocal.tm_year;
+  lastDdayYearDay = nowLocal.tm_yday;
+  if (result != config.lastDday) {
+    config.lastDday = result;
+    prefs.putInt("last_dday", result);
+  }
+  return true;
+}
+
+String weekdayKorean(int weekday) {
+  static const char *names[] = {"일", "월", "화", "수", "목", "금", "토"};
+  if (weekday < 0 || weekday > 6) return "?";
+  return names[weekday];
+}
+
+String formatTimeLine(bool includeDate) {
+  if (!timeIsValid()) return "시간 미확정";
+  tm local{};
+  if (!getLocalTime(&local, 20)) return "시간 미확정";
+  char buffer[40];
+  int hour = local.tm_hour;
+  String prefix;
+  if (!config.hour24) {
+    prefix = hour < 12 ? "AM " : "PM ";
+    hour %= 12;
+    if (hour == 0) hour = 12;
+  }
+  if (config.showSeconds) snprintf(buffer, sizeof(buffer), "%02d:%02d:%02d", hour, local.tm_min, local.tm_sec);
+  else snprintf(buffer, sizeof(buffer), "%02d:%02d", hour, local.tm_min);
+  String out = prefix + buffer;
+  if (includeDate) {
+    snprintf(buffer, sizeof(buffer), " · %02d.%02d ", local.tm_mon + 1, local.tm_mday);
+    out += buffer;
+    out += weekdayKorean(local.tm_wday);
+  }
+  return out;
+}
+
+void drawCenteredUtf8(const String &text, int baseline, int8_t offsetX = 0) {
+  int width = display.getUTF8Width(text.c_str());
+  display.drawUTF8(clampInt((128 - width) / 2 + static_cast<int>(offsetX), 0, 127), baseline, text.c_str());
+}
+
+void drawAlignedUtf8(const String &text, int baseline, int left, int width, int8_t offsetX = 0) {
+  int textWidth = display.getUTF8Width(text.c_str());
+  int x = config.messageLeft ? left : left + (width - textWidth) / 2;
+  display.drawUTF8(clampInt(x + static_cast<int>(offsetX), left - 1, 127), baseline, text.c_str());
+}
+
+void drawScrollingUtf8(const String &text, int baseline, int left, int width, bool centerIfFits) {
+  int textWidth = display.getUTF8Width(text.c_str());
+  if (!config.messageScroll || textWidth <= width) {
+    int x = config.messageLeft || !centerIfFits ? left : left + (width - textWidth) / 2;
+    display.drawUTF8(x < left ? left : x, baseline, text.c_str());
+    return;
+  }
+  uint32_t elapsedMs = millis() - scrollStartedMs;
+  int travel = textWidth + width + 12;
+  int shift = static_cast<int>((elapsedMs * config.scrollSpeed / 1000UL) % travel);
+  int x = left + width - shift;
+  display.setClipWindow(left, clampInt(baseline - 16, 0, 127),
+                        left + width - 1, clampInt(baseline + 2, 0, 127));
+  display.drawUTF8(x, baseline, text.c_str());
+  display.setMaxClipWindow();
+}
+
+String singleLineMessage(const String &text) {
+  String result = text;
+  result.replace("\r", "");
+  result.replace("\n", " ");
+  return result;
+}
+
+void addEllipsisToFit(String &text, int width) {
+  const String suffix = "...";
+  while (text.length() > 0 && display.getUTF8Width((text + suffix).c_str()) > width) {
+    int last = text.length() - 1;
+    while (last > 0 && (static_cast<uint8_t>(text[last]) & 0xC0) == 0x80) --last;
+    text.remove(last);
+  }
+  text += suffix;
+}
+
+bool splitMessageLines(const String &text, String &line1, String &line2, int maxWidth = 124) {
+  line1 = "";
+  line2 = "";
+  String current;
+  bool second = false;
+  bool overflow = false;
+  for (size_t i = 0; i < text.length();) {
+    size_t bytes = 1;
+    uint8_t first = static_cast<uint8_t>(text[i]);
+    if ((first & 0xE0) == 0xC0) bytes = 2;
+    else if ((first & 0xF0) == 0xE0) bytes = 3;
+    else if ((first & 0xF8) == 0xF0) bytes = 4;
+    size_t end = i + bytes;
+    if (end > text.length()) end = text.length();
+    String character = text.substring(i, end);
+    if (character == "\n") {
+      if (!second) {
+        line1 = current;
+        current = "";
+        second = true;
+      } else {
+        overflow = true;
+        break;
+      }
+      i += bytes;
+      continue;
+    }
+    String candidate = current + character;
+    if (display.getUTF8Width(candidate.c_str()) > maxWidth && current.length() > 0) {
+      if (!second) {
+        line1 = current;
+        current = character;
+        second = true;
+      } else {
+        overflow = true;
+        break;
+      }
+    } else {
+      current = candidate;
+    }
+    i += bytes;
+  }
+  if (!second) line1 = current;
+  else line2 = current;
+  return overflow;
+}
+
+void drawDdayView(bool withMessage, int8_t ox, int8_t oy) {
+  drawTopTitle(config.title, ox, oy);
+  int days = config.lastDday;
+  bool confirmed = computeDday(days);
+  String dday = formatDday(days);
+  if (!confirmed) dday += "?";
+  if (config.ddayTextStyle) display.setFont(u8g2_font_unifont_t_korean2);
+  else display.setFont(u8g2_font_logisoso32_tf);
+  drawCenteredUtf8(dday, 65 + oy, ox);
+  if (withMessage) {
+    display.setFont(u8g2_font_unifont_t_korean2);
+    drawScrollingUtf8(singleLineMessage(config.message), 118 + oy, 1, 126, true);
+    return;
+  }
+
+  // D-day + time mode uses two fixed rows. Date and time never scroll.
+  tm local{};
+  if (timeIsValid() && getLocalTime(&local, 20)) {
+    char dateBuffer[20];
+    snprintf(dateBuffer, sizeof(dateBuffer), "%04d.%02d.%02d", local.tm_year + 1900,
+             local.tm_mon + 1, local.tm_mday);
+    display.setFont(u8g2_font_unifont_t_korean2);
+    drawCenteredUtf8(String(dateBuffer) + " " + weekdayKorean(local.tm_wday), 92 + oy, ox);
+    String clockLine = formatTimeLine(false);
+    display.setFont(u8g2_font_logisoso20_tf);
+    if (display.getUTF8Width(clockLine.c_str()) > 126) display.setFont(u8g2_font_6x10_tf);
+    drawCenteredUtf8(clockLine, 120 + oy, ox);
+  } else {
+    display.setFont(u8g2_font_unifont_t_korean2);
+    drawCenteredUtf8("날짜 미확정", 92 + oy, ox);
+    display.setFont(u8g2_font_logisoso20_tf);
+    drawCenteredUtf8("--:--", 120 + oy, ox);
+  }
+}
+
+void drawMessageOnly(int8_t ox, int8_t oy) {
+  drawTopTitle("MILESTONE", ox, oy);
+  display.setFont(u8g2_font_unifont_t_korean2);
+  String line1, line2;
+  bool overflow = splitMessageLines(config.message, line1, line2);
+  if (overflow && !config.messageScroll && line2.length() == 0) line2 = "...";
+  if (overflow && config.messageScroll) {
+    drawScrollingUtf8(singleLineMessage(config.message), 75 + oy, 1, 126, true);
+  } else if (line2.length() != 0) {
+    if (overflow) addEllipsisToFit(line2, 124);
+    drawAlignedUtf8(line1, 59 + oy, 2, 124, ox);
+    drawAlignedUtf8(line2, 83 + oy, 2, 124, ox);
+  } else {
+    drawAlignedUtf8(line1, 75 + oy, 2, 124, ox);
+  }
+}
+
+void drawClockOnly(int8_t ox, int8_t oy) {
+  drawTopTitle("현재 시각", ox, oy);
+  tm local{};
+  if (!timeIsValid() || !getLocalTime(&local, 20)) {
+    display.setFont(u8g2_font_unifont_t_korean2);
+    drawCenteredUtf8("시간 미확정", 66 + oy, ox);
+    display.setFont(u8g2_font_6x10_tf);
+    display.drawStr(15 + ox, 92 + oy, "HOLD BOOT: SETUP");
+    return;
+  }
+  int hour = local.tm_hour;
+  String prefix;
+  if (!config.hour24) {
+    prefix = hour < 12 ? "AM " : "PM ";
+    hour %= 12;
+    if (hour == 0) hour = 12;
+  }
+  char timeBuffer[16];
+  if (config.showSeconds) snprintf(timeBuffer, sizeof(timeBuffer), "%02d:%02d:%02d", hour, local.tm_min, local.tm_sec);
+  else snprintf(timeBuffer, sizeof(timeBuffer), "%02d:%02d", hour, local.tm_min);
+  String clock = prefix + timeBuffer;
+  display.setFont(config.showSeconds ? u8g2_font_logisoso20_tf : u8g2_font_logisoso28_tf);
+  if (display.getUTF8Width(clock.c_str()) > 126) display.setFont(u8g2_font_6x10_tf);
+  drawCenteredUtf8(clock, 61 + oy, ox);
+  char dateBuffer[20];
+  snprintf(dateBuffer, sizeof(dateBuffer), "%04d.%02d.%02d", local.tm_year + 1900, local.tm_mon + 1, local.tm_mday);
+  display.setFont(u8g2_font_6x10_tf);
+  int dateWidth = display.getStrWidth(dateBuffer);
+  display.drawStr((128 - dateWidth) / 2 + ox, 83 + oy, dateBuffer);
+  display.setFont(u8g2_font_unifont_t_korean2);
+  drawCenteredUtf8(weekdayKorean(local.tm_wday) + "요일 · KST", 113 + oy, ox);
+}
+
+void drawMessageClock(int8_t ox, int8_t oy) {
+  String dateTitle = "날짜 미확정";
+  if (timeIsValid()) {
+    tm local{};
+    if (getLocalTime(&local, 20)) {
+      char dateBuffer[16];
+      snprintf(dateBuffer, sizeof(dateBuffer), "%04d.%02d.%02d", local.tm_year + 1900,
+               local.tm_mon + 1, local.tm_mday);
+      dateTitle = dateBuffer;
+    }
+  }
+  drawTopTitle(dateTitle, ox, oy);
+  if (timeIsValid()) {
+    display.setFont(config.showSeconds ? u8g2_font_logisoso20_tf : u8g2_font_logisoso28_tf);
+    String clockLine = formatTimeLine(false);
+    if (display.getUTF8Width(clockLine.c_str()) > 126) display.setFont(u8g2_font_6x10_tf);
+    drawCenteredUtf8(clockLine, 57 + oy, ox);
+  } else {
+    display.setFont(u8g2_font_unifont_t_korean2);
+    drawCenteredUtf8("시간 미확정", 53 + oy, ox);
+  }
+  display.drawHLine(4, 68 + oy, 120);
+  display.setFont(u8g2_font_unifont_t_korean2);
+  String line1, line2;
+  bool overflow = splitMessageLines(config.message, line1, line2);
+  if (overflow && !config.messageScroll && line2.length() == 0) line2 = "...";
+  if (overflow && config.messageScroll) {
+    drawScrollingUtf8(singleLineMessage(config.message), 105 + oy, 1, 126, true);
+  } else if (line2.length() != 0) {
+    if (overflow) addEllipsisToFit(line2, 124);
+    drawAlignedUtf8(line1, 94 + oy, 2, 124, ox);
+    drawAlignedUtf8(line2, 118 + oy, 2, 124, ox);
+  } else {
+    drawAlignedUtf8(line1, 105 + oy, 2, 124, ox);
+  }
+}
+
+void drawDashboard(int8_t ox, int8_t oy) {
+  drawTopTitle(config.title, ox, oy);
+
+  int days = config.lastDday;
+  bool confirmed = computeDday(days);
+  String dday = formatDday(days);
+  if (!confirmed) dday += "?";
+  display.setFont(config.ddayTextStyle ? u8g2_font_unifont_t_korean2 : u8g2_font_logisoso20_tf);
+  drawCenteredUtf8(dday, 45 + oy, ox);
+
+  tm local{};
+  if (timeIsValid() && getLocalTime(&local, 20)) {
+    display.setFont(config.showSeconds ? u8g2_font_6x10_tf : u8g2_font_logisoso20_tf);
+    drawCenteredUtf8(formatTimeLine(false), 72 + oy, ox);
+    char dateBuffer[20];
+    snprintf(dateBuffer, sizeof(dateBuffer), "%04d.%02d.%02d", local.tm_year + 1900, local.tm_mon + 1, local.tm_mday);
+    display.setFont(u8g2_font_unifont_t_korean2);
+    drawCenteredUtf8(String(dateBuffer) + " " + weekdayKorean(local.tm_wday), 96 + oy, ox);
+  } else {
+    display.setFont(u8g2_font_unifont_t_korean2);
+    drawCenteredUtf8("시간 미확정", 78 + oy, ox);
+  }
+
+  display.drawHLine(4, 101 + oy, 120);
+  display.setFont(u8g2_font_unifont_t_korean2);
+  drawScrollingUtf8(singleLineMessage(config.message), 123 + oy, 1, 126, true);
+}
+
+void drawPortalScreen() {
+  display.clearBuffer();
+  display.setFont(u8g2_font_6x10_tf);
+  display.drawStr(0, 10, "MILESTONE SETUP    AP");
+  display.drawHLine(0, 14, 128);
+  display.drawStr(2, 33, "Wi-Fi:");
+  display.setFont(u8g2_font_5x8_tf);
+  display.drawStr(2, 46, AP_SSID);
+  display.setFont(u8g2_font_6x10_tf);
+  display.drawStr(2, 65, "Password:");
+  display.setFont(u8g2_font_7x14B_tf);
+  display.drawStr(15, 83, apPassword.c_str());
+  display.setFont(u8g2_font_6x10_tf);
+  display.drawStr(13, 104, "192.168.4.1");
+  uint32_t secondsLeft = AP_TIMEOUT_MS > millis() - portalStartedMs ? (AP_TIMEOUT_MS - (millis() - portalStartedMs)) / 1000 : 0;
+  String footer = String("closes in ") + secondsLeft / 60 + "m";
+  display.drawStr(28, 123, footer.c_str());
+  display.sendBuffer();
+}
+
+void drawButtonOverlay(uint32_t heldMs) {
+  if (!oledReady) return;
+  display.clearBuffer();
+  display.setFont(u8g2_font_7x14B_tf);
+  if (resetConfirmation && heldMs >= RESET_CONFIRM_HOLD_MS) display.drawStr(3, 50, "RELEASE TO RESET");
+  else if (resetConfirmation) display.drawStr(4, 50, "HOLD 3S TO RESET");
+  else if (heldMs >= 8000) display.drawStr(7, 50, "RELEASE: RESET?");
+  else if (heldMs >= 3000) display.drawStr(8, 50, "RELEASE: SETUP");
+  else display.drawStr(24, 50, "HOLDING...");
+  display.setFont(u8g2_font_logisoso24_tn);
+  String seconds = String(heldMs / 1000.0f, 1) + "s";
+  int width = display.getStrWidth(seconds.c_str());
+  display.drawStr((128 - width) / 2, 91, seconds.c_str());
+  display.sendBuffer();
+}
+
+void drawResetConfirmation() {
+  if (!oledReady) return;
+  display.clearBuffer();
+  display.setFont(u8g2_font_7x14B_tf);
+  display.drawStr(4, 28, "RESET SETTINGS?");
+  display.setFont(u8g2_font_6x10_tf);
+  display.drawStr(8, 55, "Within 5 seconds:");
+  display.drawStr(13, 74, "Hold BOOT 3s");
+  uint32_t left = RESET_CONFIRM_WINDOW_MS > millis() - resetConfirmStartedMs ? (RESET_CONFIRM_WINDOW_MS - (millis() - resetConfirmStartedMs) + 999) / 1000 : 0;
+  String countdown = String(left) + " sec";
+  int width = display.getStrWidth(countdown.c_str());
+  display.drawStr((128 - width) / 2, 105, countdown.c_str());
+  display.sendBuffer();
+}
+
+void drawThermalSafeScreen() {
+  if (!oledReady) return;
+  display.clearBuffer();
+  display.setFont(u8g2_font_7x14B_tf);
+  display.drawStr(thermalSafeModeFromSensorFault ? 4 : 22, 27,
+                  thermalSafeModeFromSensorFault ? "! TEMP SENSOR !" : "! OVERHEAT !");
+  char temperature[10];
+  if (isnan(chipTemperatureC)) snprintf(temperature, sizeof(temperature), "--C");
+  else snprintf(temperature, sizeof(temperature), "%dC", static_cast<int>(chipTemperatureC + 0.5f));
+  int width = display.getStrWidth(temperature);
+  display.drawStr((128 - width) / 2, 68, temperature);
+  display.setFont(u8g2_font_6x10_tf);
+  display.drawStr(4, 91, "CPU 80MHz / WIFI OFF");
+  display.drawStr(thermalSafeModeFromSensorFault ? 10 : 13, 108,
+                  thermalSafeModeFromSensorFault ? "SENSOR RETRY ACTIVE" : "AUTOMATIC COOLING");
+  display.drawStr(thermalSafeModeFromSensorFault ? 14 : 10, 123,
+                  thermalSafeModeFromSensorFault ? "UNPLUG IF HOT" : "UNPLUG IF NOT COOL");
+  display.sendBuffer();
+}
+
+void drawUpdateScreen() {
+  if (!oledReady) return;
+  display.clearBuffer();
+  display.setFont(u8g2_font_7x14B_tf);
+  if (updateState == UpdateState::CHECKING) {
+    display.drawStr(13, 34, "CHECKING UPDATE");
+    display.setFont(u8g2_font_6x10_tf);
+    display.drawStr(14, 65, "GitHub Release");
+    display.drawStr(20, 88, "Please wait...");
+  } else if (updateState == UpdateState::AVAILABLE && updatePromptVisible) {
+    display.drawStr(7, 25, "UPDATE AVAILABLE");
+    display.setFont(u8g2_font_6x10_tf);
+    String versions = String(FIRMWARE_VERSION) + " -> " + latestFirmwareVersion;
+    int width = display.getStrWidth(versions.c_str());
+    display.drawStr(max(0, (128 - width) / 2), 52, versions.c_str());
+    display.drawStr(15, 78, "Tap BOOT: install");
+    uint32_t left = UPDATE_PROMPT_MS > millis() - updatePromptStartedMs
+                      ? (UPDATE_PROMPT_MS - (millis() - updatePromptStartedMs) + 999) / 1000 : 0;
+    String footer = String("Later in ") + left + " sec";
+    width = display.getStrWidth(footer.c_str());
+    display.drawStr(max(0, (128 - width) / 2), 106, footer.c_str());
+  } else if (updateState == UpdateState::DOWNLOADING) {
+    display.drawStr(15, 25, "DOWNLOADING");
+    display.setFont(u8g2_font_logisoso24_tn);
+    uint32_t percent = latestFirmwareSize > 0
+                         ? static_cast<uint32_t>((updateDownloadedBytes * 100ULL) / latestFirmwareSize) : 0;
+    String value = String(percent) + "%";
+    int width = display.getStrWidth(value.c_str());
+    display.drawStr((128 - width) / 2, 70, value.c_str());
+    display.drawFrame(8, 91, 112, 10);
+    const uint32_t progressWidth = percent >= 100 ? 108 : percent * 108 / 100;
+    display.drawBox(10, 93, static_cast<uint8_t>(progressWidth), 6);
+    display.setFont(u8g2_font_5x8_tf);
+    display.drawStr(19, 121, "DO NOT POWER OFF");
+  } else if (updateState == UpdateState::VERIFYING) {
+    display.drawStr(20, 38, "VERIFYING");
+    display.setFont(u8g2_font_6x10_tf);
+    display.drawStr(15, 70, "SHA-256 + image");
+    display.drawStr(20, 96, "Please wait...");
+  } else if (updateState == UpdateState::READY_TO_REBOOT) {
+    display.drawStr(11, 40, "UPDATE READY");
+    display.setFont(u8g2_font_6x10_tf);
+    display.drawStr(18, 72, "Rebooting into");
+    String version = String("version ") + latestFirmwareVersion;
+    int width = display.getStrWidth(version.c_str());
+    display.drawStr(max(0, (128 - width) / 2), 94, version.c_str());
+  } else if (updateState == UpdateState::ERROR_STATE) {
+    display.drawStr(17, 27, "UPDATE ERROR");
+    display.setFont(u8g2_font_5x8_tf);
+    String line = updateError;
+    if (line.length() > 23) line = line.substring(0, 23);
+    int width = display.getStrWidth(line.c_str());
+    display.drawStr(max(0, (128 - width) / 2), 62, line.c_str());
+    display.setFont(u8g2_font_6x10_tf);
+    display.drawStr(12, 94, "Retry in 6 hours");
+    display.drawStr(12, 116, "or next reboot");
+  }
+  display.sendBuffer();
+}
+
+void drawMainScreen() {
+  if (!oledReady || displaySleeping) return;
+  if (thermalSafeMode) {
+    drawThermalSafeScreen();
+    return;
+  }
+  if (portalActive) {
+    drawPortalScreen();
+    return;
+  }
+  if (updateState == UpdateState::CHECKING || updateState == UpdateState::DOWNLOADING ||
+      updateState == UpdateState::VERIFYING || updateState == UpdateState::READY_TO_REBOOT ||
+      updateState == UpdateState::ERROR_STATE ||
+      (updateState == UpdateState::AVAILABLE && updatePromptVisible)) {
+    drawUpdateScreen();
+    return;
+  }
+  if (resetConfirmation) {
+    drawResetConfirmation();
+    return;
+  }
+  int8_t ox, oy;
+  getBurninOffset(ox, oy);
+  display.clearBuffer();
+  switch (currentView) {
+    case View::DDAY_TIME: drawDdayView(false, ox, oy); break;
+    case View::DDAY_MESSAGE: drawDdayView(true, ox, oy); break;
+    case View::MESSAGE_ONLY: drawMessageOnly(ox, oy); break;
+    case View::CLOCK_ONLY: drawClockOnly(ox, oy); break;
+    case View::MESSAGE_CLOCK: drawMessageClock(ox, oy); break;
+    case View::DASHBOARD: drawDashboard(ox, oy); break;
+  }
+  display.sendBuffer();
+}
+
+String randomHex(size_t length) {
+  static const char alphabet[] = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  String out;
+  out.reserve(length);
+  for (size_t i = 0; i < length; ++i) out += alphabet[esp_random() % (sizeof(alphabet) - 1)];
+  return out;
+}
+
+void stopMdns() {
+  if (mdnsActive) {
+    MDNS.end();
+    mdnsActive = false;
+  }
+}
+
+void startMdns() {
+  if (mdnsActive || WiFi.status() != WL_CONNECTED) return;
+  if (MDNS.begin(HOSTNAME)) {
+    MDNS.addService("http", "tcp", 80);
+    mdnsActive = true;
+  }
+}
+
+void ntpTimeAvailable(struct timeval *) {
+  ntpSyncEvent = true;
+}
+
+void beginNtpRequest() {
+  if (WiFi.status() != WL_CONNECTED) return;
+  ntpSyncEvent = false;
+  ntpFailed = false;
+  ntpRequestActive = true;
+  ntpDeadlineMs = millis() + NTP_TIMEOUT_MS;
+  configTzTime(TZ_INFO, "time.google.com", "pool.ntp.org", "time.cloudflare.com");
+  logLine("NTP request started");
+}
+
+void markNtpSuccess() {
+  ntpRequestActive = false;
+  internetVerified = true;
+  ntpFailed = false;
+  config.lastSync = static_cast<uint64_t>(time(nullptr));
+  prefs.putULong64("last_sync", config.lastSync);
+  int days;
+  computeDday(days, true);
+  logLine("NTP synchronized");
+}
+
+void beginStationConnection(const String &ssid, const String &password, bool preserveAp) {
+  stopMdns();
+  internetVerified = false;
+  ntpFailed = false;
+  WiFi.mode(preserveAp ? WIFI_AP_STA : WIFI_STA);
+  WiFi.setAutoReconnect(false);  // The firmware selects among saved networks itself.
+  WiFi.setSleep(true);
+  WiFi.disconnect(false, false);
+  WiFi.begin(ssid.c_str(), password.c_str());
+  wifiDeadlineMs = millis() + WIFI_CONNECT_TIMEOUT_MS;
+  if (wifiTestState == WifiTestState::IDLE) setRuntimeState(RuntimeState::CONNECTING);
+  logLine("Wi-Fi connection started");
+}
+
+void beginSavedWifiConnection(uint8_t index, bool preserveAp) {
+  if (index >= config.savedNetworkCount) return;
+  activeWifiIndex = index;
+  beginStationConnection(config.savedNetworks[index].ssid,
+                         config.savedNetworks[index].password,
+                         preserveAp);
+}
+
+void startSavedWifiSequence(bool preserveAp) {
+  savedWifiScanActive = false;
+  savedWifiScanCompleted = false;
+  savedWifiPreserveAp = preserveAp;
+  wifiCandidateCount = 0;
+  wifiCandidatePosition = 0;
+  activeWifiIndex = NO_WIFI_INDEX;
+  if (config.savedNetworkCount == 0) {
+    setRuntimeState(RuntimeState::UNPROVISIONED);
+    return;
+  }
+  // Index 0 is the most recently successful network.
+  wifiCandidateOrder[0] = 0;
+  wifiCandidateCount = 1;
+  beginSavedWifiConnection(0, preserveAp);
+}
+
+bool startSavedWifiScan() {
+  WiFi.scanDelete();
+  int started = WiFi.scanNetworks(true, false, false, 300, 0);
+  if (started == WIFI_SCAN_FAILED) return false;
+  savedWifiScanActive = true;
+  savedWifiScanCompleted = true;
+  savedWifiScanDeadlineMs = millis() + WIFI_SCAN_TIMEOUT_MS;
+  logLine("scanning for other saved Wi-Fi networks");
+  return true;
+}
+
+bool finishSavedWifiScanAndConnect() {
+  int count = WiFi.scanComplete();
+  if (count == WIFI_SCAN_RUNNING && !deadlineReached(millis(), savedWifiScanDeadlineMs)) return true;
+  savedWifiScanActive = false;
+  if (count < 0) {
+    WiFi.scanDelete();
+    return false;
+  }
+
+  int bestRssi[MAX_SAVED_NETWORKS];
+  for (uint8_t i = 0; i < MAX_SAVED_NETWORKS; ++i) bestRssi[i] = -1000;
+  for (int scanIndex = 0; scanIndex < count; ++scanIndex) {
+    int savedIndex = findSavedNetwork(WiFi.SSID(scanIndex));
+    if (savedIndex <= 0) continue;  // The most recent network was already tried.
+    bestRssi[savedIndex] = max(bestRssi[savedIndex], WiFi.RSSI(scanIndex));
+  }
+  WiFi.scanDelete();
+
+  wifiCandidateCount = 1;
+  bool selected[MAX_SAVED_NETWORKS] = {};
+  selected[0] = true;
+  while (wifiCandidateCount < config.savedNetworkCount) {
+    int bestIndex = -1;
+    int strongest = -1001;
+    for (uint8_t i = 1; i < config.savedNetworkCount; ++i) {
+      if (!selected[i] && bestRssi[i] > strongest) {
+        strongest = bestRssi[i];
+        bestIndex = i;
+      }
+    }
+    if (bestIndex < 0 || strongest == -1000) break;
+    selected[bestIndex] = true;
+    wifiCandidateOrder[wifiCandidateCount++] = static_cast<uint8_t>(bestIndex);
+  }
+
+  wifiCandidatePosition = 1;
+  if (wifiCandidatePosition >= wifiCandidateCount) return false;
+  beginSavedWifiConnection(wifiCandidateOrder[wifiCandidatePosition], savedWifiPreserveAp);
+  return true;
+}
+
+bool tryNextSavedWifiCandidate() {
+  if (!savedWifiScanCompleted) return startSavedWifiScan();
+  ++wifiCandidatePosition;
+  if (wifiCandidatePosition >= wifiCandidateCount) return false;
+  beginSavedWifiConnection(wifiCandidateOrder[wifiCandidatePosition], savedWifiPreserveAp);
+  return true;
+}
+
+void scheduleRetry() {
+  uint32_t retrySeconds = config.retryPeriodSec < 30 ? 30 : config.retryPeriodSec;
+  nextRetryMs = millis() + retrySeconds * 1000UL;
+}
+
+void stopPortal();
+void registerPortalRoutes();
+void selectFirstEnabledCycleView();
+void sendJson(int status, const String &json);
+void enterWifiSleep();
+void requestFirmwareUpdateCheck(UpdateCheckReason reason);
+void processFirmwareUpdate();
+
+void startPortal() {
+  if (thermalSafeMode) return;
+  if (portalActive) {
+    portalStartedMs = millis();
+    return;
+  }
+  apPassword = randomHex(8);
+  sessionToken = randomHex(20);
+  WiFi.mode(WIFI_AP_STA);
+  if (!WiFi.softAP(AP_SSID, apPassword.c_str())) {
+    logLine("SoftAP start failed");
+    return;
+  }
+  dnsServer.start(53, "*", WiFi.softAPIP());
+  registerPortalRoutes();
+  server.begin();
+  portalActive = true;
+  portalClosingAfterSuccess = false;
+  portalStartedMs = millis();
+  wakeDisplay();
+  setRuntimeState(RuntimeState::SETUP_AP);
+  logLine(String("setup AP started at ") + WiFi.softAPIP().toString());
+}
+
+void stopPortal() {
+  if (!portalActive) return;
+  dnsServer.stop();
+  server.stop();
+  WiFi.softAPdisconnect(true);
+  portalActive = false;
+  portalClosingAfterSuccess = false;
+  wifiTestState = WifiTestState::IDLE;
+  wifiTestError = "";
+  pendingSsid = "";
+  pendingPass = "";
+  if (WiFi.status() == WL_CONNECTED) {
+    WiFi.mode(WIFI_STA);
+    startMdns();
+    if (internetVerified && timeIsValid() && !ntpFailed) {
+      setRuntimeState(RuntimeState::RUNNING_ONLINE);
+    } else {
+      setRuntimeState(RuntimeState::RUNNING_OFFLINE);
+      scheduleRetry();
+    }
+  } else if (config.savedNetworkCount > 0) {
+    startSavedWifiSequence(false);
+  } else {
+    WiFi.mode(WIFI_OFF);
+    setRuntimeState(RuntimeState::UNPROVISIONED);
+  }
+  wakeDisplay();
+  logLine("setup AP stopped");
+}
+
+bool requestFromSetupAp() {
+  return portalActive && server.client().localIP() == WiFi.softAPIP();
+}
+
+bool requireSetupApRequest(bool jsonResponse = true) {
+  if (requestFromSetupAp()) return true;
+  if (jsonResponse) sendJson(403, "{\"error\":\"설정 Wi-Fi에서만 접근할 수 있습니다.\"}");
+  else server.send(403, "text/plain; charset=UTF-8", "설정 Wi-Fi에서만 접근할 수 있습니다.");
+  return false;
+}
+
+bool validToken() {
+  if (!server.hasHeader("Cookie")) return false;
+  String expected = String("MILESTONE_TOKEN=") + sessionToken;
+  return server.header("Cookie").indexOf(expected) >= 0;
+}
+
+void sendJson(int status, const String &json) {
+  server.sendHeader("Cache-Control", "no-store");
+  server.send(status, "application/json; charset=UTF-8", json);
+}
+
+String formatEpoch(uint64_t epoch) {
+  if (epoch < static_cast<uint64_t>(MIN_VALID_EPOCH)) return "";
+  time_t value = static_cast<time_t>(epoch);
+  tm local{};
+  localtime_r(&value, &local);
+  char buffer[32];
+  strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S KST", &local);
+  return buffer;
+}
+
+bool parseJsonStringField(const String &json, const char *key, String &value) {
+  String marker = String('"') + key + '"';
+  int position = json.indexOf(marker);
+  if (position < 0) return false;
+  position = json.indexOf(':', position + marker.length());
+  if (position < 0) return false;
+  ++position;
+  while (position < static_cast<int>(json.length()) && isspace(static_cast<unsigned char>(json[position]))) ++position;
+  if (position >= static_cast<int>(json.length()) || json[position] != '"') return false;
+  ++position;
+  value = "";
+  while (position < static_cast<int>(json.length())) {
+    char c = json[position++];
+    if (c == '"') return true;
+    if (c == '\\') {
+      if (position >= static_cast<int>(json.length())) return false;
+      c = json[position++];
+      if (c == 'n') value += '\n';
+      else if (c == 'r') value += '\r';
+      else if (c == 't') value += '\t';
+      else if (c == '"' || c == '\\' || c == '/') value += c;
+      else return false;
+    } else {
+      value += c;
+    }
+    if (value.length() > 256) return false;
+  }
+  return false;
+}
+
+bool parseJsonUintField(const String &json, const char *key, uint32_t &value) {
+  String marker = String('"') + key + '"';
+  int position = json.indexOf(marker);
+  if (position < 0) return false;
+  position = json.indexOf(':', position + marker.length());
+  if (position < 0) return false;
+  ++position;
+  while (position < static_cast<int>(json.length()) && isspace(static_cast<unsigned char>(json[position]))) ++position;
+  if (position >= static_cast<int>(json.length()) || !isDigit(json[position])) return false;
+  uint64_t parsed = 0;
+  while (position < static_cast<int>(json.length()) && isDigit(json[position])) {
+    parsed = parsed * 10ULL + static_cast<uint8_t>(json[position++] - '0');
+    if (parsed > UINT32_MAX) return false;
+  }
+  value = static_cast<uint32_t>(parsed);
+  return true;
+}
+
+bool parseSemanticVersion(const String &text, uint16_t parts[3]) {
+  int start = 0;
+  for (uint8_t index = 0; index < 3; ++index) {
+    int end = index < 2 ? text.indexOf('.', start) : text.length();
+    if (end <= start || (index < 2 && end < 0)) return false;
+    uint32_t part = 0;
+    for (int i = start; i < end; ++i) {
+      if (!isDigit(text[i])) return false;
+      part = part * 10UL + static_cast<uint8_t>(text[i] - '0');
+      if (part > UINT16_MAX) return false;
+    }
+    parts[index] = static_cast<uint16_t>(part);
+    start = end + 1;
+  }
+  return start == static_cast<int>(text.length()) + 1;
+}
+
+int compareSemanticVersions(const String &left, const String &right) {
+  uint16_t a[3], b[3];
+  if (!parseSemanticVersion(left, a) || !parseSemanticVersion(right, b)) return 0;
+  for (uint8_t i = 0; i < 3; ++i) {
+    if (a[i] < b[i]) return -1;
+    if (a[i] > b[i]) return 1;
+  }
+  return 0;
+}
+
+bool validSha256(const String &value) {
+  if (value.length() != 64) return false;
+  for (size_t i = 0; i < value.length(); ++i) {
+    const char c = value[i];
+    if (!isDigit(c) && !(c >= 'a' && c <= 'f') && !(c >= 'A' && c <= 'F')) return false;
+  }
+  return true;
+}
+
+String sha256Hex(const uint8_t digest[32]) {
+  static const char hex[] = "0123456789abcdef";
+  char result[65];
+  for (uint8_t i = 0; i < 32; ++i) {
+    result[i * 2] = hex[digest[i] >> 4];
+    result[i * 2 + 1] = hex[digest[i] & 0x0F];
+  }
+  result[64] = '\0';
+  return String(result);
+}
+
+void setUpdateState(UpdateState state) {
+  updateState = state;
+  updateStateStartedMs = millis();
+  wakeDisplay();
+  logLine(String("update state -> ") + updateStateName(state));
+}
+
+void failFirmwareUpdate(const String &reason) {
+  updateError = reason;
+  updateInstallRequested = false;
+  updatePromptVisible = false;
+  nextUpdateRetryMs = millis() + UPDATE_RETRY_MS;
+  setUpdateState(UpdateState::ERROR_STATE);
+  logLine(String("firmware update failed: ") + reason);
+}
+
+bool readBoundedHttpBody(HTTPClient &http, String &body, size_t maximumBytes) {
+  const int contentLength = http.getSize();
+  if (contentLength > static_cast<int>(maximumBytes)) return false;
+  NetworkClient *stream = http.getStreamPtr();
+  body = "";
+  if (contentLength > 0) body.reserve(contentLength + 1);
+  uint32_t lastDataMs = millis();
+  uint8_t buffer[256];
+  while (http.connected() || stream->available()) {
+    int available = stream->available();
+    if (available > 0) {
+      size_t wanted = min(static_cast<size_t>(available), sizeof(buffer));
+      int count = stream->read(buffer, wanted);
+      if (count <= 0) continue;
+      if (body.length() + static_cast<size_t>(count) > maximumBytes) return false;
+      for (int i = 0; i < count; ++i) body += static_cast<char>(buffer[i]);
+      lastDataMs = millis();
+      if (contentLength >= 0 && body.length() >= static_cast<size_t>(contentLength)) break;
+    } else {
+      if (elapsed(millis(), lastDataMs, UPDATE_HTTP_TIMEOUT_MS)) return false;
+      delay(1);
+    }
+  }
+  return body.length() > 0 && (contentLength < 0 || body.length() == static_cast<size_t>(contentLength));
+}
+
+void requestFirmwareUpdateCheck(UpdateCheckReason reason) {
+  if (pendingUpdateCheckReason != UpdateCheckReason::NONE || updateState == UpdateState::CHECKING ||
+      updateState == UpdateState::DOWNLOADING || updateState == UpdateState::VERIFYING ||
+      updateState == UpdateState::READY_TO_REBOOT) return;
+  pendingUpdateCheckReason = reason;
+}
+
+bool checkFirmwareManifest(UpdateCheckReason reason) {
+  if (reason == UpdateCheckReason::BOOT) bootUpdateCheckPending = false;
+  if (thermalSafeMode || temperatureSensorFault || thermalWarning) {
+    failFirmwareUpdate("temperature protection active");
+    return false;
+  }
+  if (WiFi.status() != WL_CONNECTED) {
+    failFirmwareUpdate("Wi-Fi disconnected");
+    return false;
+  }
+  if (!timeIsValid()) {
+    failFirmwareUpdate("secure clock unavailable");
+    return false;
+  }
+  if (ESP.getFreeHeap() < UPDATE_MIN_FREE_HEAP || ESP.getMaxAllocHeap() < UPDATE_MIN_LARGEST_BLOCK) {
+    failFirmwareUpdate("not enough internal RAM");
+    return false;
+  }
+
+  setUpdateState(UpdateState::CHECKING);
+  drawUpdateScreen();
+  processLed();
+  NetworkClientSecure secureClient;
+  secureClient.setCACert(MILESTONE_UPDATE_ROOT_CA);
+  secureClient.setHandshakeTimeout(12);
+  HTTPClient http;
+  http.setConnectTimeout(UPDATE_HTTP_TIMEOUT_MS);
+  http.setTimeout(UPDATE_HTTP_TIMEOUT_MS);
+  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+  if (!http.begin(secureClient, UPDATE_MANIFEST_URL)) {
+    failFirmwareUpdate("manifest request setup failed");
+    return false;
+  }
+  http.addHeader("Accept", "application/json");
+  http.addHeader("User-Agent", String("MILESTONE-Core/") + FIRMWARE_VERSION);
+  int response = http.GET();
+  if (response != HTTP_CODE_OK) {
+    http.end();
+    failFirmwareUpdate(String("manifest HTTP ") + response);
+    return false;
+  }
+  String manifest;
+  bool bodyRead = readBoundedHttpBody(http, manifest, UPDATE_MANIFEST_MAX_BYTES);
+  http.end();
+  if (!bodyRead) {
+    failFirmwareUpdate("manifest too large or timed out");
+    return false;
+  }
+
+  String version, sha256, notes;
+  uint32_t size = 0;
+  uint16_t versionParts[3];
+  if (!parseJsonStringField(manifest, "version", version) || !parseSemanticVersion(version, versionParts) ||
+      !parseJsonUintField(manifest, "size", size) || size == 0 ||
+      !parseJsonStringField(manifest, "sha256", sha256) || !validSha256(sha256)) {
+    failFirmwareUpdate("invalid release manifest");
+    return false;
+  }
+  parseJsonStringField(manifest, "notes", notes);
+  sha256.toLowerCase();
+  latestFirmwareVersion = version;
+  latestFirmwareSize = size;
+  latestFirmwareSha256 = sha256;
+  latestFirmwareNotes = notes;
+  lastUpdateCheckEpoch = static_cast<uint64_t>(time(nullptr));
+  prefs.putULong64("ota_last_ok", lastUpdateCheckEpoch);
+  prefs.putString("ota_latest", latestFirmwareVersion);
+  prefs.putString("ota_result", "ok");
+  bootUpdateCheckPending = false;
+  nextUpdateRetryMs = 0;
+  updateError = "";
+
+  if (compareSemanticVersions(FIRMWARE_VERSION, latestFirmwareVersion) < 0) {
+    updatePromptVisible = reason != UpdateCheckReason::MANUAL || !portalActive;
+    updatePromptStartedMs = millis();
+    setUpdateState(UpdateState::AVAILABLE);
+    logLine(String("firmware update available: ") + FIRMWARE_VERSION + " -> " + latestFirmwareVersion);
+    return true;
+  }
+
+  updatePromptVisible = false;
+  setUpdateState(UpdateState::IDLE);
+  logLine(String("firmware is current: ") + FIRMWARE_VERSION);
+  return true;
+}
+
+void suspendPortalForFirmwareUpdate() {
+  if (!portalActive) return;
+  dnsServer.stop();
+  server.stop();
+  WiFi.softAPdisconnect(true);
+  portalActive = false;
+  portalClosingAfterSuccess = false;
+  wifiTestState = WifiTestState::IDLE;
+  if (WiFi.status() == WL_CONNECTED) WiFi.mode(WIFI_STA);
+}
+
+bool installFirmwareUpdate() {
+  if (updateState != UpdateState::AVAILABLE || latestFirmwareVersion.length() == 0 ||
+      latestFirmwareSize == 0 || !validSha256(latestFirmwareSha256)) {
+    failFirmwareUpdate("release metadata unavailable");
+    return false;
+  }
+  if (thermalSafeMode || temperatureSensorFault || thermalWarning ||
+      (!isnan(chipTemperatureC) && chipTemperatureC >= THERMAL_THROTTLE_C)) {
+    failFirmwareUpdate("temperature too high");
+    return false;
+  }
+  if (WiFi.status() != WL_CONNECTED) {
+    failFirmwareUpdate("Wi-Fi disconnected");
+    return false;
+  }
+  if (ESP.getFreeHeap() < UPDATE_MIN_FREE_HEAP || ESP.getMaxAllocHeap() < UPDATE_MIN_LARGEST_BLOCK) {
+    failFirmwareUpdate("not enough internal RAM");
+    return false;
+  }
+  if (latestFirmwareSize > ESP.getFreeSketchSpace()) {
+    failFirmwareUpdate("OTA partition too small");
+    return false;
+  }
+
+  suspendPortalForFirmwareUpdate();
+  stopMdns();
+  WiFi.scanDelete();
+  WiFi.setSleep(false);
+  updatePromptVisible = false;
+  updateDownloadedBytes = 0;
+  setUpdateState(UpdateState::DOWNLOADING);
+  drawUpdateScreen();
+
+  const String firmwareUrl = String(UPDATE_RELEASE_BASE_URL) + latestFirmwareVersion + '/' + UPDATE_ASSET_NAME;
+  NetworkClientSecure secureClient;
+  secureClient.setCACert(MILESTONE_UPDATE_ROOT_CA);
+  secureClient.setHandshakeTimeout(12);
+  HTTPClient http;
+  http.setConnectTimeout(UPDATE_HTTP_TIMEOUT_MS);
+  http.setTimeout(UPDATE_DOWNLOAD_STALL_MS);
+  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+  if (!http.begin(secureClient, firmwareUrl)) {
+    failFirmwareUpdate("firmware request setup failed");
+    return false;
+  }
+  http.addHeader("Accept", "application/octet-stream");
+  http.addHeader("User-Agent", String("MILESTONE-Core/") + FIRMWARE_VERSION);
+  int response = http.GET();
+  if (response != HTTP_CODE_OK) {
+    http.end();
+    failFirmwareUpdate(String("firmware HTTP ") + response);
+    return false;
+  }
+  int responseSize = http.getSize();
+  if (responseSize >= 0 && static_cast<uint32_t>(responseSize) != latestFirmwareSize) {
+    http.end();
+    failFirmwareUpdate("firmware size header mismatch");
+    return false;
+  }
+  if (!Update.begin(latestFirmwareSize, U_FLASH)) {
+    http.end();
+    failFirmwareUpdate(String("OTA begin: ") + Update.errorString());
+    return false;
+  }
+
+  mbedtls_sha256_context shaContext;
+  mbedtls_sha256_init(&shaContext);
+  mbedtls_sha256_starts(&shaContext, 0);
+  NetworkClient *stream = http.getStreamPtr();
+  uint8_t buffer[UPDATE_DOWNLOAD_BUFFER_BYTES];
+  uint32_t lastDataMs = millis();
+  bool failed = false;
+  String failure;
+  while (updateDownloadedBytes < latestFirmwareSize) {
+    int available = stream->available();
+    if (available > 0) {
+      size_t remaining = latestFirmwareSize - updateDownloadedBytes;
+      size_t wanted = min(min(static_cast<size_t>(available), sizeof(buffer)), remaining);
+      int count = stream->read(buffer, wanted);
+      if (count <= 0) continue;
+      mbedtls_sha256_update(&shaContext, buffer, count);
+      if (Update.write(buffer, count) != static_cast<size_t>(count)) {
+        failed = true;
+        failure = String("OTA write: ") + Update.errorString();
+        break;
+      }
+      updateDownloadedBytes += static_cast<uint32_t>(count);
+      lastDataMs = millis();
+      drawUpdateScreen();
+      processLed();
+      refreshChipTemperature();
+      if (temperatureSensorFault || (!isnan(chipTemperatureC) && chipTemperatureC >= THERMAL_CRITICAL_C)) {
+        failed = true;
+        failure = "temperature protection stopped update";
+        break;
+      }
+    } else {
+      if (!http.connected() || elapsed(millis(), lastDataMs, UPDATE_DOWNLOAD_STALL_MS)) {
+        failed = true;
+        failure = "firmware download interrupted";
+        break;
+      }
+      processLed();
+      delay(1);
+    }
+  }
+  uint8_t digest[32];
+  mbedtls_sha256_finish(&shaContext, digest);
+  mbedtls_sha256_free(&shaContext);
+  http.end();
+
+  if (failed || updateDownloadedBytes != latestFirmwareSize) {
+    Update.abort();
+    failFirmwareUpdate(failure.length() ? failure : "firmware length mismatch");
+    return false;
+  }
+  setUpdateState(UpdateState::VERIFYING);
+  drawUpdateScreen();
+  if (!sha256Hex(digest).equalsIgnoreCase(latestFirmwareSha256)) {
+    Update.abort();
+    failFirmwareUpdate("SHA-256 mismatch");
+    return false;
+  }
+  if (!Update.end()) {
+    failFirmwareUpdate(String("OTA finalize: ") + Update.errorString());
+    return false;
+  }
+
+  prefs.putString("ota_result", "installed");
+  setUpdateState(UpdateState::READY_TO_REBOOT);
+  drawUpdateScreen();
+  processLed();
+  logLine(String("firmware verified; rebooting into ") + latestFirmwareVersion);
+  delay(1200);
+  ESP.restart();
+  return true;
+}
+
+void handleStatus() {
+  if (!requireSetupApRequest()) return;
+  String wifiLabel;
+  if (runtimeState == RuntimeState::WIFI_SLEEP) wifiLabel = "sleep";
+  else if (WiFi.status() == WL_CONNECTED) wifiLabel = String(WiFi.SSID()) + " (" + WiFi.RSSI() + " dBm)";
+  else wifiLabel = "disconnected";
+  String ip = portalActive ? WiFi.softAPIP().toString() : (WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString() : "");
+  String json = "{";
+  json += "\"firmware\":\"" + String(FIRMWARE_VERSION) + "\",";
+  json += "\"state\":\"" + String(runtimeStateName(runtimeState)) + "\",";
+  json += "\"wifi\":\"" + jsonEscape(wifiLabel) + "\",";
+  json += "\"ip\":\"" + jsonEscape(ip) + "\",";
+  json += "\"time_valid\":" + String(timeIsValid() ? "true" : "false") + ",";
+  json += "\"last_sync\":\"" + jsonEscape(formatEpoch(config.lastSync)) + "\",";
+  json += "\"wifi_test\":\"" + String(wifiTestStateName(wifiTestState)) + "\",";
+  json += "\"wifi_error\":\"" + jsonEscape(wifiTestError) + "\",";
+  json += "\"update_state\":\"" + String(updateStateName(updateState)) + "\",";
+  json += "\"latest_firmware\":\"" + jsonEscape(latestFirmwareVersion) + "\",";
+  json += "\"update_available\":" + String(updateState == UpdateState::AVAILABLE ? "true" : "false") + ",";
+  const uint32_t updateProgress = latestFirmwareSize > 0
+                                    ? static_cast<uint32_t>((updateDownloadedBytes * 100ULL) / latestFirmwareSize) : 0;
+  json += "\"update_progress\":" + String(updateProgress) + ",";
+  json += "\"update_error\":\"" + jsonEscape(updateError) + "\",";
+  json += "\"last_update_check\":\"" + jsonEscape(formatEpoch(lastUpdateCheckEpoch)) + "\"}";
+  sendJson(200, json);
+}
+
+void handleGetConfig() {
+  if (!requireSetupApRequest()) return;
+  String json = "{";
+  String preferredSsid = config.savedNetworkCount > 0 ? config.savedNetworks[0].ssid : "";
+  json += "\"wifi_ssid\":\"" + jsonEscape(preferredSsid) + "\",";
+  json += "\"saved_networks\":[";
+  for (uint8_t i = 0; i < config.savedNetworkCount; ++i) {
+    if (i) json += ',';
+    json += "{\"ssid\":\"" + jsonEscape(config.savedNetworks[i].ssid) + "\",\"preferred\":";
+    json += i == 0 ? "true}" : "false}";
+  }
+  json += "],";
+  json += "\"mode\":" + String(static_cast<uint8_t>(config.mode)) + ",";
+  json += "\"last_view\":" + String(static_cast<uint8_t>(config.lastView)) + ",";
+  json += "\"title\":\"" + jsonEscape(config.title) + "\",";
+  json += "\"target\":\"" + jsonEscape(config.target) + "\",";
+  json += "\"message\":\"" + jsonEscape(config.message) + "\",";
+  json += "\"dday_style\":" + String(config.ddayTextStyle ? 1 : 0) + ",";
+  json += "\"after_mode\":" + String(config.afterComplete ? 1 : 0) + ",";
+  json += "\"msg_align\":" + String(config.messageLeft ? 1 : 0) + ",";
+  json += "\"msg_scroll\":" + String(config.messageScroll ? "true" : "false") + ",";
+  json += "\"scroll_speed\":" + String(config.scrollSpeed) + ",";
+  json += "\"hour24\":" + String(config.hour24 ? 1 : 0) + ",";
+  json += "\"show_seconds\":" + String(config.showSeconds ? 1 : 0) + ",";
+  json += "\"show_temp\":" + String(config.showChipTemperature ? "true" : "false") + ",";
+  json += "\"boot_sync\":" + String(config.bootSync ? "true" : "false") + ",";
+  json += "\"ntp_period\":" + String(config.ntpPeriodSec) + ",";
+  json += "\"dday_period\":" + String(config.ddayPeriodSec) + ",";
+  json += "\"retry_period\":" + String(config.retryPeriodSec) + ",";
+  json += "\"wifi_sleep\":" + String(config.wifiSleep ? "true" : "false") + ",";
+  json += "\"brightness\":" + String(config.brightness) + ",";
+  json += "\"night_level\":" + String(config.nightLevel) + ",";
+  json += "\"led_enabled\":" + String(config.ledEnabled ? "true" : "false") + ",";
+  json += "\"led_brightness\":" + String(config.ledBrightness) + ",";
+  json += "\"led_night_level\":" + String(config.ledNightLevel) + ",";
+  json += "\"night_start\":" + String(config.nightStartMin) + ",";
+  json += "\"night_end\":" + String(config.nightEndMin) + ",";
+  json += "\"burnin\":" + String(config.burninShift ? "true" : "false") + ",";
+  json += "\"screen_off\":" + String(config.screenOffMin) + ",";
+  json += "\"cycle_mask\":" + String(config.cycleMask) + ",";
+  json += "\"cycle_order\":\"" + cycleOrderToString(config) + "\",";
+  json += "\"cycle_interval\":" + String(config.cycleIntervalSec) + ",";
+  json += "\"time_zone\":\"Asia/Seoul\"}";
+  sendJson(200, json);
+}
+
+void handleWifiScan() {
+  if (!requireSetupApRequest()) return;
+  if (savedWifiScanActive) {
+    sendJson(409, "{\"error\":\"저장된 Wi-Fi 자동 검색이 진행 중입니다. 잠시 후 다시 시도하세요.\"}");
+    return;
+  }
+  int count = WiFi.scanComplete();
+  if (count == WIFI_SCAN_RUNNING) {
+    sendJson(202, "{\"state\":\"scanning\"}");
+    return;
+  }
+  if (count == WIFI_SCAN_FAILED) {
+    WiFi.scanDelete();
+    int started = WiFi.scanNetworks(true, true, false, 300, 0);
+    if (started == WIFI_SCAN_FAILED) {
+      sendJson(500, "{\"error\":\"Wi-Fi 검색을 시작하지 못했습니다.\"}");
+      return;
+    }
+    sendJson(202, "{\"state\":\"scanning\"}");
+    return;
+  }
+  String json = "{\"networks\":[";
+  bool first = true;
+  for (int i = 0; i < count; ++i) {
+    String ssid = WiFi.SSID(i);
+    if (ssid.length() == 0) continue;
+    if (!first) json += ',';
+    first = false;
+    json += "{\"ssid\":\"" + jsonEscape(ssid) + "\",\"rssi\":" + WiFi.RSSI(i);
+    json += ",\"open\":" + String(WiFi.encryptionType(i) == WIFI_AUTH_OPEN ? "true" : "false") + "}";
+  }
+  json += "]}";
+  WiFi.scanDelete();
+  sendJson(200, json);
+}
+
+bool argBool(const char *name) {
+  return server.hasArg(name) && (server.arg(name) == "1" || server.arg(name) == "true" || server.arg(name) == "on");
+}
+
+bool allowedValue(uint32_t value, const uint32_t *allowed, size_t count) {
+  for (size_t i = 0; i < count; ++i) if (value == allowed[i]) return true;
+  return false;
+}
+
+void handlePostConfig() {
+  if (!requireSetupApRequest()) return;
+  if (!validToken()) return sendJson(403, "{\"error\":\"유효하지 않은 세션 토큰입니다.\"}");
+  Config next = config;
+  next.title = server.arg("title");
+  next.target = server.arg("target");
+  next.message = server.arg("message");
+  int mode = server.arg("mode").toInt();
+  int cycleMask = server.arg("cycle_mask").toInt();
+  int cycleInterval = server.arg("cycle_interval").toInt();
+  int scrollSpeed = server.arg("scroll_speed").toInt();
+  int brightness = server.arg("brightness").toInt();
+  int nightLevel = server.arg("night_level").toInt();
+  int ledBrightness = server.arg("led_brightness").toInt();
+  int ledNightLevel = server.arg("led_night_level").toInt();
+  int nightStart = server.arg("night_start").toInt();
+  int nightEnd = server.arg("night_end").toInt();
+  int screenOff = server.arg("screen_off").toInt();
+  uint32_t ntpPeriod = static_cast<uint32_t>(server.arg("ntp_period").toInt());
+  uint32_t ddayPeriod = static_cast<uint32_t>(server.arg("dday_period").toInt());
+  uint32_t retryPeriod = static_cast<uint32_t>(server.arg("retry_period").toInt());
+  int year, month, day;
+  if (utf8Codepoints(next.title) > 24 || next.title.length() > 96 || next.title.length() == 0) return sendJson(400, "{\"error\":\"목표 이름은 1~24자여야 합니다.\"}");
+  if (utf8Codepoints(next.message) > 60 || next.message.length() > 240) return sendJson(400, "{\"error\":\"문구는 60자 이하여야 합니다.\"}");
+  if (!parseDate(next.target, year, month, day)) return sendJson(400, "{\"error\":\"목표 날짜 형식이 잘못되었습니다.\"}");
+  if (mode < 0 || mode > 6) return sendJson(400, "{\"error\":\"표시 모드가 잘못되었습니다.\"}");
+  if (cycleMask < 1 || cycleMask > 63) return sendJson(400, "{\"error\":\"순환 화면을 하나 이상 선택하세요.\"}");
+  if (!(cycleInterval == 0 || (cycleInterval >= 3 && cycleInterval <= 60))) return sendJson(400, "{\"error\":\"자동 전환은 0초 또는 3~60초여야 합니다.\"}");
+  uint8_t parsedOrder[VIEW_COUNT];
+  if (!parseCycleOrder(server.arg("cycle_order"), parsedOrder)) return sendJson(400, "{\"error\":\"순환 순서는 0~5를 중복 없이 입력하세요.\"}");
+  const uint32_t allowedNtp[] = {0, 3600, 10800, 21600, 43200, 86400};
+  const uint32_t allowedDday[] = {0, 60, 600, 1800, 3600};
+  const uint32_t allowedRetry[] = {60, 300, 900, 1800};
+  if (!allowedValue(ntpPeriod, allowedNtp, 6) || !allowedValue(ddayPeriod, allowedDday, 5) || !allowedValue(retryPeriod, allowedRetry, 4)) return sendJson(400, "{\"error\":\"동기화·디데이·재시도 주기가 잘못되었습니다.\"}");
+  next.mode = static_cast<TopMode>(mode);
+  next.ddayTextStyle = server.arg("dday_style") == "1";
+  next.afterComplete = server.arg("after_mode") == "1";
+  next.messageLeft = server.arg("msg_align") == "1";
+  next.messageScroll = argBool("msg_scroll");
+  next.scrollSpeed = clampInt(scrollSpeed, 5, 80);
+  next.hour24 = server.arg("hour24") != "0";
+  next.showSeconds = server.arg("show_seconds") == "1";
+  next.showChipTemperature = argBool("show_temp");
+  next.bootSync = argBool("boot_sync");
+  next.ntpPeriodSec = ntpPeriod;
+  next.ddayPeriodSec = ddayPeriod;
+  next.retryPeriodSec = retryPeriod;
+  next.wifiSleep = argBool("wifi_sleep");
+  next.brightness = clampInt(brightness, 1, 255);
+  next.nightLevel = clampInt(nightLevel, 1, 255);
+  next.ledEnabled = argBool("led_enabled");
+  next.ledBrightness = clampInt(ledBrightness, 1, 64);
+  next.ledNightLevel = clampInt(ledNightLevel, 1, 32);
+  next.nightStartMin = clampInt(nightStart, 0, 1439);
+  next.nightEndMin = clampInt(nightEnd, 0, 1439);
+  next.burninShift = argBool("burnin");
+  next.screenOffMin = clampInt(screenOff, 0, 1440);
+  next.cycleMask = cycleMask;
+  memcpy(next.cycleOrder, parsedOrder, sizeof(parsedOrder));
+  next.cycleIntervalSec = cycleInterval;
+  config = next;
+  currentCycleIndex = config.cycleIndex;
+  if (config.mode == TopMode::SELECTED_CYCLE) {
+    selectFirstEnabledCycleView();
+  } else {
+    currentView = static_cast<View>(static_cast<uint8_t>(config.mode));
+    config.lastView = currentView;
+  }
+  saveConfigAll();
+  lastTemperatureReadMs = 0;
+  scrollStartedMs = millis();
+  lastCycleMs = millis();
+  wakeDisplay();
+  updateContrast();
+  sendJson(200, "{\"ok\":true}");
+}
+
+void handleWifiTest() {
+  if (!requireSetupApRequest()) return;
+  if (!validToken()) return sendJson(403, "{\"error\":\"유효하지 않은 세션 토큰입니다.\"}");
+  String ssid = server.arg("ssid");
+  String password = server.arg("pass");
+  if (ssid.length() == 0 || ssid.length() > 32) return sendJson(400, "{\"error\":\"SSID를 확인하세요.\"}");
+  if (password.length() > 63) return sendJson(400, "{\"error\":\"Wi-Fi 비밀번호가 너무 깁니다.\"}");
+  int savedIndex = findSavedNetwork(ssid);
+  if (password.length() == 0 && savedIndex >= 0) {
+    password = config.savedNetworks[savedIndex].password;
+  }
+  pendingSsid = ssid;
+  pendingPass = password;
+  wifiTestError = "";
+  wifiTestState = WifiTestState::CONNECTING;
+  beginStationConnection(pendingSsid, pendingPass, true);
+  sendJson(202, "{\"ok\":true,\"state\":\"connecting\"}");
+}
+
+void handleTimeSync() {
+  if (!requireSetupApRequest()) return;
+  if (!validToken()) return sendJson(403, "{\"error\":\"유효하지 않은 세션 토큰입니다.\"}");
+  if (wifiTestState == WifiTestState::CONNECTING || wifiTestState == WifiTestState::TIME_SYNCING) {
+    return sendJson(409, "{\"error\":\"Wi-Fi 시험이 진행 중입니다. 완료 후 다시 시도하세요.\"}");
+  }
+  if (WiFi.status() != WL_CONNECTED) {
+    if (config.savedNetworkCount == 0) return sendJson(409, "{\"error\":\"먼저 Wi-Fi에 연결하세요.\"}");
+    wifiTestState = WifiTestState::IDLE;
+    wifiTestError = "";
+    startSavedWifiSequence(true);
+    sendJson(202, "{\"ok\":true,\"state\":\"connecting\"}");
+    return;
+  }
+  beginNtpRequest();
+  setRuntimeState(RuntimeState::TIME_SYNCING);
+  sendJson(202, "{\"ok\":true}");
+}
+
+void handleFactoryReset() {
+  if (!requireSetupApRequest()) return;
+  if (!validToken()) return sendJson(403, "{\"error\":\"유효하지 않은 세션 토큰입니다.\"}");
+  if (server.arg("confirm") != "RESET") return sendJson(400, "{\"error\":\"초기화 확인 문자열이 올바르지 않습니다.\"}");
+  sendJson(200, "{\"ok\":true,\"restarting\":true}");
+  delay(250);
+  WiFi.disconnect(true, true);
+  prefs.clear();
+  delay(100);
+  ESP.restart();
+}
+
+void handleSettingsReset() {
+  if (!requireSetupApRequest()) return;
+  if (!validToken()) return sendJson(403, "{\"error\":\"유효하지 않은 세션 토큰입니다.\"}");
+  if (server.arg("confirm") != "DEFAULTS") return sendJson(400, "{\"error\":\"설정 초기화 확인 문자열이 올바르지 않습니다.\"}");
+
+  SavedNetwork networks[MAX_SAVED_NETWORKS];
+  const uint8_t networkCount = config.savedNetworkCount;
+  for (uint8_t i = 0; i < networkCount; ++i) networks[i] = config.savedNetworks[i];
+  const uint64_t lastSync = config.lastSync;
+  const int32_t lastDday = config.lastDday;
+
+  loadDefaults(config);
+  config.savedNetworkCount = networkCount;
+  for (uint8_t i = 0; i < networkCount; ++i) config.savedNetworks[i] = networks[i];
+  config.lastSync = lastSync;
+  config.lastDday = lastDday;
+  saveConfigAll();
+
+  currentView = View::DDAY_TIME;
+  currentCycleIndex = 0;
+  scrollStartedMs = millis();
+  lastCycleMs = millis();
+  lastInteractionMs = millis();
+  lastTemperatureReadMs = 0;
+  wakeDisplay();
+  updateContrast();
+  logLine("display, time, and LED settings restored to defaults; saved Wi-Fi retained");
+  sendJson(200, "{\"ok\":true,\"wifi_retained\":true}");
+}
+
+void handleDeleteSavedWifi() {
+  if (!requireSetupApRequest()) return;
+  if (!validToken()) return sendJson(403, "{\"error\":\"유효하지 않은 세션 토큰입니다.\"}");
+  String ssid = server.arg("ssid");
+  int index = findSavedNetwork(ssid);
+  if (index < 0) return sendJson(404, "{\"error\":\"저장된 Wi-Fi를 찾을 수 없습니다.\"}");
+  String connectedSsid = WiFi.status() == WL_CONNECTED ? WiFi.SSID() : "";
+  const bool removedCurrentNetwork = connectedSsid == ssid;
+  removeSavedNetworkAt(static_cast<uint8_t>(index));
+  saveWifiNetworks();
+  if (removedCurrentNetwork) {
+    WiFi.scanDelete();
+    WiFi.disconnect(false, true);
+    activeWifiIndex = NO_WIFI_INDEX;
+    if (config.savedNetworkCount > 0) startSavedWifiSequence(true);
+    else setRuntimeState(RuntimeState::SETUP_AP);
+  } else {
+    int connectedIndex = findSavedNetwork(connectedSsid);
+    activeWifiIndex = connectedIndex >= 0 ? static_cast<uint8_t>(connectedIndex) : NO_WIFI_INDEX;
+  }
+  logLine(String("saved Wi-Fi removed: ") + ssid);
+  sendJson(200, String("{\"ok\":true,\"saved_count\":") + String(config.savedNetworkCount) + "}");
+}
+
+void handleUpdateCheck() {
+  if (!requireSetupApRequest()) return;
+  if (!validToken()) return sendJson(403, "{\"error\":\"유효하지 않은 세션 토큰입니다.\"}");
+  if (updateState == UpdateState::CHECKING || updateState == UpdateState::DOWNLOADING ||
+      updateState == UpdateState::VERIFYING || updateState == UpdateState::READY_TO_REBOOT) {
+    return sendJson(409, "{\"error\":\"업데이트 작업이 이미 진행 중입니다.\"}");
+  }
+  if (thermalSafeMode || temperatureSensorFault || thermalWarning) {
+    return sendJson(409, "{\"error\":\"온도 보호 상태에서는 업데이트를 확인할 수 없습니다.\"}");
+  }
+  if (WiFi.status() != WL_CONNECTED) {
+    return sendJson(409, "{\"error\":\"인터넷에 연결된 Wi-Fi가 필요합니다.\"}");
+  }
+  if (!timeIsValid()) {
+    updateCheckAfterNetworkReady = true;
+    beginNtpRequest();
+    setRuntimeState(RuntimeState::TIME_SYNCING);
+    return sendJson(202, "{\"ok\":true,\"state\":\"time_syncing\"}");
+  }
+  requestFirmwareUpdateCheck(UpdateCheckReason::MANUAL);
+  sendJson(202, "{\"ok\":true,\"state\":\"queued\"}");
+}
+
+void handleUpdateInstall() {
+  if (!requireSetupApRequest()) return;
+  if (!validToken()) return sendJson(403, "{\"error\":\"유효하지 않은 세션 토큰입니다.\"}");
+  if (updateState != UpdateState::AVAILABLE) {
+    return sendJson(409, "{\"error\":\"설치할 새 펌웨어가 확인되지 않았습니다.\"}");
+  }
+  if (thermalSafeMode || temperatureSensorFault || thermalWarning) {
+    return sendJson(409, "{\"error\":\"온도 보호 상태에서는 업데이트할 수 없습니다.\"}");
+  }
+  updateInstallRequested = true;
+  sendJson(202, "{\"ok\":true,\"state\":\"installing\"}");
+}
+
+void handlePortalRoot() {
+  if (!requireSetupApRequest(false)) return;
+  server.sendHeader("Cache-Control", "no-store");
+  server.sendHeader("Set-Cookie", String("MILESTONE_TOKEN=") + sessionToken + "; Path=/; HttpOnly; SameSite=Strict");
+  server.send_P(200, "text/html; charset=UTF-8", MILESTONE_PORTAL_HTML);
+}
+
+void registerPortalRoutes() {
+  static bool registered = false;
+  if (registered) return;
+  registered = true;
+  static const char *headerKeys[] = {"Cookie"};
+  server.collectHeaders(headerKeys, 1);
+  server.on("/", HTTP_GET, handlePortalRoot);
+  server.on("/api/status", HTTP_GET, handleStatus);
+  server.on("/api/config", HTTP_GET, handleGetConfig);
+  server.on("/api/wifi/scan", HTTP_GET, handleWifiScan);
+  server.on("/api/config", HTTP_POST, handlePostConfig);
+  server.on("/api/wifi/test", HTTP_POST, handleWifiTest);
+  server.on("/api/wifi/delete", HTTP_POST, handleDeleteSavedWifi);
+  server.on("/api/time/sync", HTTP_POST, handleTimeSync);
+  server.on("/api/update/check", HTTP_POST, handleUpdateCheck);
+  server.on("/api/update/install", HTTP_POST, handleUpdateInstall);
+  server.on("/api/settings/reset", HTTP_POST, handleSettingsReset);
+  server.on("/api/reset", HTTP_POST, handleFactoryReset);
+  server.on("/generate_204", HTTP_GET, handlePortalRoot);
+  server.on("/hotspot-detect.html", HTTP_GET, handlePortalRoot);
+  server.on("/ncsi.txt", HTTP_GET, handlePortalRoot);
+  server.onNotFound([]() {
+    if (!requestFromSetupAp()) {
+      server.send(404, "text/plain", "Not found");
+      return;
+    }
+    server.sendHeader("Location", String("http://") + WiFi.softAPIP().toString(), true);
+    server.send(302, "text/plain", "");
+  });
+}
+
+void restoreConfiguredWifiAfterFailedTest() {
+  if (config.savedNetworkCount == 0) return;
+  WiFi.disconnect(false, false);
+  activeWifiIndex = 0;
+  WiFi.begin(config.savedNetworks[0].ssid.c_str(), config.savedNetworks[0].password.c_str());
+  logLine("restoring the previously saved Wi-Fi");
+}
+
+void finishWifiTestSuccess() {
+  upsertSavedNetwork(pendingSsid, pendingPass);
+  saveConfigAll();
+  pendingSsid = "";
+  pendingPass = "";
+  wifiTestError = "";
+  wifiTestState = WifiTestState::SUCCESS;
+  markNtpSuccess();
+  setRuntimeState(RuntimeState::RUNNING_ONLINE);
+  startMdns();
+  portalClosingAfterSuccess = true;
+  portalSuccessMs = millis();
+  logLine("tested Wi-Fi saved; setup portal will close");
+}
+
+void failWifiTest(const String &reason) {
+  ntpRequestActive = false;
+  internetVerified = false;
+  wifiTestState = WifiTestState::FAILED;
+  wifiTestError = reason;
+  pendingSsid = "";
+  pendingPass = "";
+  setRuntimeState(RuntimeState::SETUP_AP);
+  restoreConfiguredWifiAfterFailedTest();
+  logLine(String("Wi-Fi test failed: ") + reason);
+}
+
+void enterWifiSleep() {
+  if (!config.wifiSleep || portalActive) return;
+  stopMdns();
+  WiFi.disconnect(true, false);
+  WiFi.mode(WIFI_OFF);
+  setRuntimeState(RuntimeState::WIFI_SLEEP);
+}
+
+bool firmwareUpdateCheckDue() {
+  if (!timeIsValid()) return false;
+  const uint64_t now = static_cast<uint64_t>(time(nullptr));
+  return lastUpdateCheckEpoch == 0 || now >= lastUpdateCheckEpoch + UPDATE_WEEKLY_SEC;
+}
+
+void finishNormalNtpSuccess() {
+  markNtpSuccess();
+  promoteSavedNetwork(activeWifiIndex);
+  setRuntimeState(RuntimeState::RUNNING_ONLINE);
+  startMdns();
+  if (bootUpdateCheckPending) {
+    wifiSleepDeferredForUpdate = config.wifiSleep;
+    requestFirmwareUpdateCheck(UpdateCheckReason::BOOT);
+  } else if (updateCheckAfterNetworkReady || firmwareUpdateCheckDue()) {
+    updateCheckAfterNetworkReady = false;
+    wifiSleepDeferredForUpdate = config.wifiSleep;
+    requestFirmwareUpdateCheck(UpdateCheckReason::WEEKLY);
+  } else if (config.wifiSleep) {
+    enterWifiSleep();
+  }
+}
+
+void processNetwork() {
+  if (thermalSafeMode) return;
+  const uint32_t now = millis();
+
+  if (portalActive) {
+    dnsServer.processNextRequest();
+    server.handleClient();
+    if (portalClosingAfterSuccess && elapsed(now, portalSuccessMs, PORTAL_SUCCESS_HOLD_MS)) {
+      stopPortal();
+      return;
+    }
+    if (!portalClosingAfterSuccess && wifiTestState != WifiTestState::CONNECTING &&
+        wifiTestState != WifiTestState::TIME_SYNCING && elapsed(now, portalStartedMs, AP_TIMEOUT_MS)) {
+      stopPortal();
+      return;
+    }
+  }
+
+  if (wifiTestState == WifiTestState::CONNECTING) {
+    if (WiFi.status() == WL_CONNECTED) {
+      wifiTestState = WifiTestState::TIME_SYNCING;
+      beginNtpRequest();
+      setRuntimeState(RuntimeState::TIME_SYNCING);
+    } else if (deadlineReached(now, wifiDeadlineMs)) {
+      failWifiTest("Wi-Fi 연결 시간 초과. SSID와 비밀번호를 확인하세요.");
+    }
+    return;
+  }
+
+  if (wifiTestState == WifiTestState::TIME_SYNCING) {
+    if (WiFi.status() != WL_CONNECTED) {
+      failWifiTest("시간 확인 중 Wi-Fi 연결이 끊겼습니다.");
+    } else if (ntpSyncEvent && timeIsValid()) {
+      ntpSyncEvent = false;
+      finishWifiTestSuccess();
+    } else if (deadlineReached(now, ntpDeadlineMs)) {
+      failWifiTest("인터넷 시간 확인에 실패했습니다. 인터넷 연결을 확인하세요.");
+    }
+    return;
+  }
+
+  if (runtimeState == RuntimeState::CONNECTING) {
+    if (WiFi.status() == WL_CONNECTED) {
+      if (savedWifiScanActive) {
+        WiFi.scanDelete();
+        savedWifiScanActive = false;
+      }
+      if (initialStationAttempt && !config.bootSync && timeIsValid()) {
+        initialStationAttempt = false;
+        promoteSavedNetwork(activeWifiIndex);
+        setRuntimeState(RuntimeState::RUNNING_OFFLINE);
+        startMdns();
+        scheduleRetry();
+        wifiSleepDeferredForUpdate = config.wifiSleep;
+        requestFirmwareUpdateCheck(UpdateCheckReason::BOOT);
+        logLine("boot-time NTP skipped; secure clock retained for update check");
+      } else {
+        initialStationAttempt = false;
+        beginNtpRequest();
+        setRuntimeState(RuntimeState::TIME_SYNCING);
+      }
+    } else if (savedWifiScanActive) {
+      if (!finishSavedWifiScanAndConnect()) {
+        initialStationAttempt = false;
+        setRuntimeState(RuntimeState::RUNNING_OFFLINE);
+        scheduleRetry();
+        logLine("no reachable saved Wi-Fi network found; offline mode");
+      }
+    } else if (deadlineReached(now, wifiDeadlineMs)) {
+      if (tryNextSavedWifiCandidate()) return;
+      initialStationAttempt = false;
+      setRuntimeState(RuntimeState::RUNNING_OFFLINE);
+      scheduleRetry();
+      logLine("Wi-Fi connection timed out; offline mode");
+    }
+    return;
+  }
+
+  if (runtimeState == RuntimeState::TIME_SYNCING) {
+    if (WiFi.status() != WL_CONNECTED) {
+      ntpRequestActive = false;
+      internetVerified = false;
+      ntpFailed = false;
+      setRuntimeState(RuntimeState::RUNNING_OFFLINE);
+      scheduleRetry();
+    } else if (ntpSyncEvent && timeIsValid()) {
+      ntpSyncEvent = false;
+      finishNormalNtpSuccess();
+    } else if (deadlineReached(now, ntpDeadlineMs)) {
+      ntpRequestActive = false;
+      internetVerified = false;
+      ntpFailed = true;
+      setRuntimeState(RuntimeState::RUNNING_OFFLINE);
+      scheduleRetry();
+      logLine("NTP timed out; last known D-day will be displayed");
+    }
+    return;
+  }
+
+  if (runtimeState == RuntimeState::RUNNING_ONLINE && WiFi.status() != WL_CONNECTED) {
+    internetVerified = false;
+    ntpFailed = false;
+    setRuntimeState(RuntimeState::RUNNING_OFFLINE);
+    scheduleRetry();
+  }
+
+  bool periodicNtpDue = (runtimeState == RuntimeState::RUNNING_ONLINE || runtimeState == RuntimeState::WIFI_SLEEP) &&
+                         config.ntpPeriodSec > 0 && timeIsValid() && config.lastSync > 0 &&
+                         static_cast<uint64_t>(time(nullptr)) >= config.lastSync + config.ntpPeriodSec;
+  bool retryDue = runtimeState == RuntimeState::RUNNING_OFFLINE && deadlineReached(now, nextRetryMs);
+
+  if (!portalActive && config.savedNetworkCount > 0) {
+    if (periodicNtpDue && WiFi.status() == WL_CONNECTED) {
+      beginNtpRequest();
+      setRuntimeState(RuntimeState::TIME_SYNCING);
+    } else if (periodicNtpDue || retryDue) {
+      startSavedWifiSequence(false);
+    }
+  }
+}
+
+void processFirmwareUpdate() {
+  const uint32_t now = millis();
+
+  if (updateState == UpdateState::ERROR_STATE && elapsed(now, updateStateStartedMs, 10000UL)) {
+    setUpdateState(UpdateState::IDLE);
+    if (wifiSleepDeferredForUpdate && !portalActive) {
+      wifiSleepDeferredForUpdate = false;
+      enterWifiSleep();
+    }
+  }
+  if (updateState == UpdateState::AVAILABLE && updatePromptVisible &&
+      elapsed(now, updatePromptStartedMs, UPDATE_PROMPT_MS)) {
+    updatePromptVisible = false;
+    wakeDisplay();
+    logLine("firmware update postponed");
+    if (wifiSleepDeferredForUpdate && !portalActive) {
+      wifiSleepDeferredForUpdate = false;
+      enterWifiSleep();
+    }
+  }
+  if (updateInstallRequested) {
+    updateInstallRequested = false;
+    installFirmwareUpdate();
+    return;
+  }
+  if (pendingUpdateCheckReason != UpdateCheckReason::NONE) {
+    const UpdateCheckReason reason = pendingUpdateCheckReason;
+    pendingUpdateCheckReason = UpdateCheckReason::NONE;
+    const bool success = checkFirmwareManifest(reason);
+    if (success && WiFi.status() == WL_CONNECTED && timeIsValid()) {
+      internetVerified = true;
+      ntpFailed = false;
+      if (runtimeState != RuntimeState::SETUP_AP) setRuntimeState(RuntimeState::RUNNING_ONLINE);
+    }
+    if (wifiSleepDeferredForUpdate && !updatePromptVisible && !portalActive) {
+      wifiSleepDeferredForUpdate = false;
+      enterWifiSleep();
+    }
+    return;
+  }
+
+  const bool retryWaiting = nextUpdateRetryMs != 0 && !deadlineReached(now, nextUpdateRetryMs);
+  const bool retryDue = nextUpdateRetryMs != 0 && !retryWaiting;
+  if (retryWaiting) return;
+  if (!bootUpdateCheckPending && !firmwareUpdateCheckDue() && !retryDue) return;
+  if (portalActive || resetConfirmation || thermalSafeMode || temperatureSensorFault || thermalWarning ||
+      wifiTestState != WifiTestState::IDLE) return;
+
+  if (WiFi.status() == WL_CONNECTED && timeIsValid()) {
+    wifiSleepDeferredForUpdate = config.wifiSleep;
+    requestFirmwareUpdateCheck(bootUpdateCheckPending ? UpdateCheckReason::BOOT : UpdateCheckReason::WEEKLY);
+  } else if (runtimeState == RuntimeState::WIFI_SLEEP && config.savedNetworkCount > 0) {
+    updateCheckAfterNetworkReady = true;
+    startSavedWifiSequence(false);
+  }
+}
+
+void enterThermalSafeMode(bool sensorFault = false) {
+  if (thermalSafeMode) return;
+  thermalSafeMode = true;
+  thermalSafeModeFromSensorFault = sensorFault;
+  thermalWarning = true;
+  thermalRecoveryStartedMs = 0;
+  ntpRequestActive = false;
+  ntpSyncEvent = false;
+  wifiTestState = WifiTestState::IDLE;
+  wifiTestError = "";
+  pendingSsid = "";
+  pendingPass = "";
+  savedWifiScanActive = false;
+  WiFi.scanDelete();
+  if (!thermalThrottled) {
+    thermalThrottled = setCpuFrequencyMhz(THERMAL_THROTTLE_CPU_MHZ);
+  }
+  stopMdns();
+  if (portalActive) {
+    dnsServer.stop();
+    server.stop();
+    WiFi.softAPdisconnect(true);
+    portalActive = false;
+    portalClosingAfterSuccess = false;
+  }
+  WiFi.disconnect(true, false);
+  WiFi.mode(WIFI_OFF);
+  setRuntimeState(RuntimeState::RUNNING_OFFLINE);
+  wakeDisplay();
+  if (sensorFault) {
+    if (thermalThrottled) logLine("temperature sensor fault sustained; Wi-Fi off and CPU limited to 80 MHz");
+    else logLine("temperature sensor fault sustained; Wi-Fi off (CPU frequency change failed)");
+  } else {
+    if (thermalThrottled) logLine("critical chip temperature sustained; Wi-Fi off and CPU limited to 80 MHz");
+    else logLine("critical chip temperature sustained; Wi-Fi off (CPU frequency change failed)");
+  }
+}
+
+void leaveThermalSafeMode() {
+  thermalSafeMode = false;
+  thermalSafeModeFromSensorFault = false;
+  thermalCriticalStartedMs = 0;
+  thermalRecoveryStartedMs = 0;
+  bool frequencyRestored = true;
+  if (thermalThrottled && normalCpuFrequencyMhz > THERMAL_THROTTLE_CPU_MHZ) {
+    frequencyRestored = setCpuFrequencyMhz(normalCpuFrequencyMhz);
+  }
+  thermalThrottled = !frequencyRestored;
+  if (frequencyRestored) logLine("chip temperature recovered; normal operation resumed");
+  else logLine("chip temperature recovered; CPU frequency restore will be retried");
+  if (config.savedNetworkCount > 0) startSavedWifiSequence(false);
+  else {
+    setRuntimeState(RuntimeState::UNPROVISIONED);
+    startPortal();
+  }
+}
+
+void processThermalProtection() {
+  refreshChipTemperature();
+  if (thermalProcessedSequence == temperatureSampleSequence) return;
+  thermalProcessedSequence = temperatureSampleSequence;
+  const uint32_t now = millis();
+
+  if (temperatureSensorFault) {
+    thermalWarning = true;
+    if (!thermalThrottled) {
+      thermalThrottled = setCpuFrequencyMhz(THERMAL_THROTTLE_CPU_MHZ);
+      if (thermalThrottled) logLine("temperature sensor fault; CPU limited to 80 MHz");
+      else logLine("temperature sensor fault; CPU frequency change failed");
+    }
+    if (temperatureFaultStartedMs == 0) temperatureFaultStartedMs = now;
+    else if (!thermalSafeMode && elapsed(now, temperatureFaultStartedMs, TEMPERATURE_FAULT_SAFE_HOLD_MS)) {
+      enterThermalSafeMode(true);
+    }
+    return;
+  }
+  temperatureFaultStartedMs = 0;
+  if (isnan(chipTemperatureC)) return;
+  thermalWarning = thermalWarning ? chipTemperatureC >= THERMAL_WARNING_CLEAR_C
+                                  : chipTemperatureC >= THERMAL_WARNING_C;
+
+  if (!thermalThrottled && chipTemperatureC >= THERMAL_THROTTLE_C) {
+    thermalThrottled = setCpuFrequencyMhz(THERMAL_THROTTLE_CPU_MHZ);
+    thermalRecoveryStartedMs = 0;
+    if (thermalThrottled) {
+      logLine(String("high chip temperature; CPU limited to 80 MHz: ") + String(chipTemperatureC, 1) + "C");
+    } else {
+      logLine(String("high chip temperature; CPU frequency change failed: ") + String(chipTemperatureC, 1) + "C");
+    }
+  }
+
+  if (thermalSafeMode) {
+    thermalWarning = true;
+    if (chipTemperatureC <= THERMAL_SAFE_RECOVERY_C) {
+      if (thermalRecoveryStartedMs == 0) thermalRecoveryStartedMs = now;
+      else if (elapsed(now, thermalRecoveryStartedMs, THERMAL_RECOVERY_HOLD_MS)) leaveThermalSafeMode();
+    } else {
+      thermalRecoveryStartedMs = 0;
+    }
+    return;
+  }
+
+  if (chipTemperatureC >= THERMAL_CRITICAL_C) {
+    if (thermalCriticalStartedMs == 0) thermalCriticalStartedMs = now;
+    else if (elapsed(now, thermalCriticalStartedMs, THERMAL_CRITICAL_HOLD_MS)) enterThermalSafeMode(false);
+  } else {
+    thermalCriticalStartedMs = 0;
+  }
+
+  if (thermalThrottled && chipTemperatureC <= THERMAL_THROTTLE_RECOVERY_C) {
+    if (thermalRecoveryStartedMs == 0) thermalRecoveryStartedMs = now;
+    else if (elapsed(now, thermalRecoveryStartedMs, THERMAL_THROTTLE_RECOVERY_HOLD_MS)) {
+      const bool restored = normalCpuFrequencyMhz <= THERMAL_THROTTLE_CPU_MHZ ||
+                            setCpuFrequencyMhz(normalCpuFrequencyMhz);
+      thermalRecoveryStartedMs = 0;
+      if (restored) {
+        thermalThrottled = false;
+        logLine("chip temperature normalized; CPU frequency restored");
+      } else {
+        logLine("chip temperature normalized; CPU frequency restore failed, retrying later");
+      }
+    }
+  } else if (chipTemperatureC > THERMAL_THROTTLE_RECOVERY_C) {
+    thermalRecoveryStartedMs = 0;
+  }
+}
+
+bool viewEnabled(View view) {
+  return (config.cycleMask & (1U << static_cast<uint8_t>(view))) != 0;
+}
+
+void selectFirstEnabledCycleView() {
+  for (uint8_t i = 0; i < VIEW_COUNT; ++i) {
+    uint8_t index = (config.cycleIndex + i) % VIEW_COUNT;
+    View candidate = static_cast<View>(config.cycleOrder[index]);
+    if (viewEnabled(candidate)) {
+      currentCycleIndex = index;
+      currentView = candidate;
+      return;
+    }
+  }
+  currentCycleIndex = 0;
+  currentView = View::DDAY_TIME;
+}
+
+void advanceView(bool persist) {
+  if (config.mode == TopMode::SELECTED_CYCLE) {
+    for (uint8_t step = 1; step <= VIEW_COUNT; ++step) {
+      uint8_t index = (currentCycleIndex + step) % VIEW_COUNT;
+      View candidate = static_cast<View>(config.cycleOrder[index]);
+      if (viewEnabled(candidate)) {
+        currentCycleIndex = index;
+        currentView = candidate;
+        break;
+      }
+    }
+  } else {
+    currentView = static_cast<View>((static_cast<uint8_t>(currentView) + 1) % VIEW_COUNT);
+  }
+  if (persist) {
+    config.lastView = currentView;
+    config.cycleIndex = currentCycleIndex;
+    saveViewState();
+  }
+  scrollStartedMs = millis();
+  lastCycleMs = millis();
+  if (persist) wakeDisplay();
+}
+
+void processCycle() {
+  if (thermalSafeMode || portalActive || resetConfirmation || buttonStablePressed || displaySleeping ||
+      updateState == UpdateState::CHECKING || updateState == UpdateState::DOWNLOADING ||
+      updateState == UpdateState::VERIFYING || updateState == UpdateState::READY_TO_REBOOT ||
+      updatePromptVisible) return;
+  if (config.mode != TopMode::SELECTED_CYCLE || config.cycleIntervalSec == 0) return;
+  if (elapsed(millis(), lastCycleMs, static_cast<uint32_t>(config.cycleIntervalSec) * 1000UL)) {
+    advanceView(false);
+  }
+}
+
+void performPhysicalFactoryReset() {
+  if (oledReady) {
+    display.clearBuffer();
+    display.setFont(u8g2_font_7x14B_tf);
+    display.drawStr(20, 55, "RESETTING...");
+    display.setFont(u8g2_font_6x10_tf);
+    display.drawStr(12, 80, "Settings cleared");
+    display.sendBuffer();
+  }
+  logLine("physical factory reset confirmed");
+  delay(250);
+  WiFi.disconnect(true, true);
+  prefs.clear();
+  delay(100);
+  ESP.restart();
+}
+
+void handleButtonRelease(uint32_t heldMs) {
+  if (resetConfirmation) {
+    if (resetConfirmPressEligible && heldMs >= RESET_CONFIRM_HOLD_MS) {
+      performPhysicalFactoryReset();
+    } else {
+      resetConfirmation = false;
+      resetConfirmPressEligible = false;
+      wakeDisplay();
+      logLine("factory reset confirmation cancelled");
+    }
+    return;
+  }
+  if (heldMs < 50) return;
+  if (updateState == UpdateState::AVAILABLE && updatePromptVisible) {
+    if (heldMs < 1000) {
+      updateInstallRequested = true;
+      logLine("firmware installation approved with BOOT button");
+    }
+    return;
+  }
+  if (heldMs < 1000) {
+    advanceView(true);
+  } else if (heldMs < 3000) {
+    // Deliberate no-op zone: prevents accidental setup entry.
+  } else if (heldMs < 8000) {
+    startPortal();
+  } else {
+    resetConfirmation = true;
+    resetConfirmStartedMs = millis();
+    resetConfirmPressEligible = false;
+    wakeDisplay();
+  }
+}
+
+void processButton() {
+  const uint32_t now = millis();
+  const bool rawPressed = digitalRead(PIN_BOOT) == LOW;
+  if (rawPressed != buttonRawPressed) {
+    buttonRawPressed = rawPressed;
+    buttonRawChangedMs = now;
+  }
+  if (rawPressed != buttonStablePressed && elapsed(now, buttonRawChangedMs, BUTTON_DEBOUNCE_MS)) {
+    buttonStablePressed = rawPressed;
+    if (buttonStablePressed) {
+      buttonPressedMs = now;
+      if (resetConfirmation) {
+        resetConfirmPressEligible = !elapsed(buttonRawChangedMs, resetConfirmStartedMs, RESET_CONFIRM_WINDOW_MS);
+      }
+      wakeDisplay();
+    } else {
+      handleButtonRelease(now - buttonPressedMs);
+    }
+  }
+  if (resetConfirmation && !buttonRawPressed && elapsed(now, resetConfirmStartedMs, RESET_CONFIRM_WINDOW_MS)) {
+    resetConfirmation = false;
+    resetConfirmPressEligible = false;
+    wakeDisplay();
+    logLine("factory reset confirmation expired");
+  }
+}
+
+void processDisplay() {
+  if (!oledReady) return;
+  const uint32_t now = millis();
+  if (config.screenOffMin > 0 && !thermalSafeMode && !portalActive && !resetConfirmation && !buttonStablePressed &&
+      updateState != UpdateState::CHECKING && updateState != UpdateState::DOWNLOADING &&
+      updateState != UpdateState::VERIFYING && updateState != UpdateState::READY_TO_REBOOT && !updatePromptVisible &&
+      elapsed(now, lastInteractionMs, static_cast<uint32_t>(config.screenOffMin) * 60000UL)) {
+    if (!displaySleeping) {
+      display.setPowerSave(1);
+      displaySleeping = true;
+    }
+    return;
+  }
+  if (!elapsed(now, lastDisplayMs, DISPLAY_REFRESH_MS)) return;
+  lastDisplayMs = now;
+  updateContrast();
+  if (buttonStablePressed) drawButtonOverlay(now - buttonPressedMs);
+  else drawMainScreen();
+}
+
+void initializeView() {
+  currentView = config.lastView;
+  currentCycleIndex = config.cycleIndex % VIEW_COUNT;
+  if (config.mode == TopMode::SELECTED_CYCLE) {
+    selectFirstEnabledCycleView();
+  }
+  lastCycleMs = millis();
+  scrollStartedMs = millis();
+}
+
+void setupFirmware() {
+  Serial.begin(115200);
+  normalCpuFrequencyMhz = getCpuFrequencyMhz();
+  statusLed.begin();
+  statusLed.clear();
+  statusLed.show();
+  writeStatusLed(40, 255, 180);
+  delay(250);
+  logLine(String("booting firmware ") + FIRMWARE_VERSION);
+  // ESP32 requires the STA hostname to be set before Wi-Fi is started.
+  WiFi.setHostname(HOSTNAME);
+  pinMode(PIN_BOOT, INPUT_PULLUP);
+  setenv("TZ", TZ_INFO, 1);
+  tzset();
+  sntp_set_time_sync_notification_cb(ntpTimeAvailable);
+
+  prefs.begin(PREFS_NS, false);
+  bool provisioned = loadConfig() && config.savedNetworkCount > 0;
+  lastUpdateCheckEpoch = prefs.getULong64("ota_last_ok", 0);
+  latestFirmwareVersion = prefs.getString("ota_latest", "");
+  oledReady = initDisplay();
+  if (!oledReady) setRuntimeState(RuntimeState::ERROR_DISPLAY);
+  initializeView();
+  lastInteractionMs = millis();
+
+  if (provisioned) {
+    startSavedWifiSequence(false);
+  } else {
+    setRuntimeState(RuntimeState::UNPROVISIONED);
+    startPortal();
+  }
+}
+
+void loopFirmware() {
+  processThermalProtection();
+  processButton();
+  processNetwork();
+  processFirmwareUpdate();
+  processCycle();
+  processDisplay();
+  processLed();
+  delay(1);  // Yield to the Wi-Fi/USB stacks; all application work remains non-blocking.
+}
+
+}  // namespace Milestone
+
+void setup() {
+  Milestone::setupFirmware();
+}
+
+void loop() {
+  Milestone::loopFirmware();
+}

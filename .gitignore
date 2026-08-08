@@ -1,0 +1,11 @@
+# Arduino build products and local release staging
+build/
+release/
+*.bin
+*.elf
+*.map
+
+# Editor and operating-system files
+.vscode/
+.idea/
+*~
