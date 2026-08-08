@@ -3,8 +3,8 @@ set -euo pipefail
 
 if (( $# < 1 || $# > 3 )); then
   echo "사용법: $0 VERSION [COMPILED_BIN|auto] [NOTES]" >&2
-  echo "자동 검색: $0 1.5.4 auto '기기 세부정보 수동 페이지 전환'" >&2
-  echo "경로 지정: $0 1.5.4 MILESTONE_Core.ino.bin '기기 세부정보 수동 페이지 전환'" >&2
+  echo "자동 검색: $0 1.5.5 auto 'OLED 중앙 정렬 및 버튼 홀딩 안정화'" >&2
+  echo "경로 지정: $0 1.5.5 MILESTONE_Core.ino.bin 'OLED 중앙 정렬 및 버튼 홀딩 안정화'" >&2
   exit 2
 fi
 
@@ -16,7 +16,7 @@ script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 project_dir=$(cd -- "$script_dir/.." && pwd)
 
 if [[ ! $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "오류: VERSION은 1.5.4와 같은 형식이어야 합니다." >&2
+  echo "오류: VERSION은 1.5.5와 같은 형식이어야 합니다." >&2
   exit 2
 fi
 if [[ -z $source_bin || $source_bin == auto || $source_bin == - ]]; then

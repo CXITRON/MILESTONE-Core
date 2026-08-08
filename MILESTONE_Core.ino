@@ -31,7 +31,7 @@ SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 
 namespace Milestone {
 
-constexpr char FIRMWARE_VERSION[] = "1.5.4";
+constexpr char FIRMWARE_VERSION[] = "1.5.5";
 constexpr char AP_SSID[] = "MILESTONE-D1-SETUP";
 constexpr char HOSTNAME[] = "milestone-d1";
 constexpr char PREFS_NS[] = "milestone";
@@ -56,7 +56,9 @@ constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 20UL * 1000UL;
 constexpr uint32_t NTP_TIMEOUT_MS = 18UL * 1000UL;
 constexpr uint32_t PORTAL_SUCCESS_HOLD_MS = 3000UL;
 constexpr uint32_t DISPLAY_REFRESH_MS = 250UL;
+constexpr uint32_t BUTTON_DISPLAY_REFRESH_MS = 250UL;
 constexpr uint32_t BUTTON_DEBOUNCE_MS = 30UL;
+constexpr uint32_t VIEW_SAVE_DELAY_MS = 1500UL;
 constexpr uint32_t RESET_CONFIRM_WINDOW_MS = 5000UL;
 constexpr uint32_t RESET_CONFIRM_HOLD_MS = 3000UL;
 constexpr uint32_t LED_REFRESH_MS = 20UL;
@@ -69,6 +71,7 @@ constexpr uint32_t TEMPERATURE_FAULT_SAFE_HOLD_MS = 60UL * 1000UL;
 constexpr uint32_t UPDATE_PROMPT_MS = 15UL * 1000UL;
 constexpr uint32_t UPDATE_CURRENT_HOLD_MS = 1000UL;
 constexpr uint32_t BOOT_SPLASH_MS = 3000UL;
+constexpr uint32_t DEVICE_INFO_PAGE_MS = 5000UL;
 constexpr uint8_t DEVICE_INFO_PAGE_COUNT = 5;
 constexpr uint32_t UPDATE_WEEKLY_SEC = 7UL * 24UL * 60UL * 60UL;
 constexpr uint32_t UPDATE_RETRY_MS = 6UL * 60UL * 60UL * 1000UL;
@@ -284,7 +287,7 @@ uint8_t updateDownloadBuffer[UPDATE_DOWNLOAD_BUFFER_BYTES];
 
 uint32_t stateStartedMs = 0;
 uint32_t bootSplashStartedMs = 0;
-uint8_t deviceInfoPage = 0;
+uint32_t deviceInfoStartedMs = 0;
 uint32_t portalStartedMs = 0;
 uint32_t portalSuccessMs = 0;
 uint32_t wifiDeadlineMs = 0;
@@ -320,6 +323,8 @@ bool buttonRawPressed = false;
 bool buttonStablePressed = false;
 uint32_t buttonRawChangedMs = 0;
 uint32_t buttonPressedMs = 0;
+bool viewSavePending = false;
+uint32_t viewSaveDueMs = 0;
 bool resetConfirmation = false;
 uint32_t resetConfirmStartedMs = 0;
 bool resetConfirmPressEligible = false;
@@ -590,9 +595,27 @@ void saveConfigAll() {
   prefs.putUShort("cfg_ver", config.version);
 }
 
-void saveViewState() {
-  prefs.putUChar("last_view", static_cast<uint8_t>(config.lastView));
-  prefs.putUChar("cycle_idx", config.cycleIndex);
+bool saveViewState() {
+  const bool viewSaved = prefs.putUChar("last_view", static_cast<uint8_t>(config.lastView)) == sizeof(uint8_t);
+  const bool cycleSaved = prefs.putUChar("cycle_idx", config.cycleIndex) == sizeof(uint8_t);
+  return viewSaved && cycleSaved;
+}
+
+void scheduleViewStateSave() {
+  viewSavePending = true;
+  viewSaveDueMs = millis() + VIEW_SAVE_DELAY_MS;
+}
+
+void processViewStateSave() {
+  if (!viewSavePending || buttonRawPressed || buttonStablePressed || !deadlineReached(millis(), viewSaveDueMs)) return;
+  if (updateState == UpdateState::DOWNLOADING || updateState == UpdateState::VERIFYING ||
+      updateState == UpdateState::READY_TO_REBOOT) return;
+  if (saveViewState()) {
+    viewSavePending = false;
+  } else {
+    viewSaveDueMs = millis() + VIEW_SAVE_DELAY_MS;
+    logLine("view state save failed; retry scheduled");
+  }
 }
 
 bool loadConfig() {
@@ -727,15 +750,19 @@ bool detectOledAddress() {
   return false;
 }
 
+void drawCenteredStr(const char *text, int baseline, int8_t offsetX = 0) {
+  const int width = display.getStrWidth(text);
+  display.drawStr(max(0, (128 - width) / 2 + static_cast<int>(offsetX)), baseline, text);
+}
+
 void drawBootSplashFrame() {
   display.clearBuffer();
   display.setFont(u8g2_font_6x10_tf);
-  display.drawStr(15, 52, "CYTRON//MILESTONE");
-  display.drawStr(26, 72, "MILESTONE D1");
+  drawCenteredStr("CYTRON//MILESTONE", 52);
+  drawCenteredStr("MILESTONE D1", 72);
   display.setFont(u8g2_font_5x8_tf);
   String version = String("CORE ") + FIRMWARE_VERSION;
-  int width = display.getStrWidth(version.c_str());
-  display.drawStr(max(0, (128 - width) / 2), 94, version.c_str());
+  drawCenteredStr(version.c_str(), 94);
   display.sendBuffer();
 }
 
@@ -1323,7 +1350,7 @@ void drawClockOnly(int8_t ox, int8_t oy) {
     display.setFont(u8g2_font_unifont_t_korean2);
     drawCenteredUtf8("시간 미확정", 66 + oy, ox);
     display.setFont(u8g2_font_6x10_tf);
-    display.drawStr(15 + ox, 92 + oy, "HOLD BOOT: SETUP");
+    drawCenteredStr("HOLD BOOT: SETUP", 92 + oy, ox);
     return;
   }
   int hour = local.tm_hour;
@@ -1480,7 +1507,8 @@ void drawDeviceInfoLine(uint8_t y, const char *label, const char *value, int8_t 
 }
 
 void drawDeviceInfo(int8_t ox, int8_t oy) {
-  const uint8_t page = deviceInfoPage % DEVICE_INFO_PAGE_COUNT;
+  const uint8_t page = static_cast<uint8_t>(((millis() - deviceInfoStartedMs) / DEVICE_INFO_PAGE_MS) %
+                                             DEVICE_INFO_PAGE_COUNT);
   display.setFont(u8g2_font_5x8_tf);
   char value[32];
 
@@ -1596,20 +1624,16 @@ void drawButtonOverlay(uint32_t heldMs) {
   if (!oledReady) return;
   display.clearBuffer();
   display.setFont(u8g2_font_7x14B_tf);
-  if (resetConfirmation && heldMs >= RESET_CONFIRM_HOLD_MS) display.drawStr(3, 50, "RELEASE TO RESET");
-  else if (resetConfirmation) display.drawStr(4, 50, "HOLD 3S TO RESET");
-  else if (heldMs >= 8000) display.drawStr(7, 50, "RELEASE: RESET?");
-  else if (heldMs >= 3000) display.drawStr(8, 50, "RELEASE: SETUP");
-  else if (currentView == View::DEVICE_INFO && heldMs >= 2000) {
-    const char *label = "RELEASE: NEXT";
-    const int width = display.getStrWidth(label);
-    display.drawStr((128 - width) / 2, 50, label);
-  }
-  else display.drawStr(24, 50, "HOLDING...");
+  if (resetConfirmation && heldMs >= RESET_CONFIRM_HOLD_MS) drawCenteredStr("RELEASE TO RESET", 50);
+  else if (resetConfirmation) drawCenteredStr("HOLD 3S TO RESET", 50);
+  else if (heldMs >= 8000) drawCenteredStr("RELEASE: RESET?", 50);
+  else if (heldMs >= 3000) drawCenteredStr("RELEASE: SETUP", 50);
+  else drawCenteredStr("HOLDING...", 50);
   display.setFont(u8g2_font_logisoso24_tn);
-  String seconds = String(heldMs / 1000.0f, 1) + "s";
-  int width = display.getStrWidth(seconds.c_str());
-  display.drawStr((128 - width) / 2, 91, seconds.c_str());
+  char seconds[12];
+  snprintf(seconds, sizeof(seconds), "%lu.%lus", static_cast<unsigned long>(heldMs / 1000UL),
+           static_cast<unsigned long>((heldMs % 1000UL) / 100UL));
+  drawCenteredStr(seconds, 91);
   display.sendBuffer();
 }
 
@@ -1617,14 +1641,13 @@ void drawResetConfirmation() {
   if (!oledReady) return;
   display.clearBuffer();
   display.setFont(u8g2_font_7x14B_tf);
-  display.drawStr(4, 28, "RESET SETTINGS?");
+  drawCenteredStr("RESET SETTINGS?", 28);
   display.setFont(u8g2_font_6x10_tf);
-  display.drawStr(8, 55, "Within 5 seconds:");
-  display.drawStr(13, 74, "Hold BOOT 3s");
+  drawCenteredStr("Within 5 seconds:", 55);
+  drawCenteredStr("Hold BOOT 3s", 74);
   uint32_t left = RESET_CONFIRM_WINDOW_MS > millis() - resetConfirmStartedMs ? (RESET_CONFIRM_WINDOW_MS - (millis() - resetConfirmStartedMs) + 999) / 1000 : 0;
   String countdown = String(left) + " sec";
-  int width = display.getStrWidth(countdown.c_str());
-  display.drawStr((128 - width) / 2, 105, countdown.c_str());
+  drawCenteredStr(countdown.c_str(), 105);
   display.sendBuffer();
 }
 
@@ -1632,19 +1655,15 @@ void drawThermalSafeScreen() {
   if (!oledReady) return;
   display.clearBuffer();
   display.setFont(u8g2_font_7x14B_tf);
-  display.drawStr(thermalSafeModeFromSensorFault ? 4 : 22, 27,
-                  thermalSafeModeFromSensorFault ? "! TEMP SENSOR !" : "! OVERHEAT !");
+  drawCenteredStr(thermalSafeModeFromSensorFault ? "! TEMP SENSOR !" : "! OVERHEAT !", 27);
   char temperature[10];
   if (isnan(chipTemperatureC)) snprintf(temperature, sizeof(temperature), "--C");
   else snprintf(temperature, sizeof(temperature), "%dC", static_cast<int>(chipTemperatureC + 0.5f));
-  int width = display.getStrWidth(temperature);
-  display.drawStr((128 - width) / 2, 68, temperature);
+  drawCenteredStr(temperature, 68);
   display.setFont(u8g2_font_6x10_tf);
-  display.drawStr(4, 91, "CPU 80MHz / WIFI OFF");
-  display.drawStr(thermalSafeModeFromSensorFault ? 10 : 13, 108,
-                  thermalSafeModeFromSensorFault ? "SENSOR RETRY ACTIVE" : "AUTOMATIC COOLING");
-  display.drawStr(thermalSafeModeFromSensorFault ? 14 : 10, 123,
-                  thermalSafeModeFromSensorFault ? "UNPLUG IF HOT" : "UNPLUG IF NOT COOL");
+  drawCenteredStr("CPU 80MHz / WIFI OFF", 91);
+  drawCenteredStr(thermalSafeModeFromSensorFault ? "SENSOR RETRY ACTIVE" : "AUTOMATIC COOLING", 108);
+  drawCenteredStr(thermalSafeModeFromSensorFault ? "UNPLUG IF HOT" : "UNPLUG IF NOT COOL", 123);
   display.sendBuffer();
 }
 
@@ -1653,70 +1672,62 @@ void drawUpdateScreen() {
   display.clearBuffer();
   display.setFont(u8g2_font_7x14B_tf);
   if (updateState == UpdateState::CHECKING) {
-    display.drawStr(13, 34, "CHECKING UPDATE");
+    drawCenteredStr("CHECKING UPDATE", 34);
     display.setFont(u8g2_font_6x10_tf);
-    display.drawStr(14, 65, "GitHub Release");
-    display.drawStr(20, 88, "Please wait...");
+    drawCenteredStr("GitHub Release", 65);
+    drawCenteredStr("Please wait...", 88);
   } else if (updateState == UpdateState::AVAILABLE && updatePromptVisible) {
-    display.drawStr(7, 25, "UPDATE AVAILABLE");
+    drawCenteredStr("UPDATE AVAILABLE", 25);
     display.setFont(u8g2_font_6x10_tf);
     String versions = String(FIRMWARE_VERSION) + " -> " + latestFirmwareVersion;
-    int width = display.getStrWidth(versions.c_str());
-    display.drawStr(max(0, (128 - width) / 2), 52, versions.c_str());
-    display.drawStr(15, 78, "Tap BOOT: install");
+    drawCenteredStr(versions.c_str(), 52);
+    drawCenteredStr("Tap BOOT: install", 78);
     uint32_t left = UPDATE_PROMPT_MS > millis() - updatePromptStartedMs
                       ? (UPDATE_PROMPT_MS - (millis() - updatePromptStartedMs) + 999) / 1000 : 0;
     String footer = String("Later in ") + left + " sec";
-    width = display.getStrWidth(footer.c_str());
-    display.drawStr(max(0, (128 - width) / 2), 106, footer.c_str());
+    drawCenteredStr(footer.c_str(), 106);
   } else if (updateState == UpdateState::DOWNLOADING) {
     const char *title = "DOWNLOADING";
-    int width = display.getStrWidth(title);
-    display.drawStr(max(0, (128 - width) / 2), 25, title);
+    drawCenteredStr(title, 25);
     // The numeric-only _tn font omits symbols such as '%'. Use the full font
     // so the complete progress label is rendered and centered as one string.
     display.setFont(u8g2_font_logisoso28_tf);
     uint32_t percent = latestFirmwareSize > 0
                          ? static_cast<uint32_t>((updateDownloadedBytes * 100ULL) / latestFirmwareSize) : 0;
     String value = String(percent) + "%";
-    width = display.getStrWidth(value.c_str());
-    display.drawStr(max(0, (128 - width) / 2), 70, value.c_str());
+    drawCenteredStr(value.c_str(), 70);
     display.drawFrame(8, 91, 112, 10);
     const uint32_t progressWidth = percent >= 100 ? 108 : percent * 108 / 100;
     display.drawBox(10, 93, static_cast<uint8_t>(progressWidth), 6);
     display.setFont(u8g2_font_5x8_tf);
-    display.drawStr(19, 121, "DO NOT POWER OFF");
+    drawCenteredStr("DO NOT POWER OFF", 121);
   } else if (updateState == UpdateState::VERIFYING) {
-    display.drawStr(20, 38, "VERIFYING");
+    drawCenteredStr("VERIFYING", 38);
     display.setFont(u8g2_font_6x10_tf);
-    display.drawStr(15, 70, "SHA-256 + image");
-    display.drawStr(20, 96, "Please wait...");
+    drawCenteredStr("SHA-256 + image", 70);
+    drawCenteredStr("Please wait...", 96);
   } else if (updateState == UpdateState::READY_TO_REBOOT) {
-    display.drawStr(11, 40, "UPDATE READY");
+    drawCenteredStr("UPDATE READY", 40);
     display.setFont(u8g2_font_6x10_tf);
-    display.drawStr(18, 72, "Rebooting into");
+    drawCenteredStr("Rebooting into", 72);
     String version = String("version ") + latestFirmwareVersion;
-    int width = display.getStrWidth(version.c_str());
-    display.drawStr(max(0, (128 - width) / 2), 94, version.c_str());
+    drawCenteredStr(version.c_str(), 94);
   } else if (updateState == UpdateState::CURRENT) {
     const char *title = "UP TO DATE";
-    int width = display.getStrWidth(title);
-    display.drawStr(max(0, (128 - width) / 2), 34, title);
+    drawCenteredStr(title, 34);
     display.setFont(u8g2_font_6x10_tf);
     String version = String("Version ") + FIRMWARE_VERSION;
-    width = display.getStrWidth(version.c_str());
-    display.drawStr(max(0, (128 - width) / 2), 68, version.c_str());
-    display.drawStr(20, 96, "Latest firmware");
+    drawCenteredStr(version.c_str(), 68);
+    drawCenteredStr("Latest firmware", 96);
   } else if (updateState == UpdateState::ERROR_STATE) {
-    display.drawStr(17, 27, "UPDATE ERROR");
+    drawCenteredStr("UPDATE ERROR", 27);
     display.setFont(u8g2_font_5x8_tf);
     String line = updateError;
     if (line.length() > 23) line = line.substring(0, 23);
-    int width = display.getStrWidth(line.c_str());
-    display.drawStr(max(0, (128 - width) / 2), 62, line.c_str());
+    drawCenteredStr(line.c_str(), 62);
     display.setFont(u8g2_font_6x10_tf);
-    display.drawStr(12, 94, "Retry in 6 hours");
-    display.drawStr(12, 116, "or next reboot");
+    drawCenteredStr("Retry in 6 hours", 94);
+    drawCenteredStr("or next reboot", 116);
   }
   display.sendBuffer();
 }
@@ -2657,7 +2668,7 @@ void handlePostConfig() {
     currentView = topModeView(config.mode);
     config.lastView = currentView;
   }
-  if (currentView == View::DEVICE_INFO) deviceInfoPage = 0;
+  if (currentView == View::DEVICE_INFO) deviceInfoStartedMs = millis();
   saveConfigAll();
   lastTemperatureReadMs = 0;
   scrollStartedMs = millis();
@@ -3274,11 +3285,11 @@ void advanceView(bool persist) {
   } else {
     currentView = static_cast<View>((static_cast<uint8_t>(currentView) + 1) % VIEW_COUNT);
   }
-  if (currentView == View::DEVICE_INFO) deviceInfoPage = 0;
+  if (currentView == View::DEVICE_INFO) deviceInfoStartedMs = millis();
   if (persist) {
     config.lastView = currentView;
     config.cycleIndex = currentCycleIndex;
-    saveViewState();
+    scheduleViewStateSave();
   }
   scrollStartedMs = millis();
   lastCycleMs = millis();
@@ -3286,7 +3297,8 @@ void advanceView(bool persist) {
 }
 
 void processCycle() {
-  if (thermalSafeMode || bootSplashActive() || portalActive || resetConfirmation || buttonStablePressed || displaySleeping ||
+  if (thermalSafeMode || bootSplashActive() || portalActive || resetConfirmation || buttonRawPressed ||
+      buttonStablePressed || displaySleeping ||
       updateState == UpdateState::CHECKING || updateState == UpdateState::DOWNLOADING ||
       updateState == UpdateState::VERIFYING || updateState == UpdateState::READY_TO_REBOOT ||
       updateState == UpdateState::CURRENT || updatePromptVisible) return;
@@ -3300,9 +3312,9 @@ void performPhysicalFactoryReset() {
   if (oledReady) {
     display.clearBuffer();
     display.setFont(u8g2_font_7x14B_tf);
-    display.drawStr(20, 55, "RESETTING...");
+    drawCenteredStr("RESETTING...", 55);
     display.setFont(u8g2_font_6x10_tf);
-    display.drawStr(12, 80, "Settings cleared");
+    drawCenteredStr("Settings cleared", 80);
     display.sendBuffer();
   }
   logLine("physical factory reset confirmed");
@@ -3336,14 +3348,8 @@ void handleButtonRelease(uint32_t heldMs) {
   }
   if (heldMs < 1000) {
     advanceView(true);
-  } else if (heldMs < 2000) {
-    // Deliberate no-op zone: prevents accidental setup entry.
   } else if (heldMs < 3000) {
-    if (currentView == View::DEVICE_INFO) {
-      deviceInfoPage = (deviceInfoPage + 1) % DEVICE_INFO_PAGE_COUNT;
-      wakeDisplay();
-      logLine(String("device info page -> ") + String(deviceInfoPage + 1));
-    }
+    // Deliberate no-op zone: prevents accidental setup entry.
   } else if (heldMs < 8000) {
     startPortal();
   } else {
@@ -3395,7 +3401,8 @@ void processDisplay() {
     }
     return;
   }
-  if (!elapsed(now, lastDisplayMs, DISPLAY_REFRESH_MS)) return;
+  const uint32_t refreshMs = buttonStablePressed ? BUTTON_DISPLAY_REFRESH_MS : DISPLAY_REFRESH_MS;
+  if (!elapsed(now, lastDisplayMs, refreshMs)) return;
   lastDisplayMs = now;
   updateContrast();
   if (buttonStablePressed) drawButtonOverlay(now - buttonPressedMs);
@@ -3408,7 +3415,7 @@ void initializeView() {
   if (config.mode == TopMode::SELECTED_CYCLE) {
     selectFirstEnabledCycleView();
   }
-  if (currentView == View::DEVICE_INFO) deviceInfoPage = 0;
+  if (currentView == View::DEVICE_INFO) deviceInfoStartedMs = millis();
   lastCycleMs = millis();
   scrollStartedMs = millis();
 }
@@ -3422,9 +3429,19 @@ void setupFirmware() {
   writeStatusLed(40, 255, 180);
   delay(250);
   logLine(String("booting firmware ") + FIRMWARE_VERSION);
+  Serial.printf("[MILESTONE] reset=%s (%d), heap=%lu, min_heap=%lu, largest=%lu, psram=%lu\n",
+                resetReasonName(esp_reset_reason()), static_cast<int>(esp_reset_reason()),
+                static_cast<unsigned long>(ESP.getFreeHeap()),
+                static_cast<unsigned long>(ESP.getMinFreeHeap()),
+                static_cast<unsigned long>(ESP.getMaxAllocHeap()),
+                static_cast<unsigned long>(ESP.getFreePsram()));
   // ESP32 requires the STA hostname to be set before Wi-Fi is started.
   WiFi.setHostname(HOSTNAME);
   pinMode(PIN_BOOT, INPUT_PULLUP);
+  buttonRawPressed = digitalRead(PIN_BOOT) == LOW;
+  buttonStablePressed = buttonRawPressed;
+  buttonRawChangedMs = millis();
+  buttonPressedMs = buttonRawChangedMs;
   setenv("TZ", TZ_INFO, 1);
   tzset();
   sntp_set_time_sync_notification_cb(ntpTimeAvailable);
@@ -3468,6 +3485,7 @@ void setupFirmware() {
 void loopFirmware() {
   processThermalProtection();
   processButton();
+  processViewStateSave();
   processNetwork();
   processFirmwareUpdate();
   processCycle();
