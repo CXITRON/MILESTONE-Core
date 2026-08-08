@@ -39,7 +39,7 @@ if [[ $first_byte != e9 ]]; then
   echo "오류: ESP32 애플리케이션 BIN이 아닙니다(시작 바이트가 0xE9가 아님)." >&2
   exit 2
 fi
-if ! strings -a -- "$source_bin" | grep -Fqx -- "$version"; then
+if ! strings -a -- "$source_bin" | grep -Fx -- "$version" >/dev/null; then
   echo "오류: BIN 내부에서 펌웨어 버전 $version을 확인하지 못했습니다." >&2
   echo "이전 빌드의 BIN이 아닌지 확인하고 다시 내보내세요." >&2
   exit 2
