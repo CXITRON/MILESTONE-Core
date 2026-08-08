@@ -14,6 +14,7 @@
 #include <time.h>
 #include "driver/temperature_sensor.h"
 #include "esp_sntp.h"
+#include "esp_system.h"
 
 #include "PortalPage.h"
 #include "UpdateCertificates.h"
@@ -24,7 +25,7 @@
 
 namespace Milestone {
 
-constexpr char FIRMWARE_VERSION[] = "1.5.0";
+constexpr char FIRMWARE_VERSION[] = "1.5.1";
 constexpr char AP_SSID[] = "MILESTONE-D1-SETUP";
 constexpr char HOSTNAME[] = "milestone-d1";
 constexpr char PREFS_NS[] = "milestone";
@@ -32,8 +33,8 @@ constexpr char UPDATE_MANIFEST_URL[] = "https://github.com/CXITRON/MILESTONE-Cor
 constexpr char UPDATE_RELEASE_BASE_URL[] = "https://github.com/CXITRON/MILESTONE-Core/releases/download/v";
 constexpr char UPDATE_ASSET_NAME[] = "MILESTONE_Core.bin";
 constexpr char UPDATE_GITHUB_HOST[] = "github.com";
-constexpr uint16_t CONFIG_VERSION = 5;
-constexpr uint8_t VIEW_COUNT = 6;
+constexpr uint16_t CONFIG_VERSION = 6;
+constexpr uint8_t VIEW_COUNT = 7;
 constexpr uint8_t MAX_SAVED_NETWORKS = 8;
 constexpr uint8_t NO_WIFI_INDEX = 0xFF;
 
@@ -60,6 +61,10 @@ constexpr uint32_t THERMAL_THROTTLE_RECOVERY_HOLD_MS = 30UL * 1000UL;
 constexpr uint32_t THERMAL_RECOVERY_HOLD_MS = 60UL * 1000UL;
 constexpr uint32_t TEMPERATURE_FAULT_SAFE_HOLD_MS = 60UL * 1000UL;
 constexpr uint32_t UPDATE_PROMPT_MS = 15UL * 1000UL;
+constexpr uint32_t UPDATE_CURRENT_HOLD_MS = 1000UL;
+constexpr uint32_t BOOT_SPLASH_MS = 3000UL;
+constexpr uint32_t DEVICE_INFO_PAGE_MS = 3000UL;
+constexpr uint8_t DEVICE_INFO_PAGE_COUNT = 5;
 constexpr uint32_t UPDATE_WEEKLY_SEC = 7UL * 24UL * 60UL * 60UL;
 constexpr uint32_t UPDATE_RETRY_MS = 6UL * 60UL * 60UL * 1000UL;
 constexpr uint32_t UPDATE_HTTP_TIMEOUT_MS = 15UL * 1000UL;
@@ -87,7 +92,8 @@ enum class View : uint8_t {
   MESSAGE_ONLY = 2,
   CLOCK_ONLY = 3,
   MESSAGE_CLOCK = 4,
-  DASHBOARD = 5
+  DASHBOARD = 5,
+  DEVICE_INFO = 6
 };
 
 enum class TopMode : uint8_t {
@@ -97,7 +103,8 @@ enum class TopMode : uint8_t {
   CLOCK_ONLY = 3,
   MESSAGE_CLOCK = 4,
   DASHBOARD = 5,
-  SELECTED_CYCLE = 6
+  SELECTED_CYCLE = 6,
+  DEVICE_INFO = 7
 };
 
 enum class RuntimeState : uint8_t {
@@ -127,6 +134,7 @@ enum class UpdateState : uint8_t {
   DOWNLOADING,
   VERIFYING,
   READY_TO_REBOOT,
+  CURRENT,
   ERROR_STATE
 };
 
@@ -194,8 +202,8 @@ struct Config {
   uint16_t nightEndMin = 420;     // 07:00
   bool burninShift = true;
   uint16_t screenOffMin = 0;
-  uint8_t cycleMask = 0x3F;
-  uint8_t cycleOrder[VIEW_COUNT] = {0, 1, 2, 3, 4, 5};
+  uint8_t cycleMask = 0x7F;
+  uint8_t cycleOrder[VIEW_COUNT] = {0, 1, 2, 3, 4, 5, 6};
   uint8_t cycleIntervalSec = 8;
   uint8_t cycleIndex = 0;
   uint64_t lastSync = 0;
@@ -250,6 +258,7 @@ uint32_t latestFirmwareSize = 0;
 uint32_t updateDownloadedBytes = 0;
 uint32_t updatePromptStartedMs = 0;
 uint32_t updateStateStartedMs = 0;
+uint32_t updateCurrentVisibleMs = 0;
 uint32_t nextUpdateRetryMs = 0;
 uint64_t lastUpdateCheckEpoch = 0;
 bool bootUpdateCheckPending = true;
@@ -259,6 +268,8 @@ bool updateInstallRequested = false;
 bool wifiSleepDeferredForUpdate = false;
 
 uint32_t stateStartedMs = 0;
+uint32_t bootSplashStartedMs = 0;
+uint32_t deviceInfoStartedMs = 0;
 uint32_t portalStartedMs = 0;
 uint32_t portalSuccessMs = 0;
 uint32_t wifiDeadlineMs = 0;
@@ -365,7 +376,7 @@ String cycleOrderToString(const Config &cfg) {
 }
 
 bool parseCycleOrderCount(const String &text, uint8_t *out, uint8_t expectedCount) {
-  bool seen[VIEW_COUNT] = {false, false, false, false, false, false};
+  bool seen[VIEW_COUNT] = {};
   uint8_t count = 0;
   int start = 0;
   while (start <= static_cast<int>(text.length()) && count < expectedCount) {
@@ -380,7 +391,7 @@ bool parseCycleOrderCount(const String &text, uint8_t *out, uint8_t expectedCoun
     out[count++] = value;
     start = comma + 1;
   }
-  if (count != expectedCount) return false;
+  if (count != expectedCount || start <= static_cast<int>(text.length())) return false;
   for (uint8_t i = 0; i < expectedCount; ++i) if (!seen[i]) return false;
   return true;
 }
@@ -421,8 +432,15 @@ const char *updateStateName(UpdateState state) {
     case UpdateState::DOWNLOADING: return "downloading";
     case UpdateState::VERIFYING: return "verifying";
     case UpdateState::READY_TO_REBOOT: return "rebooting";
+    case UpdateState::CURRENT: return "current";
     default: return "error";
   }
+}
+
+View topModeView(TopMode mode) {
+  return mode == TopMode::DEVICE_INFO
+           ? View::DEVICE_INFO
+           : static_cast<View>(static_cast<uint8_t>(mode));
 }
 
 bool timeIsValid() {
@@ -571,6 +589,7 @@ bool loadConfig() {
   const bool migrateToV3 = version < 3;
   const bool migrateToV4 = version < 4;
   const bool migrateToV5 = version < 5;
+  const bool migrateToV6 = version < 6;
   config.version = CONFIG_VERSION;
   if (migrateToV4) {
     String legacySsid = prefs.getString("wifi_ssid", "");
@@ -594,8 +613,9 @@ bool loadConfig() {
   }
   uint8_t storedMode = prefs.getUChar("mode", 0);
   if (migrateV1 && storedMode == 4) storedMode = static_cast<uint8_t>(TopMode::SELECTED_CYCLE);
-  config.mode = static_cast<TopMode>(clampInt(storedMode, 0, 6));
-  config.lastView = static_cast<View>(clampInt(prefs.getUChar("last_view", 0), 0, migrateV1 ? 3 : 5));
+  config.mode = static_cast<TopMode>(clampInt(storedMode, 0, 7));
+  const uint8_t maximumStoredView = migrateV1 ? 3 : (migrateToV6 ? 5 : 6);
+  config.lastView = static_cast<View>(clampInt(prefs.getUChar("last_view", 0), 0, maximumStoredView));
   config.title = prefs.getString("title", config.title);
   config.target = prefs.getString("target", config.target);
   config.message = prefs.getString("message", config.message);
@@ -633,7 +653,8 @@ bool loadConfig() {
   config.nightEndMin = clampInt(prefs.getUShort("night_end", 420), 0, 1439);
   config.burninShift = prefs.getBool("burnin", true);
   config.screenOffMin = clampInt(prefs.getUShort("screen_off", 0), 0, 1440);
-  config.cycleMask = prefs.getUChar("cycle_mask", migrateV1 ? 0x0F : 0x3F) & 0x3F;
+  const uint8_t storedCycleLimit = migrateToV6 ? 0x3F : 0x7F;
+  config.cycleMask = prefs.getUChar("cycle_mask", migrateV1 ? 0x0F : storedCycleLimit) & storedCycleLimit;
   if (config.cycleMask == 0) config.cycleMask = 1;
   if (migrateV1) {
     uint8_t legacyOrder[4] = {0, 1, 2, 3};
@@ -644,9 +665,16 @@ bool loadConfig() {
     memcpy(config.cycleOrder, legacyOrder, sizeof(legacyOrder));
     config.cycleOrder[4] = 4;
     config.cycleOrder[5] = 5;
+    config.cycleOrder[6] = 6;
+  } else if (migrateToV6) {
+    uint8_t parsedLegacy[6];
+    if (parseCycleOrderCount(prefs.getString("cycle_ord", "0,1,2,3,4,5"), parsedLegacy, 6)) {
+      memcpy(config.cycleOrder, parsedLegacy, sizeof(parsedLegacy));
+    }
+    config.cycleOrder[6] = 6;
   } else {
     uint8_t parsed[VIEW_COUNT];
-    if (parseCycleOrder(prefs.getString("cycle_ord", "0,1,2,3,4,5"), parsed)) {
+    if (parseCycleOrder(prefs.getString("cycle_ord", "0,1,2,3,4,5,6"), parsed)) {
       memcpy(config.cycleOrder, parsed, sizeof(parsed));
     }
   }
@@ -657,7 +685,7 @@ bool loadConfig() {
   config.lastDday = prefs.getInt("last_dday", 0);
   int y, m, d;
   if (!parseDate(config.target, y, m, d)) config.target = "2026-11-19";
-  if (migrateToV3 || migrateToV4 || migrateToV5) {
+  if (migrateToV3 || migrateToV4 || migrateToV5 || migrateToV6) {
     saveConfigAll();
     logLine(String("configuration migrated from schema ") + String(version) + " to " + String(CONFIG_VERSION));
   }
@@ -675,6 +703,22 @@ bool detectOledAddress() {
   return false;
 }
 
+void drawBootSplashFrame() {
+  display.clearBuffer();
+  display.setFont(u8g2_font_6x10_tf);
+  display.drawStr(15, 52, "CYTRON//MILESTONE");
+  display.drawStr(26, 72, "MILESTONE D1");
+  display.setFont(u8g2_font_5x8_tf);
+  String version = String("CORE ") + FIRMWARE_VERSION;
+  int width = display.getStrWidth(version.c_str());
+  display.drawStr(max(0, (128 - width) / 2), 94, version.c_str());
+  display.sendBuffer();
+}
+
+bool bootSplashActive() {
+  return bootSplashStartedMs != 0 && !elapsed(millis(), bootSplashStartedMs, BOOT_SPLASH_MS);
+}
+
 bool initDisplay() {
   Wire.begin(PIN_SDA, PIN_SCL, 400000);
   if (!detectOledAddress()) {
@@ -686,11 +730,7 @@ bool initDisplay() {
   display.begin();
   display.enableUTF8Print();
   display.setContrast(config.brightness);
-  display.clearBuffer();
-  display.setFont(u8g2_font_6x10_tf);
-  display.drawStr(15, 52, "CYTRON//MILESTONE");
-  display.drawStr(26, 72, "MILESTONE D1");
-  display.sendBuffer();
+  drawBootSplashFrame();
   logLine(String("OLED ready at 0x") + String(oledAddress, HEX));
   return true;
 }
@@ -1350,6 +1390,163 @@ void drawDashboard(int8_t ox, int8_t oy) {
   drawScrollingUtf8(singleLineMessage(config.message), 123 + oy, 1, 126, true);
 }
 
+void formatByteCount(uint32_t bytes, char *output, size_t outputSize) {
+  if (bytes >= 1024UL * 1024UL) {
+    snprintf(output, outputSize, "%lu.%02lu MB", static_cast<unsigned long>(bytes / (1024UL * 1024UL)),
+             static_cast<unsigned long>((bytes % (1024UL * 1024UL)) * 100UL / (1024UL * 1024UL)));
+  } else if (bytes >= 1024UL) {
+    snprintf(output, outputSize, "%lu.%01lu KB", static_cast<unsigned long>(bytes / 1024UL),
+             static_cast<unsigned long>((bytes % 1024UL) * 10UL / 1024UL));
+  } else {
+    snprintf(output, outputSize, "%lu B", static_cast<unsigned long>(bytes));
+  }
+}
+
+void formatUptime(char *output, size_t outputSize) {
+  const uint32_t totalSeconds = millis() / 1000UL;
+  const uint32_t days = totalSeconds / 86400UL;
+  const uint8_t hours = (totalSeconds / 3600UL) % 24UL;
+  const uint8_t minutes = (totalSeconds / 60UL) % 60UL;
+  const uint8_t seconds = totalSeconds % 60UL;
+  snprintf(output, outputSize, "%lud %02u:%02u:%02u", static_cast<unsigned long>(days), hours, minutes, seconds);
+}
+
+void formatEpochShort(uint64_t epoch, char *output, size_t outputSize) {
+  if (epoch < static_cast<uint64_t>(MIN_VALID_EPOCH)) {
+    snprintf(output, outputSize, "NEVER");
+    return;
+  }
+  const time_t value = static_cast<time_t>(epoch);
+  tm local{};
+  localtime_r(&value, &local);
+  snprintf(output, outputSize, "%02d-%02d %02d:%02d", local.tm_mon + 1, local.tm_mday,
+           local.tm_hour, local.tm_min);
+}
+
+const char *resetReasonName(esp_reset_reason_t reason) {
+  switch (reason) {
+    case ESP_RST_POWERON: return "POWER ON";
+    case ESP_RST_EXT: return "EXTERNAL";
+    case ESP_RST_SW: return "SOFTWARE";
+    case ESP_RST_PANIC: return "PANIC";
+    case ESP_RST_INT_WDT: return "INT WDT";
+    case ESP_RST_TASK_WDT: return "TASK WDT";
+    case ESP_RST_WDT: return "WDT";
+    case ESP_RST_DEEPSLEEP: return "DEEP SLEEP";
+    case ESP_RST_BROWNOUT: return "BROWNOUT";
+    case ESP_RST_SDIO: return "SDIO";
+    default: return "UNKNOWN";
+  }
+}
+
+void drawDeviceInfoHeader(const char *title, uint8_t page, int8_t ox, int8_t oy) {
+  display.setFont(u8g2_font_6x10_tf);
+  display.drawStr(1 + ox, 10 + oy, title);
+  char pageText[8];
+  snprintf(pageText, sizeof(pageText), "%u/%u", page + 1, DEVICE_INFO_PAGE_COUNT);
+  display.drawStr(108 + ox, 10 + oy, pageText);
+  display.drawHLine(0, 14 + oy, 128);
+  display.setFont(u8g2_font_5x8_tf);
+}
+
+void drawDeviceInfoLine(uint8_t y, const char *label, const char *value, int8_t ox, int8_t oy) {
+  char line[30];
+  snprintf(line, sizeof(line), "%s: %s", label, value);
+  display.drawStr(2 + ox, y + oy, line);
+}
+
+void drawDeviceInfo(int8_t ox, int8_t oy) {
+  const uint8_t page = static_cast<uint8_t>(((millis() - deviceInfoStartedMs) / DEVICE_INFO_PAGE_MS) %
+                                             DEVICE_INFO_PAGE_COUNT);
+  display.setFont(u8g2_font_5x8_tf);
+  char value[32];
+
+  if (page == 0) {
+    drawDeviceInfoHeader("SYSTEM", page, ox, oy);
+    drawDeviceInfoLine(29, "FW", FIRMWARE_VERSION, ox, oy);
+    formatUptime(value, sizeof(value));
+    drawDeviceInfoLine(45, "UP", value, ox, oy);
+    drawDeviceInfoLine(61, "RESET", resetReasonName(esp_reset_reason()), ox, oy);
+    snprintf(value, sizeof(value), "%s R%u", ESP.getChipModel(), ESP.getChipRevision());
+    drawDeviceInfoLine(77, "CHIP", value, ox, oy);
+    snprintf(value, sizeof(value), "%uC %lu MHz", ESP.getChipCores(),
+             static_cast<unsigned long>(getCpuFrequencyMhz()));
+    drawDeviceInfoLine(93, "CPU", value, ox, oy);
+    drawDeviceInfoLine(109, "CORE", ESP.getCoreVersion(), ox, oy);
+    if (isnan(chipTemperatureC)) snprintf(value, sizeof(value), "SENSOR ERROR");
+    else snprintf(value, sizeof(value), "%.1f C %s", chipTemperatureC,
+                  thermalWarning ? "WARN" : (thermalThrottled ? "LIMIT" : "OK"));
+    drawDeviceInfoLine(125, "TEMP", value, ox, oy);
+  } else if (page == 1) {
+    drawDeviceInfoHeader("MEMORY", page, ox, oy);
+    formatByteCount(ESP.getHeapSize(), value, sizeof(value));
+    drawDeviceInfoLine(29, "HEAP", value, ox, oy);
+    const uint32_t freeHeap = ESP.getFreeHeap();
+    const uint32_t heapSize = ESP.getHeapSize();
+    char bytes[18];
+    formatByteCount(heapSize - freeHeap, bytes, sizeof(bytes));
+    snprintf(value, sizeof(value), "%s %lu%%", bytes,
+             static_cast<unsigned long>(heapSize ? (heapSize - freeHeap) * 100ULL / heapSize : 0));
+    drawDeviceInfoLine(47, "USED", value, ox, oy);
+    formatByteCount(freeHeap, bytes, sizeof(bytes));
+    snprintf(value, sizeof(value), "%s", bytes);
+    drawDeviceInfoLine(65, "FREE", value, ox, oy);
+    formatByteCount(ESP.getMinFreeHeap(), value, sizeof(value));
+    drawDeviceInfoLine(83, "MIN", value, ox, oy);
+    formatByteCount(ESP.getMaxAllocHeap(), value, sizeof(value));
+    drawDeviceInfoLine(101, "BLOCK", value, ox, oy);
+    const uint32_t psramSize = ESP.getPsramSize();
+    if (psramSize == 0) snprintf(value, sizeof(value), "NOT PRESENT");
+    else {
+      formatByteCount(ESP.getFreePsram(), bytes, sizeof(bytes));
+      snprintf(value, sizeof(value), "%s FREE", bytes);
+    }
+    drawDeviceInfoLine(119, "PSRAM", value, ox, oy);
+  } else if (page == 2) {
+    drawDeviceInfoHeader("STORAGE", page, ox, oy);
+    formatByteCount(ESP.getFlashChipSize(), value, sizeof(value));
+    drawDeviceInfoLine(33, "FLASH", value, ox, oy);
+    snprintf(value, sizeof(value), "%lu MHz", static_cast<unsigned long>(ESP.getFlashChipSpeed() / 1000000UL));
+    drawDeviceInfoLine(53, "SPEED", value, ox, oy);
+    formatByteCount(ESP.getSketchSize(), value, sizeof(value));
+    drawDeviceInfoLine(73, "APP", value, ox, oy);
+    formatByteCount(ESP.getFreeSketchSpace(), value, sizeof(value));
+    drawDeviceInfoLine(93, "OTA FREE", value, ox, oy);
+    drawDeviceInfoLine(113, "VERIFY", "SIZE + SHA256", ox, oy);
+  } else if (page == 3) {
+    drawDeviceInfoHeader("NETWORK", page, ox, oy);
+    const bool connected = WiFi.status() == WL_CONNECTED;
+    const char *networkState = runtimeState == RuntimeState::WIFI_SLEEP ? "SLEEP" :
+                               (connected && internetVerified ? "INTERNET OK" :
+                               (connected ? "WIFI ONLY" : "OFFLINE"));
+    drawDeviceInfoLine(29, "STATE", networkState, ox, oy);
+    String ssid = connected ? WiFi.SSID() : String("-");
+    if (ssid.length() > 19) ssid = ssid.substring(0, 19);
+    drawDeviceInfoLine(45, "SSID", ssid.c_str(), ox, oy);
+    if (connected) snprintf(value, sizeof(value), "%ld dBm CH%ld", static_cast<long>(WiFi.RSSI()),
+                            static_cast<long>(WiFi.channel()));
+    else snprintf(value, sizeof(value), "-");
+    drawDeviceInfoLine(61, "RADIO", value, ox, oy);
+    String address = connected ? WiFi.localIP().toString() : String("-");
+    drawDeviceInfoLine(77, "IP", address.c_str(), ox, oy);
+    address = connected ? WiFi.gatewayIP().toString() : String("-");
+    drawDeviceInfoLine(93, "GW", address.c_str(), ox, oy);
+    const String mac = WiFi.macAddress();
+    drawDeviceInfoLine(109, "MAC", mac.c_str(), ox, oy);
+  } else {
+    drawDeviceInfoHeader("TIME / UPDATE", page, ox, oy);
+    drawDeviceInfoLine(29, "CLOCK", timeIsValid() ? "VALID" : "NOT SET", ox, oy);
+    formatEpochShort(config.lastSync, value, sizeof(value));
+    drawDeviceInfoLine(45, "SYNC", value, ox, oy);
+    drawDeviceInfoLine(61, "OTA", updateStateName(updateState), ox, oy);
+    drawDeviceInfoLine(77, "LATEST", latestFirmwareVersion.length() ? latestFirmwareVersion.c_str() : "UNKNOWN", ox, oy);
+    formatEpochShort(lastUpdateCheckEpoch, value, sizeof(value));
+    drawDeviceInfoLine(93, "CHECK", value, ox, oy);
+    drawDeviceInfoLine(109, "SECURE", "HTTPS + SHA256", ox, oy);
+    drawDeviceInfoLine(125, "IDF", ESP.getSdkVersion(), ox, oy);
+  }
+}
+
 void drawPortalScreen() {
   display.clearBuffer();
   display.setFont(u8g2_font_6x10_tf);
@@ -1467,6 +1664,13 @@ void drawUpdateScreen() {
     String version = String("version ") + latestFirmwareVersion;
     int width = display.getStrWidth(version.c_str());
     display.drawStr(max(0, (128 - width) / 2), 94, version.c_str());
+  } else if (updateState == UpdateState::CURRENT) {
+    display.drawStr(20, 34, "UP TO DATE");
+    display.setFont(u8g2_font_6x10_tf);
+    String version = String("Version ") + FIRMWARE_VERSION;
+    int width = display.getStrWidth(version.c_str());
+    display.drawStr(max(0, (128 - width) / 2), 68, version.c_str());
+    display.drawStr(20, 96, "Latest firmware");
   } else if (updateState == UpdateState::ERROR_STATE) {
     display.drawStr(17, 27, "UPDATE ERROR");
     display.setFont(u8g2_font_5x8_tf);
@@ -1487,13 +1691,20 @@ void drawMainScreen() {
     drawThermalSafeScreen();
     return;
   }
+  if (bootSplashActive()) {
+    drawBootSplashFrame();
+    return;
+  }
   if (portalActive) {
     drawPortalScreen();
     return;
   }
+  if (updateState == UpdateState::CURRENT && updateCurrentVisibleMs == 0) {
+    updateCurrentVisibleMs = millis();
+  }
   if (updateState == UpdateState::CHECKING || updateState == UpdateState::DOWNLOADING ||
       updateState == UpdateState::VERIFYING || updateState == UpdateState::READY_TO_REBOOT ||
-      updateState == UpdateState::ERROR_STATE ||
+      updateState == UpdateState::CURRENT || updateState == UpdateState::ERROR_STATE ||
       (updateState == UpdateState::AVAILABLE && updatePromptVisible)) {
     drawUpdateScreen();
     return;
@@ -1512,6 +1723,7 @@ void drawMainScreen() {
     case View::CLOCK_ONLY: drawClockOnly(ox, oy); break;
     case View::MESSAGE_CLOCK: drawMessageClock(ox, oy); break;
     case View::DASHBOARD: drawDashboard(ox, oy); break;
+    case View::DEVICE_INFO: drawDeviceInfo(ox, oy); break;
   }
   display.sendBuffer();
 }
@@ -1860,6 +2072,7 @@ String sha256Hex(const uint8_t digest[32]) {
 void setUpdateState(UpdateState state) {
   updateState = state;
   updateStateStartedMs = millis();
+  updateCurrentVisibleMs = 0;
   wakeDisplay();
   logLine(String("update state -> ") + updateStateName(state));
 }
@@ -1930,7 +2143,7 @@ bool readBoundedHttpBody(HTTPClient &http, String &body, size_t maximumBytes) {
 void requestFirmwareUpdateCheck(UpdateCheckReason reason) {
   if (pendingUpdateCheckReason != UpdateCheckReason::NONE || updateState == UpdateState::CHECKING ||
       updateState == UpdateState::DOWNLOADING || updateState == UpdateState::VERIFYING ||
-      updateState == UpdateState::READY_TO_REBOOT) return;
+      updateState == UpdateState::READY_TO_REBOOT || updateState == UpdateState::CURRENT) return;
   pendingUpdateCheckReason = reason;
 }
 
@@ -2017,7 +2230,12 @@ bool checkFirmwareManifest(UpdateCheckReason reason) {
   }
 
   updatePromptVisible = false;
-  setUpdateState(UpdateState::IDLE);
+  setUpdateState(UpdateState::CURRENT);
+  if (portalActive) updateCurrentVisibleMs = millis();
+  else if (!bootSplashActive()) {
+    updateCurrentVisibleMs = millis();
+    drawUpdateScreen();
+  }
   logLine(String("firmware is current: ") + FIRMWARE_VERSION);
   return true;
 }
@@ -2185,6 +2403,19 @@ void handleStatus() {
   json += "\"state\":\"" + String(runtimeStateName(runtimeState)) + "\",";
   json += "\"wifi\":\"" + jsonEscape(wifiLabel) + "\",";
   json += "\"ip\":\"" + jsonEscape(ip) + "\",";
+  json += "\"uptime_sec\":" + String(millis() / 1000UL) + ",";
+  json += "\"cpu_mhz\":" + String(getCpuFrequencyMhz()) + ",";
+  if (isnan(chipTemperatureC)) json += "\"temperature_c\":null,";
+  else json += "\"temperature_c\":" + String(chipTemperatureC, 1) + ",";
+  json += "\"heap_total\":" + String(ESP.getHeapSize()) + ",";
+  json += "\"heap_free\":" + String(ESP.getFreeHeap()) + ",";
+  json += "\"heap_min\":" + String(ESP.getMinFreeHeap()) + ",";
+  json += "\"heap_largest\":" + String(ESP.getMaxAllocHeap()) + ",";
+  json += "\"psram_total\":" + String(ESP.getPsramSize()) + ",";
+  json += "\"psram_free\":" + String(ESP.getFreePsram()) + ",";
+  json += "\"flash_total\":" + String(ESP.getFlashChipSize()) + ",";
+  json += "\"sketch_size\":" + String(ESP.getSketchSize()) + ",";
+  json += "\"ota_free\":" + String(ESP.getFreeSketchSpace()) + ",";
   json += "\"time_valid\":" + String(timeIsValid() ? "true" : "false") + ",";
   json += "\"last_sync\":\"" + jsonEscape(formatEpoch(config.lastSync)) + "\",";
   json += "\"wifi_test\":\"" + String(wifiTestStateName(wifiTestState)) + "\",";
@@ -2316,11 +2547,11 @@ void handlePostConfig() {
   if (utf8Codepoints(next.title) > 24 || next.title.length() > 96 || next.title.length() == 0) return sendJson(400, "{\"error\":\"목표 이름은 1~24자여야 합니다.\"}");
   if (utf8Codepoints(next.message) > 60 || next.message.length() > 240) return sendJson(400, "{\"error\":\"문구는 60자 이하여야 합니다.\"}");
   if (!parseDate(next.target, year, month, day)) return sendJson(400, "{\"error\":\"목표 날짜 형식이 잘못되었습니다.\"}");
-  if (mode < 0 || mode > 6) return sendJson(400, "{\"error\":\"표시 모드가 잘못되었습니다.\"}");
-  if (cycleMask < 1 || cycleMask > 63) return sendJson(400, "{\"error\":\"순환 화면을 하나 이상 선택하세요.\"}");
+  if (mode < 0 || mode > 7) return sendJson(400, "{\"error\":\"표시 모드가 잘못되었습니다.\"}");
+  if (cycleMask < 1 || cycleMask > 127) return sendJson(400, "{\"error\":\"순환 화면을 하나 이상 선택하세요.\"}");
   if (!(cycleInterval == 0 || (cycleInterval >= 3 && cycleInterval <= 60))) return sendJson(400, "{\"error\":\"자동 전환은 0초 또는 3~60초여야 합니다.\"}");
   uint8_t parsedOrder[VIEW_COUNT];
-  if (!parseCycleOrder(server.arg("cycle_order"), parsedOrder)) return sendJson(400, "{\"error\":\"순환 순서는 0~5를 중복 없이 입력하세요.\"}");
+  if (!parseCycleOrder(server.arg("cycle_order"), parsedOrder)) return sendJson(400, "{\"error\":\"순환 순서는 0~6을 중복 없이 입력하세요.\"}");
   const uint32_t allowedNtp[] = {0, 3600, 10800, 21600, 43200, 86400};
   const uint32_t allowedDday[] = {0, 60, 600, 1800, 3600};
   const uint32_t allowedRetry[] = {60, 300, 900, 1800};
@@ -2356,9 +2587,10 @@ void handlePostConfig() {
   if (config.mode == TopMode::SELECTED_CYCLE) {
     selectFirstEnabledCycleView();
   } else {
-    currentView = static_cast<View>(static_cast<uint8_t>(config.mode));
+    currentView = topModeView(config.mode);
     config.lastView = currentView;
   }
+  if (currentView == View::DEVICE_INFO) deviceInfoStartedMs = millis();
   saveConfigAll();
   lastTemperatureReadMs = 0;
   scrollStartedMs = millis();
@@ -2476,7 +2708,8 @@ void handleUpdateCheck() {
   if (!requireSetupApRequest()) return;
   if (!validToken()) return sendJson(403, "{\"error\":\"유효하지 않은 세션 토큰입니다.\"}");
   if (updateState == UpdateState::CHECKING || updateState == UpdateState::DOWNLOADING ||
-      updateState == UpdateState::VERIFYING || updateState == UpdateState::READY_TO_REBOOT) {
+      updateState == UpdateState::VERIFYING || updateState == UpdateState::READY_TO_REBOOT ||
+      updateState == UpdateState::CURRENT) {
     return sendJson(409, "{\"error\":\"업데이트 작업이 이미 진행 중입니다.\"}");
   }
   if (thermalSafeMode || temperatureSensorFault || thermalWarning) {
@@ -2736,6 +2969,10 @@ void processNetwork() {
 void processFirmwareUpdate() {
   const uint32_t now = millis();
 
+  if (updateState == UpdateState::CURRENT && updateCurrentVisibleMs != 0 &&
+      elapsed(now, updateCurrentVisibleMs, UPDATE_CURRENT_HOLD_MS)) {
+    setUpdateState(UpdateState::IDLE);
+  }
   if (updateState == UpdateState::ERROR_STATE && elapsed(now, updateStateStartedMs, 10000UL)) {
     setUpdateState(UpdateState::IDLE);
     if (wifiSleepDeferredForUpdate && !portalActive) {
@@ -2949,6 +3186,7 @@ void advanceView(bool persist) {
   } else {
     currentView = static_cast<View>((static_cast<uint8_t>(currentView) + 1) % VIEW_COUNT);
   }
+  if (currentView == View::DEVICE_INFO) deviceInfoStartedMs = millis();
   if (persist) {
     config.lastView = currentView;
     config.cycleIndex = currentCycleIndex;
@@ -2960,10 +3198,10 @@ void advanceView(bool persist) {
 }
 
 void processCycle() {
-  if (thermalSafeMode || portalActive || resetConfirmation || buttonStablePressed || displaySleeping ||
+  if (thermalSafeMode || bootSplashActive() || portalActive || resetConfirmation || buttonStablePressed || displaySleeping ||
       updateState == UpdateState::CHECKING || updateState == UpdateState::DOWNLOADING ||
       updateState == UpdateState::VERIFYING || updateState == UpdateState::READY_TO_REBOOT ||
-      updatePromptVisible) return;
+      updateState == UpdateState::CURRENT || updatePromptVisible) return;
   if (config.mode != TopMode::SELECTED_CYCLE || config.cycleIntervalSec == 0) return;
   if (elapsed(millis(), lastCycleMs, static_cast<uint32_t>(config.cycleIntervalSec) * 1000UL)) {
     advanceView(false);
@@ -3051,9 +3289,10 @@ void processButton() {
 void processDisplay() {
   if (!oledReady) return;
   const uint32_t now = millis();
-  if (config.screenOffMin > 0 && !thermalSafeMode && !portalActive && !resetConfirmation && !buttonStablePressed &&
+  if (config.screenOffMin > 0 && !thermalSafeMode && !bootSplashActive() && !portalActive && !resetConfirmation && !buttonStablePressed &&
       updateState != UpdateState::CHECKING && updateState != UpdateState::DOWNLOADING &&
-      updateState != UpdateState::VERIFYING && updateState != UpdateState::READY_TO_REBOOT && !updatePromptVisible &&
+      updateState != UpdateState::VERIFYING && updateState != UpdateState::READY_TO_REBOOT &&
+      updateState != UpdateState::CURRENT && !updatePromptVisible &&
       elapsed(now, lastInteractionMs, static_cast<uint32_t>(config.screenOffMin) * 60000UL)) {
     if (!displaySleeping) {
       display.setPowerSave(1);
@@ -3074,6 +3313,7 @@ void initializeView() {
   if (config.mode == TopMode::SELECTED_CYCLE) {
     selectFirstEnabledCycleView();
   }
+  if (currentView == View::DEVICE_INFO) deviceInfoStartedMs = millis();
   lastCycleMs = millis();
   scrollStartedMs = millis();
 }
@@ -3099,6 +3339,7 @@ void setupFirmware() {
   lastUpdateCheckEpoch = prefs.getULong64("ota_last_ok", 0);
   latestFirmwareVersion = prefs.getString("ota_latest", "");
   oledReady = initDisplay();
+  if (oledReady) bootSplashStartedMs = millis();
   if (!oledReady) setRuntimeState(RuntimeState::ERROR_DISPLAY);
   initializeView();
   lastInteractionMs = millis();
