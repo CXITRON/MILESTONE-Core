@@ -430,10 +430,6 @@ bool parseCycleOrderCount(const String &text, uint8_t *out, uint8_t expectedCoun
   return true;
 }
 
-bool parseCycleOrder(const String &text, uint8_t out[VIEW_COUNT]) {
-  return parseCycleOrderCount(text, out, VIEW_COUNT);
-}
-
 template <size_t N>
 bool allowedValue(uint32_t value, const uint32_t (&allowed)[N]) {
   for (uint32_t candidate : allowed) if (value == candidate) return true;
@@ -460,6 +456,15 @@ const char *updateStateName(UpdateState state) {
   return index < sizeof(names) / sizeof(names[0]) ? names[index] : "error";
 }
 
+bool firmwareTransferActive() {
+  return updateState == UpdateState::DOWNLOADING || updateState == UpdateState::VERIFYING ||
+         updateState == UpdateState::READY_TO_REBOOT;
+}
+
+bool firmwareUpdateBusy() {
+  return updateState == UpdateState::CHECKING || firmwareTransferActive() || updateState == UpdateState::CURRENT;
+}
+
 View topModeView(TopMode mode) {
   return mode == TopMode::DEVICE_INFO
            ? View::DEVICE_INFO
@@ -480,10 +485,6 @@ void setRuntimeState(RuntimeState next) {
   runtimeState = next;
   stateStartedMs = millis();
   logLine(String("state -> ") + runtimeStateName(next));
-}
-
-void loadDefaults(Config &cfg) {
-  cfg = Config();
 }
 
 String savedWifiSsidKey(uint8_t index) {
@@ -635,8 +636,7 @@ void scheduleViewStateSave() {
 
 void processViewStateSave() {
   if (!viewSavePending || buttonRawPressed || buttonStablePressed || !deadlineReached(millis(), viewSaveDueMs)) return;
-  if (updateState == UpdateState::DOWNLOADING || updateState == UpdateState::VERIFYING ||
-      updateState == UpdateState::READY_TO_REBOOT) return;
+  if (firmwareTransferActive()) return;
   if (saveViewState()) {
     viewSavePending = false;
   } else {
@@ -646,7 +646,7 @@ void processViewStateSave() {
 }
 
 bool loadConfig() {
-  loadDefaults(config);
+  config = Config();
   if (!prefs.isKey("cfg_ver")) return false;
   uint16_t version = prefs.getUShort("cfg_ver", 0);
   if (version < 1 || version > CONFIG_VERSION) {
@@ -739,7 +739,7 @@ bool loadConfig() {
     config.cycleOrder[6] = 6;
   } else {
     uint8_t parsed[VIEW_COUNT];
-    if (parseCycleOrder(prefs.getString("cycle_ord", "0,1,2,3,4,5,6"), parsed)) {
+    if (parseCycleOrderCount(prefs.getString("cycle_ord", "0,1,2,3,4,5,6"), parsed, VIEW_COUNT)) {
       memcpy(config.cycleOrder, parsed, sizeof(parsed));
     }
   }
@@ -858,8 +858,7 @@ LedState currentLedState() {
   if (buttonStablePressed) return LedState::BUTTON_HOLD;
   if (temperatureSensorFault) return LedState::TEMPERATURE_SENSOR_ERROR;
   if (thermalWarning) return LedState::THERMAL_WARNING;
-  if (updateState == UpdateState::DOWNLOADING || updateState == UpdateState::VERIFYING ||
-      updateState == UpdateState::READY_TO_REBOOT) return LedState::UPDATE_DOWNLOADING;
+  if (firmwareTransferActive()) return LedState::UPDATE_DOWNLOADING;
   if (updateState == UpdateState::CHECKING) return LedState::UPDATE_CHECKING;
   if (updateState == UpdateState::ERROR_STATE && !elapsed(millis(), updateStateStartedMs, 10000UL)) return LedState::UPDATE_ERROR;
   if (updateState == UpdateState::AVAILABLE && updatePromptVisible) return LedState::UPDATE_AVAILABLE;
@@ -1243,7 +1242,9 @@ void drawAlignedUtf8(const String &text, int baseline, int left, int width, int8
   display.drawUTF8(clampInt(x + static_cast<int>(offsetX), left - 1, 127), baseline, text.c_str());
 }
 
-void drawScrollingUtf8(const String &text, int baseline, int left, int width, bool centerIfFits) {
+void drawScrollingUtf8(String text, int baseline, int left, int width, bool centerIfFits) {
+  text.replace("\r", "");
+  text.replace("\n", " ");
   int textWidth = display.getUTF8Width(text.c_str());
   if (!config.messageScroll || textWidth <= width) {
     int x = config.messageLeft || !centerIfFits ? left : left + (width - textWidth) / 2;
@@ -1258,13 +1259,6 @@ void drawScrollingUtf8(const String &text, int baseline, int left, int width, bo
                         left + width - 1, clampInt(baseline + 2, 0, 127));
   display.drawUTF8(x, baseline, text.c_str());
   display.setMaxClipWindow();
-}
-
-String singleLineMessage(const String &text) {
-  String result = text;
-  result.replace("\r", "");
-  result.replace("\n", " ");
-  return result;
 }
 
 void addEllipsisToFit(String &text, int width) {
@@ -1330,7 +1324,7 @@ void drawMessageBlock(int8_t ox, int8_t oy, int singleY, int firstY, int secondY
   bool overflow = splitMessageLines(config.message, line1, line2);
   if (overflow && !config.messageScroll && line2.length() == 0) line2 = "...";
   if (overflow && config.messageScroll) {
-    drawScrollingUtf8(singleLineMessage(config.message), singleY + oy, 1, 126, true);
+    drawScrollingUtf8(config.message, singleY + oy, 1, 126, true);
   } else if (line2.length() != 0) {
     if (overflow) addEllipsisToFit(line2, 124);
     drawAlignedUtf8(line1, firstY + oy, 2, 124, ox);
@@ -1351,7 +1345,7 @@ void drawDdayView(bool withMessage, int8_t ox, int8_t oy) {
   drawCenteredUtf8(dday, 65 + oy, ox);
   if (withMessage) {
     display.setFont(u8g2_font_unifont_t_korean2);
-    drawScrollingUtf8(singleLineMessage(config.message), 118 + oy, 1, 126, true);
+    drawScrollingUtf8(config.message, 118 + oy, 1, 126, true);
     return;
   }
 
@@ -1461,7 +1455,7 @@ void drawDashboard(int8_t ox, int8_t oy) {
 
   display.drawHLine(4, 101 + oy, 120);
   display.setFont(u8g2_font_unifont_t_korean2);
-  drawScrollingUtf8(singleLineMessage(config.message), 123 + oy, 1, 126, true);
+  drawScrollingUtf8(config.message, 123 + oy, 1, 126, true);
 }
 
 void formatByteCount(uint32_t bytes, char *output, size_t outputSize) {
@@ -1564,8 +1558,7 @@ void drawDeviceInfo(int8_t ox, int8_t oy) {
              static_cast<unsigned long>(heapSize ? (heapSize - freeHeap) * 100ULL / heapSize : 0));
     drawDeviceInfoLine(47, "USED", value, ox, oy);
     formatByteCount(freeHeap, bytes, sizeof(bytes));
-    snprintf(value, sizeof(value), "%s", bytes);
-    drawDeviceInfoLine(65, "FREE", value, ox, oy);
+    drawDeviceInfoLine(65, "FREE", bytes, ox, oy);
     formatByteCount(ESP.getMinFreeHeap(), value, sizeof(value));
     drawDeviceInfoLine(83, "MIN", value, ox, oy);
     formatByteCount(ESP.getMaxAllocHeap(), value, sizeof(value));
@@ -1706,8 +1699,7 @@ void drawUpdateScreen() {
     String footer = String("Later in ") + left + " sec";
     drawCenteredStr(footer.c_str(), 106);
   } else if (updateState == UpdateState::DOWNLOADING) {
-    const char *title = "DOWNLOADING";
-    drawCenteredStr(title, 25);
+    drawCenteredStr("DOWNLOADING", 25);
     // The numeric-only _tn font omits symbols such as '%'. Use the full font
     // so the complete progress label is rendered and centered as one string.
     display.setFont(u8g2_font_logisoso28_tf);
@@ -1732,8 +1724,7 @@ void drawUpdateScreen() {
     String version = String("version ") + latestFirmwareVersion;
     drawCenteredStr(version.c_str(), 94);
   } else if (updateState == UpdateState::CURRENT) {
-    const char *title = "UP TO DATE";
-    drawCenteredStr(title, 34);
+    drawCenteredStr("UP TO DATE", 34);
     display.setFont(u8g2_font_6x10_tf);
     String version = String("Version ") + FIRMWARE_VERSION;
     drawCenteredStr(version.c_str(), 68);
@@ -1761,8 +1752,7 @@ void drawMainScreen() {
     drawBootSplashFrame();
     return;
   }
-  if (updateState == UpdateState::DOWNLOADING || updateState == UpdateState::VERIFYING ||
-      updateState == UpdateState::READY_TO_REBOOT || updateState == UpdateState::ERROR_STATE) {
+  if (firmwareTransferActive() || updateState == UpdateState::ERROR_STATE) {
     drawUpdateScreen();
     return;
   }
@@ -2081,15 +2071,20 @@ String formatEpoch(uint64_t epoch) {
   return buffer;
 }
 
-bool parseJsonStringField(const String &json, const char *key, String &value) {
+int findJsonValue(const String &json, const char *key) {
   String marker = String('"') + key + '"';
   int position = json.indexOf(marker);
-  if (position < 0) return false;
+  if (position < 0) return -1;
   position = json.indexOf(':', position + marker.length());
-  if (position < 0) return false;
+  if (position < 0) return -1;
   ++position;
   while (position < static_cast<int>(json.length()) && isspace(static_cast<unsigned char>(json[position]))) ++position;
-  if (position >= static_cast<int>(json.length()) || json[position] != '"') return false;
+  return position;
+}
+
+bool parseJsonStringField(const String &json, const char *key, String &value) {
+  int position = findJsonValue(json, key);
+  if (position < 0 || position >= static_cast<int>(json.length()) || json[position] != '"') return false;
   ++position;
   value = "";
   while (position < static_cast<int>(json.length())) {
@@ -2112,14 +2107,8 @@ bool parseJsonStringField(const String &json, const char *key, String &value) {
 }
 
 bool parseJsonUintField(const String &json, const char *key, uint32_t &value) {
-  String marker = String('"') + key + '"';
-  int position = json.indexOf(marker);
-  if (position < 0) return false;
-  position = json.indexOf(':', position + marker.length());
-  if (position < 0) return false;
-  ++position;
-  while (position < static_cast<int>(json.length()) && isspace(static_cast<unsigned char>(json[position]))) ++position;
-  if (position >= static_cast<int>(json.length()) || !isDigit(json[position])) return false;
+  int position = findJsonValue(json, key);
+  if (position < 0 || position >= static_cast<int>(json.length()) || !isDigit(json[position])) return false;
   uint64_t parsed = 0;
   while (position < static_cast<int>(json.length()) && isDigit(json[position])) {
     parsed = parsed * 10ULL + static_cast<uint8_t>(json[position++] - '0');
@@ -2284,9 +2273,7 @@ bool readBoundedHttpBody(HTTPClient &http, String &body, size_t maximumBytes) {
 }
 
 void requestFirmwareUpdateCheck(UpdateCheckReason reason) {
-  if (pendingUpdateCheckReason != UpdateCheckReason::NONE || updateState == UpdateState::CHECKING ||
-      updateState == UpdateState::DOWNLOADING || updateState == UpdateState::VERIFYING ||
-      updateState == UpdateState::READY_TO_REBOOT || updateState == UpdateState::CURRENT) return;
+  if (pendingUpdateCheckReason != UpdateCheckReason::NONE || firmwareUpdateBusy()) return;
   pendingUpdateCheckReason = reason;
 }
 
@@ -2767,7 +2754,7 @@ void handlePostConfig() {
     return sendJson(400, "{\"error\":\"밝기·시간·스크롤 설정 범위를 확인하세요.\"}");
   }
   uint8_t parsedOrder[VIEW_COUNT];
-  if (!parseCycleOrder(server.arg("cycle_order"), parsedOrder)) return sendJson(400, "{\"error\":\"순환 순서는 0~6을 중복 없이 입력하세요.\"}");
+  if (!parseCycleOrderCount(server.arg("cycle_order"), parsedOrder, VIEW_COUNT)) return sendJson(400, "{\"error\":\"순환 순서는 0~6을 중복 없이 입력하세요.\"}");
   if (!allowedValue(ntpPeriod, ALLOWED_NTP_PERIODS) ||
       !allowedValue(ddayPeriod, ALLOWED_DDAY_PERIODS) ||
       !allowedValue(retryPeriod, ALLOWED_RETRY_PERIODS)) {
@@ -2860,15 +2847,19 @@ void handleTimeSync() {
   sendJson(202, "{\"ok\":true}");
 }
 
+void restartAfterFactoryReset() {
+  delay(250);
+  WiFi.disconnect(true, true);
+  delay(100);
+  ESP.restart();
+}
+
 void handleFactoryReset() {
   if (!authorizePortalRequest()) return;
   if (server.arg("confirm") != "RESET") return sendJson(400, "{\"error\":\"초기화 확인 문자열이 올바르지 않습니다.\"}");
   if (!prefs.clear()) return sendJson(500, "{\"error\":\"설정 저장공간을 초기화하지 못했습니다.\"}");
   sendJson(200, "{\"ok\":true,\"restarting\":true}");
-  delay(250);
-  WiFi.disconnect(true, true);
-  delay(100);
-  ESP.restart();
+  restartAfterFactoryReset();
 }
 
 void handleSettingsReset() {
@@ -2877,7 +2868,7 @@ void handleSettingsReset() {
 
   const Config previous = config;
   const uint8_t networkCount = previous.savedNetworkCount;
-  loadDefaults(config);
+  config = Config();
   config.savedNetworkCount = networkCount;
   for (uint8_t i = 0; i < networkCount; ++i) config.savedNetworks[i] = previous.savedNetworks[i];
   config.lastSync = previous.lastSync;
@@ -2930,9 +2921,7 @@ void handleDeleteSavedWifi() {
 
 void handleUpdateCheck() {
   if (!authorizePortalRequest()) return;
-  if (updateState == UpdateState::CHECKING || updateState == UpdateState::DOWNLOADING ||
-      updateState == UpdateState::VERIFYING || updateState == UpdateState::READY_TO_REBOOT ||
-      updateState == UpdateState::CURRENT) {
+  if (firmwareUpdateBusy()) {
     return sendJson(409, "{\"error\":\"업데이트 작업이 이미 진행 중입니다.\"}");
   }
   if (thermalSafeMode || temperatureSensorFault || thermalWarning) {
@@ -3462,10 +3451,7 @@ void advanceView(bool persist) {
 
 void processCycle() {
   if (thermalSafeMode || bootSplashActive() || portalActive || resetConfirmation || buttonRawPressed ||
-      buttonStablePressed || displaySleeping ||
-      updateState == UpdateState::CHECKING || updateState == UpdateState::DOWNLOADING ||
-      updateState == UpdateState::VERIFYING || updateState == UpdateState::READY_TO_REBOOT ||
-      updateState == UpdateState::CURRENT || updatePromptVisible) return;
+      buttonStablePressed || displaySleeping || firmwareUpdateBusy() || updatePromptVisible) return;
   if (config.mode != TopMode::SELECTED_CYCLE || config.cycleIntervalSec == 0) return;
   if (elapsed(millis(), lastCycleMs, static_cast<uint32_t>(config.cycleIntervalSec) * 1000UL)) {
     advanceView(false);
@@ -3495,10 +3481,7 @@ void performPhysicalFactoryReset() {
     resetConfirmation = false;
     return;
   }
-  delay(250);
-  WiFi.disconnect(true, true);
-  delay(100);
-  ESP.restart();
+  restartAfterFactoryReset();
 }
 
 void handleButtonRelease(uint32_t heldMs) {
@@ -3567,9 +3550,7 @@ void processDisplay() {
   if (!oledReady) return;
   const uint32_t now = millis();
   if (config.screenOffMin > 0 && !thermalSafeMode && !bootSplashActive() && !portalActive && !resetConfirmation && !buttonStablePressed &&
-      updateState != UpdateState::CHECKING && updateState != UpdateState::DOWNLOADING &&
-      updateState != UpdateState::VERIFYING && updateState != UpdateState::READY_TO_REBOOT &&
-      updateState != UpdateState::CURRENT && !updatePromptVisible &&
+      !firmwareUpdateBusy() && !updatePromptVisible &&
       elapsed(now, lastInteractionMs, static_cast<uint32_t>(config.screenOffMin) * 60000UL)) {
     if (!displaySleeping) {
       display.setPowerSave(1);
