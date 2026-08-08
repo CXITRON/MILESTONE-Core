@@ -13,11 +13,17 @@
 #include <mbedtls/sha256.h>
 #include <time.h>
 #include "driver/temperature_sensor.h"
+#include "esp_ota_ops.h"
 #include "esp_sntp.h"
 #include "esp_system.h"
 
 #include "PortalPage.h"
 #include "UpdateCertificates.h"
+
+// TLS, HTTP parsing, hashing, display updates, and the Arduino framework all
+// share loopTask during a synchronous OTA transfer. Reserve an explicit stack
+// instead of relying on the board package default.
+SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 
 // CYTRON//MILESTONE — MILESTONE Core
 // Target: Waveshare ESP32-S3-Zero / ESP32-S3 Zero
@@ -25,7 +31,7 @@
 
 namespace Milestone {
 
-constexpr char FIRMWARE_VERSION[] = "1.5.1";
+constexpr char FIRMWARE_VERSION[] = "1.5.2";
 constexpr char AP_SSID[] = "MILESTONE-D1-SETUP";
 constexpr char HOSTNAME[] = "milestone-d1";
 constexpr char PREFS_NS[] = "milestone";
@@ -69,6 +75,8 @@ constexpr uint32_t UPDATE_WEEKLY_SEC = 7UL * 24UL * 60UL * 60UL;
 constexpr uint32_t UPDATE_RETRY_MS = 6UL * 60UL * 60UL * 1000UL;
 constexpr uint32_t UPDATE_HTTP_TIMEOUT_MS = 15UL * 1000UL;
 constexpr uint32_t UPDATE_DOWNLOAD_STALL_MS = 20UL * 1000UL;
+constexpr uint32_t UPDATE_INSTALL_RESPONSE_HOLD_MS = 500UL;
+constexpr uint32_t OTA_BOOT_CONFIRM_MS = 10UL * 1000UL;
 constexpr size_t UPDATE_MANIFEST_MAX_BYTES = 2048;
 constexpr size_t UPDATE_DOWNLOAD_BUFFER_BYTES = 2048;
 constexpr uint32_t UPDATE_MIN_FREE_HEAP = 55000;
@@ -266,7 +274,10 @@ bool bootUpdateCheckPending = true;
 bool updateCheckAfterNetworkReady = false;
 bool updatePromptVisible = false;
 bool updateInstallRequested = false;
+uint32_t updateInstallNotBeforeMs = 0;
 bool wifiSleepDeferredForUpdate = false;
+bool otaBootConfirmationPending = false;
+uint32_t otaBootConfirmationStartedMs = 0;
 
 // Keep the OTA transfer buffer out of loopTask's limited stack. TLS, HTTPClient,
 // SHA-256 and String locals already consume a substantial part of that stack.
@@ -484,7 +495,6 @@ int findSavedNetwork(const String &ssid) {
 }
 
 void saveWifiNetworks() {
-  prefs.putUChar("wifi_count", config.savedNetworkCount);
   for (uint8_t i = 0; i < MAX_SAVED_NETWORKS; ++i) {
     const String ssidKey = savedWifiSsidKey(i);
     const String passKey = savedWifiPassKey(i);
@@ -496,6 +506,10 @@ void saveWifiNetworks() {
       prefs.remove(passKey.c_str());
     }
   }
+  // Commit the count last. If power is lost during the preceding writes, the
+  // loader can still compact the previously committed set instead of trusting
+  // a new count whose entries may not all exist yet.
+  prefs.putUChar("wifi_count", config.savedNetworkCount);
   // Version 1-3 keys are intentionally left untouched. Schema 4 ignores them,
   // and retaining them makes a power loss during migration recoverable.
 }
@@ -624,6 +638,12 @@ bool loadConfig() {
   config.title = prefs.getString("title", config.title);
   config.target = prefs.getString("target", config.target);
   config.message = prefs.getString("message", config.message);
+  if (config.title.length() == 0 || config.title.length() > 96 || utf8Codepoints(config.title) > 24) {
+    config.title = "2027 수능";
+  }
+  if (config.message.length() > 240 || utf8Codepoints(config.message) > 60) {
+    config.message = "오늘도 한 칸 앞으로";
+  }
   config.ddayTextStyle = prefs.getBool("dday_text", false);
   config.afterComplete = prefs.getBool("after_done", false);
   config.messageLeft = prefs.getBool("msg_left", false);
@@ -1672,10 +1692,12 @@ void drawUpdateScreen() {
     int width = display.getStrWidth(version.c_str());
     display.drawStr(max(0, (128 - width) / 2), 94, version.c_str());
   } else if (updateState == UpdateState::CURRENT) {
-    display.drawStr(20, 34, "UP TO DATE");
+    const char *title = "UP TO DATE";
+    int width = display.getStrWidth(title);
+    display.drawStr(max(0, (128 - width) / 2), 34, title);
     display.setFont(u8g2_font_6x10_tf);
     String version = String("Version ") + FIRMWARE_VERSION;
-    int width = display.getStrWidth(version.c_str());
+    width = display.getStrWidth(version.c_str());
     display.drawStr(max(0, (128 - width) / 2), 68, version.c_str());
     display.drawStr(20, 96, "Latest firmware");
   } else if (updateState == UpdateState::ERROR_STATE) {
@@ -2100,6 +2122,7 @@ void recordOtaStage(const char *stage) {
 void failFirmwareUpdate(const String &reason) {
   updateError = reason;
   updateInstallRequested = false;
+  updateInstallNotBeforeMs = 0;
   updatePromptVisible = false;
   nextUpdateRetryMs = millis() + UPDATE_RETRY_MS;
   lastOtaResult = "failed";
@@ -2109,6 +2132,18 @@ void failFirmwareUpdate(const String &reason) {
   logLine(String("firmware update failed: ") + reason);
 }
 
+void deferFirmwareInstall(const String &reason) {
+  updateError = reason;
+  updateInstallRequested = false;
+  updateInstallNotBeforeMs = 0;
+  updatePromptVisible = false;
+  lastOtaResult = "not-installed";
+  prefs.putString("ota_result", lastOtaResult);
+  clearOtaAttemptRecord();
+  setUpdateState(UpdateState::AVAILABLE);
+  logLine(String("firmware installation deferred: ") + reason);
+}
+
 bool prepareUpdateNetworkRequest(const char *resource) {
   IPAddress address;
   if (WiFi.hostByName(UPDATE_GITHUB_HOST, address) != 1) {
@@ -2116,7 +2151,8 @@ bool prepareUpdateNetworkRequest(const char *resource) {
     return false;
   }
   logLine(String(resource) + " DNS " + address.toString() +
-          " heap=" + ESP.getFreeHeap() + " max=" + ESP.getMaxAllocHeap());
+          " heap=" + ESP.getFreeHeap() + " max=" + ESP.getMaxAllocHeap() +
+          " stack=" + uxTaskGetStackHighWaterMark(nullptr));
   return true;
 }
 
@@ -2271,19 +2307,19 @@ bool installFirmwareUpdate() {
   }
   if (thermalSafeMode || temperatureSensorFault || thermalWarning ||
       (!isnan(chipTemperatureC) && chipTemperatureC >= THERMAL_THROTTLE_C)) {
-    failFirmwareUpdate("temperature too high");
+    deferFirmwareInstall("temperature too high");
     return false;
   }
   if (WiFi.status() != WL_CONNECTED) {
-    failFirmwareUpdate("Wi-Fi disconnected");
+    deferFirmwareInstall("Wi-Fi disconnected");
     return false;
   }
   if (ESP.getFreeHeap() < UPDATE_MIN_FREE_HEAP || ESP.getMaxAllocHeap() < UPDATE_MIN_LARGEST_BLOCK) {
-    failFirmwareUpdate("not enough internal RAM");
+    deferFirmwareInstall("not enough internal RAM");
     return false;
   }
   if (latestFirmwareSize > ESP.getFreeSketchSpace()) {
-    failFirmwareUpdate("OTA partition too small");
+    deferFirmwareInstall("OTA partition too small");
     return false;
   }
   if (!prepareUpdateNetworkRequest("firmware")) return false;
@@ -2362,7 +2398,7 @@ bool installFirmwareUpdate() {
       drawUpdateScreen();
       processLed();
       refreshChipTemperature();
-      if (temperatureSensorFault || (!isnan(chipTemperatureC) && chipTemperatureC >= THERMAL_CRITICAL_C)) {
+      if (temperatureSensorFault || (!isnan(chipTemperatureC) && chipTemperatureC >= THERMAL_THROTTLE_C)) {
         failed = true;
         failure = "temperature protection stopped update";
         break;
@@ -2433,6 +2469,7 @@ void handleStatus() {
   json += "\"heap_free\":" + String(ESP.getFreeHeap()) + ",";
   json += "\"heap_min\":" + String(ESP.getMinFreeHeap()) + ",";
   json += "\"heap_largest\":" + String(ESP.getMaxAllocHeap()) + ",";
+  json += "\"stack_free\":" + String(uxTaskGetStackHighWaterMark(nullptr)) + ",";
   json += "\"psram_total\":" + String(ESP.getPsramSize()) + ",";
   json += "\"psram_free\":" + String(ESP.getFreePsram()) + ",";
   json += "\"flash_total\":" + String(ESP.getFlashChipSize()) + ",";
@@ -2760,8 +2797,17 @@ void handleUpdateInstall() {
   if (thermalSafeMode || temperatureSensorFault || thermalWarning) {
     return sendJson(409, "{\"error\":\"온도 보호 상태에서는 업데이트할 수 없습니다.\"}");
   }
+  if (WiFi.status() != WL_CONNECTED) {
+    if (config.savedNetworkCount == 0) {
+      return sendJson(409, "{\"error\":\"인터넷에 연결된 Wi-Fi가 필요합니다.\"}");
+    }
+    updateCheckAfterNetworkReady = true;
+    startSavedWifiSequence(true);
+    return sendJson(202, "{\"ok\":true,\"state\":\"reconnecting\"}");
+  }
   updateInstallRequested = true;
-  sendJson(202, "{\"ok\":true,\"state\":\"installing\"}");
+  updateInstallNotBeforeMs = millis() + UPDATE_INSTALL_RESPONSE_HOLD_MS;
+  sendJson(202, "{\"ok\":true,\"state\":\"queued\"}");
 }
 
 void handlePortalRoot() {
@@ -2992,6 +3038,17 @@ void processNetwork() {
 void processFirmwareUpdate() {
   const uint32_t now = millis();
 
+  if (otaBootConfirmationPending && elapsed(now, otaBootConfirmationStartedMs, OTA_BOOT_CONFIRM_MS)) {
+    const esp_err_t result = esp_ota_mark_app_valid_cancel_rollback();
+    if (result == ESP_OK) logLine("OTA application marked valid");
+    else logLine(String("OTA rollback validation not active: ") + String(static_cast<int>(result)));
+    otaBootConfirmationPending = false;
+    lastOtaResult = "installed";
+    prefs.putString("ota_result", lastOtaResult);
+    clearOtaAttemptRecord();
+    logLine(String("OTA boot confirmed after stability hold: ") + FIRMWARE_VERSION);
+  }
+
   if (updateState == UpdateState::CURRENT && updateCurrentVisibleMs != 0 &&
       elapsed(now, updateCurrentVisibleMs, UPDATE_CURRENT_HOLD_MS)) {
     setUpdateState(UpdateState::IDLE);
@@ -3013,8 +3070,9 @@ void processFirmwareUpdate() {
       enterWifiSleep();
     }
   }
-  if (updateInstallRequested) {
+  if (updateInstallRequested && deadlineReached(now, updateInstallNotBeforeMs)) {
     updateInstallRequested = false;
+    updateInstallNotBeforeMs = 0;
     installFirmwareUpdate();
     return;
   }
@@ -3264,6 +3322,7 @@ void handleButtonRelease(uint32_t heldMs) {
   if (updateState == UpdateState::AVAILABLE && updatePromptVisible) {
     if (heldMs < 1000) {
       updateInstallRequested = true;
+      updateInstallNotBeforeMs = millis();
       logLine("firmware installation approved with BOOT button");
     }
     return;
@@ -3363,15 +3422,18 @@ void setupFirmware() {
   const String previousOtaTarget = prefs.getString("ota_target", "");
   if (previousOtaStage.length()) {
     if (previousOtaStage == "rebooting" && previousOtaTarget == FIRMWARE_VERSION) {
-      lastOtaResult = "installed";
-      logLine(String("OTA boot confirmed: ") + FIRMWARE_VERSION);
+      lastOtaResult = "validating";
+      prefs.putString("ota_result", lastOtaResult);
+      otaBootConfirmationPending = true;
+      otaBootConfirmationStartedMs = millis();
+      logLine(String("OTA boot awaiting stability confirmation: ") + FIRMWARE_VERSION);
     } else {
       lastOtaResult = String("interrupted-") + previousOtaStage;
       logLine(String("previous OTA interrupted at ") + previousOtaStage +
               " target=" + previousOtaTarget + " reset=" + resetReasonName(esp_reset_reason()));
+      prefs.putString("ota_result", lastOtaResult);
+      clearOtaAttemptRecord();
     }
-    prefs.putString("ota_result", lastOtaResult);
-    clearOtaAttemptRecord();
   }
   bool provisioned = loadConfig() && config.savedNetworkCount > 0;
   lastUpdateCheckEpoch = prefs.getULong64("ota_last_ok", 0);
