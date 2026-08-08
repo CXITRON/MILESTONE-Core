@@ -1622,7 +1622,7 @@ bool finishSavedWifiScanAndConnect() {
     return false;
   }
 
-  int bestRssi[MAX_SAVED_NETWORKS];
+  int32_t bestRssi[MAX_SAVED_NETWORKS];
   for (uint8_t i = 0; i < MAX_SAVED_NETWORKS; ++i) bestRssi[i] = -1000;
   for (int scanIndex = 0; scanIndex < count; ++scanIndex) {
     int savedIndex = findSavedNetwork(WiFi.SSID(scanIndex));
@@ -1636,7 +1636,7 @@ bool finishSavedWifiScanAndConnect() {
   selected[0] = true;
   while (wifiCandidateCount < config.savedNetworkCount) {
     int bestIndex = -1;
-    int strongest = -1001;
+    int32_t strongest = -1001;
     for (uint8_t i = 1; i < config.savedNetworkCount; ++i) {
       if (!selected[i] && bestRssi[i] > strongest) {
         strongest = bestRssi[i];
