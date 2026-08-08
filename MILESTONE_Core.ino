@@ -31,7 +31,7 @@ SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 
 namespace Milestone {
 
-constexpr char FIRMWARE_VERSION[] = "1.5.3";
+constexpr char FIRMWARE_VERSION[] = "1.5.4";
 constexpr char AP_SSID[] = "MILESTONE-D1-SETUP";
 constexpr char HOSTNAME[] = "milestone-d1";
 constexpr char PREFS_NS[] = "milestone";
@@ -69,7 +69,6 @@ constexpr uint32_t TEMPERATURE_FAULT_SAFE_HOLD_MS = 60UL * 1000UL;
 constexpr uint32_t UPDATE_PROMPT_MS = 15UL * 1000UL;
 constexpr uint32_t UPDATE_CURRENT_HOLD_MS = 1000UL;
 constexpr uint32_t BOOT_SPLASH_MS = 3000UL;
-constexpr uint32_t DEVICE_INFO_PAGE_MS = 3000UL;
 constexpr uint8_t DEVICE_INFO_PAGE_COUNT = 5;
 constexpr uint32_t UPDATE_WEEKLY_SEC = 7UL * 24UL * 60UL * 60UL;
 constexpr uint32_t UPDATE_RETRY_MS = 6UL * 60UL * 60UL * 1000UL;
@@ -285,7 +284,7 @@ uint8_t updateDownloadBuffer[UPDATE_DOWNLOAD_BUFFER_BYTES];
 
 uint32_t stateStartedMs = 0;
 uint32_t bootSplashStartedMs = 0;
-uint32_t deviceInfoStartedMs = 0;
+uint8_t deviceInfoPage = 0;
 uint32_t portalStartedMs = 0;
 uint32_t portalSuccessMs = 0;
 uint32_t wifiDeadlineMs = 0;
@@ -1481,8 +1480,7 @@ void drawDeviceInfoLine(uint8_t y, const char *label, const char *value, int8_t 
 }
 
 void drawDeviceInfo(int8_t ox, int8_t oy) {
-  const uint8_t page = static_cast<uint8_t>(((millis() - deviceInfoStartedMs) / DEVICE_INFO_PAGE_MS) %
-                                             DEVICE_INFO_PAGE_COUNT);
+  const uint8_t page = deviceInfoPage % DEVICE_INFO_PAGE_COUNT;
   display.setFont(u8g2_font_5x8_tf);
   char value[32];
 
@@ -1602,6 +1600,11 @@ void drawButtonOverlay(uint32_t heldMs) {
   else if (resetConfirmation) display.drawStr(4, 50, "HOLD 3S TO RESET");
   else if (heldMs >= 8000) display.drawStr(7, 50, "RELEASE: RESET?");
   else if (heldMs >= 3000) display.drawStr(8, 50, "RELEASE: SETUP");
+  else if (currentView == View::DEVICE_INFO && heldMs >= 2000) {
+    const char *label = "RELEASE: NEXT";
+    const int width = display.getStrWidth(label);
+    display.drawStr((128 - width) / 2, 50, label);
+  }
   else display.drawStr(24, 50, "HOLDING...");
   display.setFont(u8g2_font_logisoso24_tn);
   String seconds = String(heldMs / 1000.0f, 1) + "s";
@@ -2654,7 +2657,7 @@ void handlePostConfig() {
     currentView = topModeView(config.mode);
     config.lastView = currentView;
   }
-  if (currentView == View::DEVICE_INFO) deviceInfoStartedMs = millis();
+  if (currentView == View::DEVICE_INFO) deviceInfoPage = 0;
   saveConfigAll();
   lastTemperatureReadMs = 0;
   scrollStartedMs = millis();
@@ -3271,7 +3274,7 @@ void advanceView(bool persist) {
   } else {
     currentView = static_cast<View>((static_cast<uint8_t>(currentView) + 1) % VIEW_COUNT);
   }
-  if (currentView == View::DEVICE_INFO) deviceInfoStartedMs = millis();
+  if (currentView == View::DEVICE_INFO) deviceInfoPage = 0;
   if (persist) {
     config.lastView = currentView;
     config.cycleIndex = currentCycleIndex;
@@ -3333,8 +3336,14 @@ void handleButtonRelease(uint32_t heldMs) {
   }
   if (heldMs < 1000) {
     advanceView(true);
-  } else if (heldMs < 3000) {
+  } else if (heldMs < 2000) {
     // Deliberate no-op zone: prevents accidental setup entry.
+  } else if (heldMs < 3000) {
+    if (currentView == View::DEVICE_INFO) {
+      deviceInfoPage = (deviceInfoPage + 1) % DEVICE_INFO_PAGE_COUNT;
+      wakeDisplay();
+      logLine(String("device info page -> ") + String(deviceInfoPage + 1));
+    }
   } else if (heldMs < 8000) {
     startPortal();
   } else {
@@ -3399,7 +3408,7 @@ void initializeView() {
   if (config.mode == TopMode::SELECTED_CYCLE) {
     selectFirstEnabledCycleView();
   }
-  if (currentView == View::DEVICE_INFO) deviceInfoStartedMs = millis();
+  if (currentView == View::DEVICE_INFO) deviceInfoPage = 0;
   lastCycleMs = millis();
   scrollStartedMs = millis();
 }
