@@ -31,7 +31,7 @@ SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 
 namespace Milestone {
 
-constexpr char FIRMWARE_VERSION[] = "1.5.2";
+constexpr char FIRMWARE_VERSION[] = "1.5.3";
 constexpr char AP_SSID[] = "MILESTONE-D1-SETUP";
 constexpr char HOSTNAME[] = "milestone-d1";
 constexpr char PREFS_NS[] = "milestone";
@@ -1667,13 +1667,17 @@ void drawUpdateScreen() {
     width = display.getStrWidth(footer.c_str());
     display.drawStr(max(0, (128 - width) / 2), 106, footer.c_str());
   } else if (updateState == UpdateState::DOWNLOADING) {
-    display.drawStr(15, 25, "DOWNLOADING");
-    display.setFont(u8g2_font_logisoso24_tn);
+    const char *title = "DOWNLOADING";
+    int width = display.getStrWidth(title);
+    display.drawStr(max(0, (128 - width) / 2), 25, title);
+    // The numeric-only _tn font omits symbols such as '%'. Use the full font
+    // so the complete progress label is rendered and centered as one string.
+    display.setFont(u8g2_font_logisoso28_tf);
     uint32_t percent = latestFirmwareSize > 0
                          ? static_cast<uint32_t>((updateDownloadedBytes * 100ULL) / latestFirmwareSize) : 0;
     String value = String(percent) + "%";
-    int width = display.getStrWidth(value.c_str());
-    display.drawStr((128 - width) / 2, 70, value.c_str());
+    width = display.getStrWidth(value.c_str());
+    display.drawStr(max(0, (128 - width) / 2), 70, value.c_str());
     display.drawFrame(8, 91, 112, 10);
     const uint32_t progressWidth = percent >= 100 ? 108 : percent * 108 / 100;
     display.drawBox(10, 93, static_cast<uint8_t>(progressWidth), 6);

@@ -1,28 +1,41 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if (( $# < 2 || $# > 3 )); then
-  echo "사용법: $0 VERSION COMPILED_BIN [NOTES]" >&2
-  echo "예시: $0 1.5.2 MILESTONE_Core.ino.bin 'OTA 안정성 및 복구 개선'" >&2
+if (( $# < 1 || $# > 3 )); then
+  echo "사용법: $0 VERSION [COMPILED_BIN|auto] [NOTES]" >&2
+  echo "자동 검색: $0 1.5.3 auto 'OTA 다운로드 화면 정렬 개선'" >&2
+  echo "경로 지정: $0 1.5.3 MILESTONE_Core.ino.bin 'OTA 다운로드 화면 정렬 개선'" >&2
   exit 2
 fi
 
 version=$1
-source_bin=$2
+source_bin=${2:-auto}
 notes=${3:-"MILESTONE Core v${version}"}
 
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+project_dir=$(cd -- "$script_dir/.." && pwd)
+
 if [[ ! $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "오류: VERSION은 1.5.2와 같은 형식이어야 합니다." >&2
+  echo "오류: VERSION은 1.5.3과 같은 형식이어야 합니다." >&2
   exit 2
+fi
+if [[ -z $source_bin || $source_bin == auto || $source_bin == - ]]; then
+  newest_entry=$(find "$project_dir" -type f -name 'MILESTONE_Core.ino.bin' \
+    -printf '%T@ %p\n' | sort -nr | sed -n '1p')
+  source_bin=${newest_entry#* }
+  if [[ -z $newest_entry || -z $source_bin ]]; then
+    echo "오류: 프로젝트 안에서 MILESTONE_Core.ino.bin을 찾지 못했습니다." >&2
+    echo "Arduino IDE에서 컴파일된 바이너리를 먼저 내보내세요." >&2
+    exit 2
+  fi
+  echo "최신 BIN 자동 선택: $source_bin"
 fi
 if [[ ! -f $source_bin ]]; then
   echo "오류: BIN 파일을 찾을 수 없습니다: $source_bin" >&2
   exit 2
 fi
 
-script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-project_dir=$(cd -- "$script_dir/.." && pwd)
-source_version=$(sed -n 's/.*FIRMWARE_VERSION\[\] = "\([0-9][0-9.]*\)".*/\1/p' "$project_dir/MILESTONE_Core.ino" | head -n 1)
+source_version=$(sed -n 's/.*FIRMWARE_VERSION\[\] = "\([0-9][0-9.]*\)".*/\1/p' "$project_dir/MILESTONE_Core.ino")
 if [[ $source_version != "$version" ]]; then
   echo "오류: 요청 버전($version)과 소스 버전($source_version)이 다릅니다." >&2
   exit 2
@@ -60,7 +73,7 @@ notes=${notes//$'\r'/\\r}
 notes=${notes//$'\t'/\\t}
 notes=${notes//$'\b'/\\b}
 notes=${notes//$'\f'/\\f}
-if printf '%s' "$notes" | LC_ALL=C grep -q '[[:cntrl:]]'; then
+if printf '%s' "$notes" | LC_ALL=C grep '[[:cntrl:]]' >/dev/null; then
   echo "오류: NOTES에 지원되지 않는 제어 문자가 포함되어 있습니다." >&2
   exit 2
 fi
