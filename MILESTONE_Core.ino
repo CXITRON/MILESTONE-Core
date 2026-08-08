@@ -84,6 +84,9 @@ constexpr size_t UPDATE_MANIFEST_MAX_BYTES = 2048;
 constexpr size_t UPDATE_DOWNLOAD_BUFFER_BYTES = 2048;
 constexpr uint32_t UPDATE_MIN_FREE_HEAP = 55000;
 constexpr uint32_t UPDATE_MIN_LARGEST_BLOCK = 32768;
+constexpr uint32_t ALLOWED_NTP_PERIODS[] = {0, 3600, 10800, 21600, 43200, 86400};
+constexpr uint32_t ALLOWED_DDAY_PERIODS[] = {0, 60, 600, 1800, 3600};
+constexpr uint32_t ALLOWED_RETRY_PERIODS[] = {60, 300, 900, 1800};
 constexpr float THERMAL_WARNING_C = 70.0f;
 constexpr float THERMAL_WARNING_CLEAR_C = 65.0f;
 constexpr float THERMAL_THROTTLE_C = 80.0f;
@@ -431,41 +434,30 @@ bool parseCycleOrder(const String &text, uint8_t out[VIEW_COUNT]) {
   return parseCycleOrderCount(text, out, VIEW_COUNT);
 }
 
+template <size_t N>
+bool allowedValue(uint32_t value, const uint32_t (&allowed)[N]) {
+  for (uint32_t candidate : allowed) if (value == candidate) return true;
+  return false;
+}
+
 const char *runtimeStateName(RuntimeState state) {
-  switch (state) {
-    case RuntimeState::BOOTING: return "BOOTING";
-    case RuntimeState::UNPROVISIONED: return "UNPROVISIONED";
-    case RuntimeState::SETUP_AP: return "SETUP_AP";
-    case RuntimeState::CONNECTING: return "CONNECTING";
-    case RuntimeState::TIME_SYNCING: return "TIME_SYNCING";
-    case RuntimeState::RUNNING_ONLINE: return "RUNNING_ONLINE";
-    case RuntimeState::RUNNING_OFFLINE: return "RUNNING_OFFLINE";
-    case RuntimeState::WIFI_SLEEP: return "WIFI_SLEEP";
-    default: return "ERROR_DISPLAY";
-  }
+  static const char *const names[] = {"BOOTING", "UNPROVISIONED", "SETUP_AP", "CONNECTING", "TIME_SYNCING",
+                                      "RUNNING_ONLINE", "RUNNING_OFFLINE", "WIFI_SLEEP", "ERROR_DISPLAY"};
+  const uint8_t index = static_cast<uint8_t>(state);
+  return index < sizeof(names) / sizeof(names[0]) ? names[index] : "ERROR_DISPLAY";
 }
 
 const char *wifiTestStateName(WifiTestState state) {
-  switch (state) {
-    case WifiTestState::IDLE: return "idle";
-    case WifiTestState::CONNECTING: return "connecting";
-    case WifiTestState::TIME_SYNCING: return "time_syncing";
-    case WifiTestState::SUCCESS: return "success";
-    default: return "failed";
-  }
+  static const char *const names[] = {"idle", "connecting", "time_syncing", "success", "failed"};
+  const uint8_t index = static_cast<uint8_t>(state);
+  return index < sizeof(names) / sizeof(names[0]) ? names[index] : "failed";
 }
 
 const char *updateStateName(UpdateState state) {
-  switch (state) {
-    case UpdateState::IDLE: return "idle";
-    case UpdateState::CHECKING: return "checking";
-    case UpdateState::AVAILABLE: return "available";
-    case UpdateState::DOWNLOADING: return "downloading";
-    case UpdateState::VERIFYING: return "verifying";
-    case UpdateState::READY_TO_REBOOT: return "rebooting";
-    case UpdateState::CURRENT: return "current";
-    default: return "error";
-  }
+  static const char *const names[] = {"idle", "checking", "available", "downloading", "verifying",
+                                      "rebooting", "current", "error"};
+  const uint8_t index = static_cast<uint8_t>(state);
+  return index < sizeof(names) / sizeof(names[0]) ? names[index] : "error";
 }
 
 View topModeView(TopMode mode) {
@@ -549,6 +541,14 @@ void removeSavedNetworkAt(uint8_t index) {
   config.savedNetworks[config.savedNetworkCount] = SavedNetwork();
 }
 
+bool saveWifiOrRestore(const Config &previous, uint8_t previousActiveWifiIndex, const char *failure) {
+  if (saveWifiNetworks()) return true;
+  config = previous;
+  activeWifiIndex = previousActiveWifiIndex;
+  if (!saveWifiNetworks()) logLine(failure);
+  return false;
+}
+
 bool upsertSavedNetwork(const String &ssid, const String &password) {
   const Config previous = config;
   const uint8_t previousActiveWifiIndex = activeWifiIndex;
@@ -566,11 +566,7 @@ bool upsertSavedNetwork(const String &ssid, const String &password) {
   config.savedNetworks[0] = network;
   config.savedNetworkCount = newCount;
   activeWifiIndex = 0;
-  if (saveWifiNetworks()) return true;
-  config = previous;
-  activeWifiIndex = previousActiveWifiIndex;
-  if (!saveWifiNetworks()) logLine("saved Wi-Fi rollback could not be persisted");
-  return false;
+  return saveWifiOrRestore(previous, previousActiveWifiIndex, "saved Wi-Fi rollback could not be persisted");
 }
 
 bool promoteSavedNetwork(uint8_t index) {
@@ -583,11 +579,7 @@ bool promoteSavedNetwork(uint8_t index) {
   }
   config.savedNetworks[0] = network;
   activeWifiIndex = 0;
-  if (saveWifiNetworks()) return true;
-  config = previous;
-  activeWifiIndex = previousActiveWifiIndex;
-  if (!saveWifiNetworks()) logLine("preferred Wi-Fi rollback could not be persisted");
-  return false;
+  return saveWifiOrRestore(previous, previousActiveWifiIndex, "preferred Wi-Fi rollback could not be persisted");
 }
 
 bool saveConfigAll() {
@@ -711,20 +703,11 @@ bool loadConfig() {
   config.showChipTemperature = prefs.getBool("show_temp", true);
   config.bootSync = prefs.getBool("boot_sync", true);
   config.ntpPeriodSec = prefs.getUInt("ntp_sec", 21600);
-  const uint32_t allowedNtp[] = {0, 3600, 10800, 21600, 43200, 86400};
-  bool validNtpPeriod = false;
-  for (uint8_t i = 0; i < 6; ++i) validNtpPeriod |= config.ntpPeriodSec == allowedNtp[i];
-  if (!validNtpPeriod) config.ntpPeriodSec = 21600;
+  if (!allowedValue(config.ntpPeriodSec, ALLOWED_NTP_PERIODS)) config.ntpPeriodSec = 21600;
   config.ddayPeriodSec = prefs.getUInt("dday_sec", 0);
-  const uint32_t allowedDday[] = {0, 60, 600, 1800, 3600};
-  bool validDdayPeriod = false;
-  for (uint8_t i = 0; i < 5; ++i) validDdayPeriod |= config.ddayPeriodSec == allowedDday[i];
-  if (!validDdayPeriod) config.ddayPeriodSec = 0;
+  if (!allowedValue(config.ddayPeriodSec, ALLOWED_DDAY_PERIODS)) config.ddayPeriodSec = 0;
   config.retryPeriodSec = prefs.getUInt("retry_sec", 300);
-  const uint32_t allowedRetry[] = {60, 300, 900, 1800};
-  bool validRetryPeriod = false;
-  for (uint8_t i = 0; i < 4; ++i) validRetryPeriod |= config.retryPeriodSec == allowedRetry[i];
-  if (!validRetryPeriod) config.retryPeriodSec = 300;
+  if (!allowedValue(config.retryPeriodSec, ALLOWED_RETRY_PERIODS)) config.retryPeriodSec = 300;
   config.wifiSleep = prefs.getBool("wifi_sleep", false);
   config.brightness = clampInt(prefs.getUChar("bright", 180), 1, 255);
   config.nightLevel = clampInt(prefs.getUChar("night_lvl", 45), 1, 255);
@@ -1341,6 +1324,22 @@ bool splitMessageLines(const String &text, String &line1, String &line2, int max
   return overflow;
 }
 
+void drawMessageBlock(int8_t ox, int8_t oy, int singleY, int firstY, int secondY) {
+  display.setFont(u8g2_font_unifont_t_korean2);
+  String line1, line2;
+  bool overflow = splitMessageLines(config.message, line1, line2);
+  if (overflow && !config.messageScroll && line2.length() == 0) line2 = "...";
+  if (overflow && config.messageScroll) {
+    drawScrollingUtf8(singleLineMessage(config.message), singleY + oy, 1, 126, true);
+  } else if (line2.length() != 0) {
+    if (overflow) addEllipsisToFit(line2, 124);
+    drawAlignedUtf8(line1, firstY + oy, 2, 124, ox);
+    drawAlignedUtf8(line2, secondY + oy, 2, 124, ox);
+  } else {
+    drawAlignedUtf8(line1, singleY + oy, 2, 124, ox);
+  }
+}
+
 void drawDdayView(bool withMessage, int8_t ox, int8_t oy) {
   drawTopTitle(config.title, ox, oy);
   int days = config.lastDday;
@@ -1377,19 +1376,7 @@ void drawDdayView(bool withMessage, int8_t ox, int8_t oy) {
 
 void drawMessageOnly(int8_t ox, int8_t oy) {
   drawTopTitle("MILESTONE", ox, oy);
-  display.setFont(u8g2_font_unifont_t_korean2);
-  String line1, line2;
-  bool overflow = splitMessageLines(config.message, line1, line2);
-  if (overflow && !config.messageScroll && line2.length() == 0) line2 = "...";
-  if (overflow && config.messageScroll) {
-    drawScrollingUtf8(singleLineMessage(config.message), 75 + oy, 1, 126, true);
-  } else if (line2.length() != 0) {
-    if (overflow) addEllipsisToFit(line2, 124);
-    drawAlignedUtf8(line1, 59 + oy, 2, 124, ox);
-    drawAlignedUtf8(line2, 83 + oy, 2, 124, ox);
-  } else {
-    drawAlignedUtf8(line1, 75 + oy, 2, 124, ox);
-  }
+  drawMessageBlock(ox, oy, 75, 59, 83);
 }
 
 void drawClockOnly(int8_t ox, int8_t oy) {
@@ -1446,19 +1433,7 @@ void drawMessageClock(int8_t ox, int8_t oy) {
     drawCenteredUtf8("시간 미확정", 53 + oy, ox);
   }
   display.drawHLine(4, 68 + oy, 120);
-  display.setFont(u8g2_font_unifont_t_korean2);
-  String line1, line2;
-  bool overflow = splitMessageLines(config.message, line1, line2);
-  if (overflow && !config.messageScroll && line2.length() == 0) line2 = "...";
-  if (overflow && config.messageScroll) {
-    drawScrollingUtf8(singleLineMessage(config.message), 105 + oy, 1, 126, true);
-  } else if (line2.length() != 0) {
-    if (overflow) addEllipsisToFit(line2, 124);
-    drawAlignedUtf8(line1, 94 + oy, 2, 124, ox);
-    drawAlignedUtf8(line2, 118 + oy, 2, 124, ox);
-  } else {
-    drawAlignedUtf8(line1, 105 + oy, 2, 124, ox);
-  }
+  drawMessageBlock(ox, oy, 105, 94, 118);
 }
 
 void drawDashboard(int8_t ox, int8_t oy) {
@@ -2087,6 +2062,13 @@ bool validToken() {
 void sendJson(int status, const String &json) {
   server.sendHeader("Cache-Control", "no-store");
   server.send(status, "application/json; charset=UTF-8", json);
+}
+
+bool authorizePortalRequest() {
+  if (!requireSetupApRequest()) return false;
+  if (validToken()) return true;
+  sendJson(403, "{\"error\":\"유효하지 않은 세션 토큰입니다.\"}");
+  return false;
 }
 
 String formatEpoch(uint64_t epoch) {
@@ -2741,14 +2723,8 @@ bool parseBoolArg(const char *name, bool &value) {
   return false;
 }
 
-bool allowedValue(uint32_t value, const uint32_t *allowed, size_t count) {
-  for (size_t i = 0; i < count; ++i) if (value == allowed[i]) return true;
-  return false;
-}
-
 void handlePostConfig() {
-  if (!requireSetupApRequest()) return;
-  if (!validToken()) return sendJson(403, "{\"error\":\"유효하지 않은 세션 토큰입니다.\"}");
+  if (!authorizePortalRequest()) return;
   if (!server.hasArg("title") || !server.hasArg("target") || !server.hasArg("message") ||
       !server.hasArg("cycle_order")) {
     return sendJson(400, "{\"error\":\"필수 설정 항목이 누락되었습니다.\"}");
@@ -2792,10 +2768,11 @@ void handlePostConfig() {
   }
   uint8_t parsedOrder[VIEW_COUNT];
   if (!parseCycleOrder(server.arg("cycle_order"), parsedOrder)) return sendJson(400, "{\"error\":\"순환 순서는 0~6을 중복 없이 입력하세요.\"}");
-  const uint32_t allowedNtp[] = {0, 3600, 10800, 21600, 43200, 86400};
-  const uint32_t allowedDday[] = {0, 60, 600, 1800, 3600};
-  const uint32_t allowedRetry[] = {60, 300, 900, 1800};
-  if (!allowedValue(ntpPeriod, allowedNtp, 6) || !allowedValue(ddayPeriod, allowedDday, 5) || !allowedValue(retryPeriod, allowedRetry, 4)) return sendJson(400, "{\"error\":\"동기화·디데이·재시도 주기가 잘못되었습니다.\"}");
+  if (!allowedValue(ntpPeriod, ALLOWED_NTP_PERIODS) ||
+      !allowedValue(ddayPeriod, ALLOWED_DDAY_PERIODS) ||
+      !allowedValue(retryPeriod, ALLOWED_RETRY_PERIODS)) {
+    return sendJson(400, "{\"error\":\"동기화·디데이·재시도 주기가 잘못되었습니다.\"}");
+  }
   next.mode = static_cast<TopMode>(mode);
   next.ddayTextStyle = ddayTextStyle;
   next.afterComplete = afterComplete;
@@ -2848,8 +2825,7 @@ void handlePostConfig() {
 }
 
 void handleWifiTest() {
-  if (!requireSetupApRequest()) return;
-  if (!validToken()) return sendJson(403, "{\"error\":\"유효하지 않은 세션 토큰입니다.\"}");
+  if (!authorizePortalRequest()) return;
   String ssid = server.arg("ssid");
   String password = server.arg("pass");
   if (ssid.length() == 0 || ssid.length() > 32) return sendJson(400, "{\"error\":\"SSID를 확인하세요.\"}");
@@ -2867,8 +2843,7 @@ void handleWifiTest() {
 }
 
 void handleTimeSync() {
-  if (!requireSetupApRequest()) return;
-  if (!validToken()) return sendJson(403, "{\"error\":\"유효하지 않은 세션 토큰입니다.\"}");
+  if (!authorizePortalRequest()) return;
   if (wifiTestState == WifiTestState::CONNECTING || wifiTestState == WifiTestState::TIME_SYNCING) {
     return sendJson(409, "{\"error\":\"Wi-Fi 시험이 진행 중입니다. 완료 후 다시 시도하세요.\"}");
   }
@@ -2886,8 +2861,7 @@ void handleTimeSync() {
 }
 
 void handleFactoryReset() {
-  if (!requireSetupApRequest()) return;
-  if (!validToken()) return sendJson(403, "{\"error\":\"유효하지 않은 세션 토큰입니다.\"}");
+  if (!authorizePortalRequest()) return;
   if (server.arg("confirm") != "RESET") return sendJson(400, "{\"error\":\"초기화 확인 문자열이 올바르지 않습니다.\"}");
   if (!prefs.clear()) return sendJson(500, "{\"error\":\"설정 저장공간을 초기화하지 못했습니다.\"}");
   sendJson(200, "{\"ok\":true,\"restarting\":true}");
@@ -2898,22 +2872,16 @@ void handleFactoryReset() {
 }
 
 void handleSettingsReset() {
-  if (!requireSetupApRequest()) return;
-  if (!validToken()) return sendJson(403, "{\"error\":\"유효하지 않은 세션 토큰입니다.\"}");
+  if (!authorizePortalRequest()) return;
   if (server.arg("confirm") != "DEFAULTS") return sendJson(400, "{\"error\":\"설정 초기화 확인 문자열이 올바르지 않습니다.\"}");
 
   const Config previous = config;
-  SavedNetwork networks[MAX_SAVED_NETWORKS];
   const uint8_t networkCount = previous.savedNetworkCount;
-  for (uint8_t i = 0; i < networkCount; ++i) networks[i] = config.savedNetworks[i];
-  const uint64_t lastSync = previous.lastSync;
-  const int32_t lastDday = previous.lastDday;
-
   loadDefaults(config);
   config.savedNetworkCount = networkCount;
-  for (uint8_t i = 0; i < networkCount; ++i) config.savedNetworks[i] = networks[i];
-  config.lastSync = lastSync;
-  config.lastDday = lastDday;
+  for (uint8_t i = 0; i < networkCount; ++i) config.savedNetworks[i] = previous.savedNetworks[i];
+  config.lastSync = previous.lastSync;
+  config.lastDday = previous.lastDday;
   if (!saveConfigAll()) {
     config = previous;
     if (!saveConfigAll()) logLine("settings reset rollback could not be persisted");
@@ -2935,8 +2903,7 @@ void handleSettingsReset() {
 }
 
 void handleDeleteSavedWifi() {
-  if (!requireSetupApRequest()) return;
-  if (!validToken()) return sendJson(403, "{\"error\":\"유효하지 않은 세션 토큰입니다.\"}");
+  if (!authorizePortalRequest()) return;
   String ssid = server.arg("ssid");
   int index = findSavedNetwork(ssid);
   if (index < 0) return sendJson(404, "{\"error\":\"저장된 Wi-Fi를 찾을 수 없습니다.\"}");
@@ -2944,9 +2911,7 @@ void handleDeleteSavedWifi() {
   const bool removedCurrentNetwork = connectedSsid == ssid;
   const Config previous = config;
   removeSavedNetworkAt(static_cast<uint8_t>(index));
-  if (!saveWifiNetworks()) {
-    config = previous;
-    if (!saveWifiNetworks()) logLine("saved Wi-Fi deletion rollback could not be persisted");
+  if (!saveWifiOrRestore(previous, activeWifiIndex, "saved Wi-Fi deletion rollback could not be persisted")) {
     return sendJson(500, "{\"error\":\"Wi-Fi 삭제 내용을 저장하지 못했습니다.\"}");
   }
   if (removedCurrentNetwork) {
@@ -2964,8 +2929,7 @@ void handleDeleteSavedWifi() {
 }
 
 void handleUpdateCheck() {
-  if (!requireSetupApRequest()) return;
-  if (!validToken()) return sendJson(403, "{\"error\":\"유효하지 않은 세션 토큰입니다.\"}");
+  if (!authorizePortalRequest()) return;
   if (updateState == UpdateState::CHECKING || updateState == UpdateState::DOWNLOADING ||
       updateState == UpdateState::VERIFYING || updateState == UpdateState::READY_TO_REBOOT ||
       updateState == UpdateState::CURRENT) {
@@ -2988,8 +2952,7 @@ void handleUpdateCheck() {
 }
 
 void handleUpdateInstall() {
-  if (!requireSetupApRequest()) return;
-  if (!validToken()) return sendJson(403, "{\"error\":\"유효하지 않은 세션 토큰입니다.\"}");
+  if (!authorizePortalRequest()) return;
   if (updateState != UpdateState::AVAILABLE) {
     return sendJson(409, "{\"error\":\"설치할 새 펌웨어가 확인되지 않았습니다.\"}");
   }
