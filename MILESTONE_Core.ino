@@ -32,7 +32,7 @@ SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 
 namespace Milestone {
 
-constexpr char FIRMWARE_VERSION[] = "1.5.6";
+constexpr char FIRMWARE_VERSION[] = "1.5.7";
 constexpr char AP_SSID[] = "MILESTONE-D1-SETUP";
 constexpr char HOSTNAME[] = "milestone-d1";
 constexpr char PREFS_NS[] = "milestone";
@@ -509,24 +509,35 @@ int findSavedNetwork(const String &ssid) {
   return -1;
 }
 
-void saveWifiNetworks() {
+bool putStringVerified(const char *key, const String &value) {
+  prefs.putString(key, value);
+  return prefs.isKey(key) && prefs.getString(key, "") == value;
+}
+
+bool removePreferenceVerified(const char *key) {
+  return !prefs.isKey(key) || prefs.remove(key);
+}
+
+bool saveWifiNetworks() {
+  bool success = true;
   for (uint8_t i = 0; i < MAX_SAVED_NETWORKS; ++i) {
     const String ssidKey = savedWifiSsidKey(i);
     const String passKey = savedWifiPassKey(i);
     if (i < config.savedNetworkCount) {
-      prefs.putString(ssidKey.c_str(), config.savedNetworks[i].ssid);
-      prefs.putString(passKey.c_str(), config.savedNetworks[i].password);
+      if (!putStringVerified(ssidKey.c_str(), config.savedNetworks[i].ssid)) success = false;
+      if (!putStringVerified(passKey.c_str(), config.savedNetworks[i].password)) success = false;
     } else {
-      prefs.remove(ssidKey.c_str());
-      prefs.remove(passKey.c_str());
+      if (!removePreferenceVerified(ssidKey.c_str())) success = false;
+      if (!removePreferenceVerified(passKey.c_str())) success = false;
     }
   }
   // Commit the count last. If power is lost during the preceding writes, the
   // loader can still compact the previously committed set instead of trusting
   // a new count whose entries may not all exist yet.
-  prefs.putUChar("wifi_count", config.savedNetworkCount);
+  if (!success || prefs.putUChar("wifi_count", config.savedNetworkCount) != sizeof(uint8_t)) return false;
   // Version 1-3 keys are intentionally left untouched. Schema 4 ignores them,
   // and retaining them makes a power loss during migration recoverable.
+  return true;
 }
 
 void removeSavedNetworkAt(uint8_t index) {
@@ -538,7 +549,9 @@ void removeSavedNetworkAt(uint8_t index) {
   config.savedNetworks[config.savedNetworkCount] = SavedNetwork();
 }
 
-void upsertSavedNetwork(const String &ssid, const String &password) {
+bool upsertSavedNetwork(const String &ssid, const String &password) {
+  const Config previous = config;
+  const uint8_t previousActiveWifiIndex = activeWifiIndex;
   int existing = findSavedNetwork(ssid);
   SavedNetwork network;
   network.ssid = ssid;
@@ -553,57 +566,68 @@ void upsertSavedNetwork(const String &ssid, const String &password) {
   config.savedNetworks[0] = network;
   config.savedNetworkCount = newCount;
   activeWifiIndex = 0;
-  saveWifiNetworks();
+  if (saveWifiNetworks()) return true;
+  config = previous;
+  activeWifiIndex = previousActiveWifiIndex;
+  if (!saveWifiNetworks()) logLine("saved Wi-Fi rollback could not be persisted");
+  return false;
 }
 
-void promoteSavedNetwork(uint8_t index) {
-  if (index == NO_WIFI_INDEX || index >= config.savedNetworkCount || index == 0) return;
+bool promoteSavedNetwork(uint8_t index) {
+  if (index == NO_WIFI_INDEX || index >= config.savedNetworkCount || index == 0) return true;
+  const Config previous = config;
+  const uint8_t previousActiveWifiIndex = activeWifiIndex;
   SavedNetwork network = config.savedNetworks[index];
   for (uint8_t i = index; i > 0; --i) {
     config.savedNetworks[i] = config.savedNetworks[i - 1];
   }
   config.savedNetworks[0] = network;
   activeWifiIndex = 0;
-  saveWifiNetworks();
+  if (saveWifiNetworks()) return true;
+  config = previous;
+  activeWifiIndex = previousActiveWifiIndex;
+  if (!saveWifiNetworks()) logLine("preferred Wi-Fi rollback could not be persisted");
+  return false;
 }
 
-void saveConfigAll() {
-  saveWifiNetworks();
-  prefs.putUChar("mode", static_cast<uint8_t>(config.mode));
-  prefs.putUChar("last_view", static_cast<uint8_t>(config.lastView));
-  prefs.putString("title", config.title);
-  prefs.putString("target", config.target);
-  prefs.putString("message", config.message);
-  prefs.putBool("dday_text", config.ddayTextStyle);
-  prefs.putBool("after_done", config.afterComplete);
-  prefs.putBool("msg_left", config.messageLeft);
-  prefs.putBool("msg_scroll", config.messageScroll);
-  prefs.putUChar("scroll_spd", config.scrollSpeed);
-  prefs.putBool("hour24", config.hour24);
-  prefs.putBool("seconds", config.showSeconds);
-  prefs.putBool("show_temp", config.showChipTemperature);
-  prefs.putBool("boot_sync", config.bootSync);
-  prefs.putUInt("ntp_sec", config.ntpPeriodSec);
-  prefs.putUInt("dday_sec", config.ddayPeriodSec);
-  prefs.putUInt("retry_sec", config.retryPeriodSec);
-  prefs.putBool("wifi_sleep", config.wifiSleep);
-  prefs.putUChar("bright", config.brightness);
-  prefs.putUChar("night_lvl", config.nightLevel);
-  prefs.putBool("led_en", config.ledEnabled);
-  prefs.putUChar("led_lvl", config.ledBrightness);
-  prefs.putUChar("led_night", config.ledNightLevel);
-  prefs.putUShort("night_start", config.nightStartMin);
-  prefs.putUShort("night_end", config.nightEndMin);
-  prefs.putBool("burnin", config.burninShift);
-  prefs.putUShort("screen_off", config.screenOffMin);
-  prefs.putUChar("cycle_mask", config.cycleMask);
-  prefs.putString("cycle_ord", cycleOrderToString(config));
-  prefs.putUChar("cycle_int", config.cycleIntervalSec);
-  prefs.putUChar("cycle_idx", config.cycleIndex);
-  prefs.putULong64("last_sync", config.lastSync);
-  prefs.putInt("last_dday", config.lastDday);
+bool saveConfigAll() {
+  bool success = saveWifiNetworks();
+  if (prefs.putUChar("mode", static_cast<uint8_t>(config.mode)) != sizeof(uint8_t)) success = false;
+  if (prefs.putUChar("last_view", static_cast<uint8_t>(config.lastView)) != sizeof(uint8_t)) success = false;
+  if (!putStringVerified("title", config.title)) success = false;
+  if (!putStringVerified("target", config.target)) success = false;
+  if (!putStringVerified("message", config.message)) success = false;
+  if (prefs.putBool("dday_text", config.ddayTextStyle) != sizeof(bool)) success = false;
+  if (prefs.putBool("after_done", config.afterComplete) != sizeof(bool)) success = false;
+  if (prefs.putBool("msg_left", config.messageLeft) != sizeof(bool)) success = false;
+  if (prefs.putBool("msg_scroll", config.messageScroll) != sizeof(bool)) success = false;
+  if (prefs.putUChar("scroll_spd", config.scrollSpeed) != sizeof(uint8_t)) success = false;
+  if (prefs.putBool("hour24", config.hour24) != sizeof(bool)) success = false;
+  if (prefs.putBool("seconds", config.showSeconds) != sizeof(bool)) success = false;
+  if (prefs.putBool("show_temp", config.showChipTemperature) != sizeof(bool)) success = false;
+  if (prefs.putBool("boot_sync", config.bootSync) != sizeof(bool)) success = false;
+  if (prefs.putUInt("ntp_sec", config.ntpPeriodSec) != sizeof(uint32_t)) success = false;
+  if (prefs.putUInt("dday_sec", config.ddayPeriodSec) != sizeof(uint32_t)) success = false;
+  if (prefs.putUInt("retry_sec", config.retryPeriodSec) != sizeof(uint32_t)) success = false;
+  if (prefs.putBool("wifi_sleep", config.wifiSleep) != sizeof(bool)) success = false;
+  if (prefs.putUChar("bright", config.brightness) != sizeof(uint8_t)) success = false;
+  if (prefs.putUChar("night_lvl", config.nightLevel) != sizeof(uint8_t)) success = false;
+  if (prefs.putBool("led_en", config.ledEnabled) != sizeof(bool)) success = false;
+  if (prefs.putUChar("led_lvl", config.ledBrightness) != sizeof(uint8_t)) success = false;
+  if (prefs.putUChar("led_night", config.ledNightLevel) != sizeof(uint8_t)) success = false;
+  if (prefs.putUShort("night_start", config.nightStartMin) != sizeof(uint16_t)) success = false;
+  if (prefs.putUShort("night_end", config.nightEndMin) != sizeof(uint16_t)) success = false;
+  if (prefs.putBool("burnin", config.burninShift) != sizeof(bool)) success = false;
+  if (prefs.putUShort("screen_off", config.screenOffMin) != sizeof(uint16_t)) success = false;
+  if (prefs.putUChar("cycle_mask", config.cycleMask) != sizeof(uint8_t)) success = false;
+  if (!putStringVerified("cycle_ord", cycleOrderToString(config))) success = false;
+  if (prefs.putUChar("cycle_int", config.cycleIntervalSec) != sizeof(uint8_t)) success = false;
+  if (prefs.putUChar("cycle_idx", config.cycleIndex) != sizeof(uint8_t)) success = false;
+  if (prefs.putULong64("last_sync", config.lastSync) != sizeof(uint64_t)) success = false;
+  if (prefs.putInt("last_dday", config.lastDday) != sizeof(int32_t)) success = false;
   // Commit the schema marker last so an interrupted migration is retried safely.
-  prefs.putUShort("cfg_ver", config.version);
+  if (!success) return false;
+  return prefs.putUShort("cfg_ver", config.version) == sizeof(uint16_t);
 }
 
 bool saveViewState() {
@@ -744,8 +768,11 @@ bool loadConfig() {
   int y, m, d;
   if (!parseDate(config.target, y, m, d)) config.target = "2026-11-19";
   if (migrateToV3 || migrateToV4 || migrateToV5 || migrateToV6) {
-    saveConfigAll();
-    logLine(String("configuration migrated from schema ") + String(version) + " to " + String(CONFIG_VERSION));
+    if (saveConfigAll()) {
+      logLine(String("configuration migrated from schema ") + String(version) + " to " + String(CONFIG_VERSION));
+    } else {
+      logLine("configuration migration could not be persisted");
+    }
   }
   return true;
 }
@@ -1188,7 +1215,7 @@ bool computeDday(int &result, bool force = false) {
   lastDdayYearDay = nowLocal.tm_yday;
   if (result != config.lastDday) {
     config.lastDday = result;
-    prefs.putInt("last_dday", result);
+    if (prefs.putInt("last_dday", result) != sizeof(int32_t)) logLine("D-day cache save failed");
   }
   return true;
 }
@@ -1840,7 +1867,7 @@ void markNtpSuccess() {
   internetVerified = true;
   ntpFailed = false;
   config.lastSync = static_cast<uint64_t>(time(nullptr));
-  prefs.putULong64("last_sync", config.lastSync);
+  if (prefs.putULong64("last_sync", config.lastSync) != sizeof(uint64_t)) logLine("NTP timestamp save failed");
   invalidateTimeDisplayCache();
   int days;
   computeDday(days, true);
@@ -1896,7 +1923,7 @@ void startSavedWifiSequence(bool preserveAp) {
 
 bool startSavedWifiScan() {
   WiFi.scanDelete();
-  int started = WiFi.scanNetworks(true, false, false, 300, 0);
+  int started = WiFi.scanNetworks(true, true, false, 300, 0);
   if (started == WIFI_SCAN_FAILED) return false;
   savedWifiScanActive = true;
   savedWifiScanCompleted = true;
@@ -1938,6 +1965,13 @@ bool finishSavedWifiScanAndConnect() {
     if (bestIndex < 0 || strongest == -1000) break;
     selected[bestIndex] = true;
     wifiCandidateOrder[wifiCandidateCount++] = static_cast<uint8_t>(bestIndex);
+  }
+
+  // Hidden networks cannot always be identified by SSID in scan results.
+  // Append every unseen saved entry after the RSSI-ranked candidates so each
+  // network still receives a direct connection attempt.
+  for (uint8_t i = 1; i < config.savedNetworkCount; ++i) {
+    if (!selected[i]) wifiCandidateOrder[wifiCandidateCount++] = i;
   }
 
   wifiCandidatePosition = 1;
@@ -2168,14 +2202,21 @@ void setUpdateState(UpdateState state) {
   logLine(String("update state -> ") + updateStateName(state));
 }
 
-void clearOtaAttemptRecord() {
-  prefs.remove("ota_stage");
-  prefs.remove("ota_target");
+bool clearOtaAttemptRecord() {
+  const bool stageCleared = removePreferenceVerified("ota_stage");
+  const bool targetCleared = removePreferenceVerified("ota_target");
+  return stageCleared && targetCleared;
 }
 
-void recordOtaStage(const char *stage) {
-  prefs.putString("ota_stage", stage);
+bool recordOtaStage(const char *stage) {
+  if (!putStringVerified("ota_stage", stage)) return false;
   logLine(String("OTA stage -> ") + stage);
+  return true;
+}
+
+void restoreNetworkAfterFirmwareOperation() {
+  WiFi.setSleep(true);
+  if (WiFi.status() == WL_CONNECTED) startMdns();
 }
 
 void failFirmwareUpdate(const String &reason) {
@@ -2185,8 +2226,9 @@ void failFirmwareUpdate(const String &reason) {
   updatePromptVisible = false;
   nextUpdateRetryMs = millis() + UPDATE_RETRY_MS;
   lastOtaResult = "failed";
-  prefs.putString("ota_result", lastOtaResult);
-  clearOtaAttemptRecord();
+  if (!putStringVerified("ota_result", lastOtaResult)) logLine("OTA failure result save failed");
+  if (!clearOtaAttemptRecord()) logLine("OTA attempt record clear failed");
+  restoreNetworkAfterFirmwareOperation();
   setUpdateState(UpdateState::ERROR_STATE);
   logLine(String("firmware update failed: ") + reason);
 }
@@ -2197,8 +2239,8 @@ void deferFirmwareInstall(const String &reason) {
   updateInstallNotBeforeMs = 0;
   updatePromptVisible = false;
   lastOtaResult = "not-installed";
-  prefs.putString("ota_result", lastOtaResult);
-  clearOtaAttemptRecord();
+  if (!putStringVerified("ota_result", lastOtaResult)) logLine("OTA deferral result save failed");
+  if (!clearOtaAttemptRecord()) logLine("OTA attempt record clear failed");
   setUpdateState(UpdateState::AVAILABLE);
   logLine(String("firmware installation deferred: ") + reason);
 }
@@ -2333,9 +2375,11 @@ bool checkFirmwareManifest(UpdateCheckReason reason) {
   latestFirmwareSha256 = sha256;
   latestFirmwareNotes = notes;
   lastUpdateCheckEpoch = static_cast<uint64_t>(time(nullptr));
-  prefs.putULong64("ota_last_ok", lastUpdateCheckEpoch);
-  prefs.putString("ota_latest", latestFirmwareVersion);
-  prefs.putString("ota_check", "ok");
+  if (prefs.putULong64("ota_last_ok", lastUpdateCheckEpoch) != sizeof(uint64_t) ||
+      !putStringVerified("ota_latest", latestFirmwareVersion) ||
+      !putStringVerified("ota_check", "ok")) {
+    logLine("OTA check metadata save failed");
+  }
   bootUpdateCheckPending = false;
   nextUpdateRetryMs = 0;
   updateError = "";
@@ -2395,9 +2439,12 @@ bool installFirmwareUpdate() {
   updatePromptVisible = false;
   updateDownloadedBytes = 0;
   lastOtaResult = "installing";
-  prefs.putString("ota_result", lastOtaResult);
-  prefs.putString("ota_target", latestFirmwareVersion);
-  recordOtaStage("starting");
+  if (!putStringVerified("ota_result", lastOtaResult) ||
+      !putStringVerified("ota_target", latestFirmwareVersion) ||
+      !recordOtaStage("starting")) {
+    failFirmwareUpdate("OTA state save failed");
+    return false;
+  }
   setUpdateState(UpdateState::DOWNLOADING);
   drawUpdateScreen();
 
@@ -2433,7 +2480,12 @@ bool installFirmwareUpdate() {
     failFirmwareUpdate(String("OTA begin: ") + Update.errorString());
     return false;
   }
-  recordOtaStage("downloading");
+  if (!recordOtaStage("downloading")) {
+    http.end();
+    Update.abort();
+    failFirmwareUpdate("OTA progress save failed");
+    return false;
+  }
 
   mbedtls_sha256_context shaContext;
   mbedtls_sha256_init(&shaContext);
@@ -2486,7 +2538,11 @@ bool installFirmwareUpdate() {
     failFirmwareUpdate(failure.length() ? failure : "firmware length mismatch");
     return false;
   }
-  recordOtaStage("verifying");
+  if (!recordOtaStage("verifying")) {
+    Update.abort();
+    failFirmwareUpdate("OTA verification state save failed");
+    return false;
+  }
   setUpdateState(UpdateState::VERIFYING);
   drawUpdateScreen();
   if (!sha256Hex(digest).equalsIgnoreCase(latestFirmwareSha256)) {
@@ -2495,13 +2551,19 @@ bool installFirmwareUpdate() {
     return false;
   }
   if (!Update.end()) {
-    failFirmwareUpdate(String("OTA finalize: ") + Update.errorString());
+    const String failure = String("OTA finalize: ") + Update.errorString();
+    Update.abort();
+    failFirmwareUpdate(failure);
     return false;
   }
 
   lastOtaResult = "installed";
-  prefs.putString("ota_result", lastOtaResult);
-  recordOtaStage("rebooting");
+  if (!putStringVerified("ota_result", lastOtaResult) || !recordOtaStage("rebooting")) {
+    const esp_err_t rollbackResult = esp_ota_set_boot_partition(esp_ota_get_running_partition());
+    failFirmwareUpdate(rollbackResult == ESP_OK ? "OTA reboot state save failed" :
+                                                "OTA reboot state and boot rollback failed");
+    return false;
+  }
   setUpdateState(UpdateState::READY_TO_REBOOT);
   drawUpdateScreen();
   processLed();
@@ -2760,16 +2822,21 @@ void handlePostConfig() {
   next.cycleMask = static_cast<uint8_t>(cycleMask);
   memcpy(next.cycleOrder, parsedOrder, sizeof(parsedOrder));
   next.cycleIntervalSec = static_cast<uint8_t>(cycleInterval);
+  if (next.mode != TopMode::SELECTED_CYCLE) next.lastView = topModeView(next.mode);
+  const Config previous = config;
   config = next;
+  if (!saveConfigAll()) {
+    config = previous;
+    if (!saveConfigAll()) logLine("configuration rollback could not be persisted");
+    return sendJson(500, "{\"error\":\"설정을 저장하지 못했습니다. 저장공간 상태를 확인하세요.\"}");
+  }
   currentCycleIndex = config.cycleIndex;
   if (config.mode == TopMode::SELECTED_CYCLE) {
     selectFirstEnabledCycleView();
   } else {
     currentView = topModeView(config.mode);
-    config.lastView = currentView;
   }
   if (currentView == View::DEVICE_INFO) deviceInfoStartedMs = millis();
-  saveConfigAll();
   lastTemperatureReadMs = 0;
   invalidateTimeDisplayCache();
   appliedLedColor = UINT32_MAX;
@@ -2822,10 +2889,10 @@ void handleFactoryReset() {
   if (!requireSetupApRequest()) return;
   if (!validToken()) return sendJson(403, "{\"error\":\"유효하지 않은 세션 토큰입니다.\"}");
   if (server.arg("confirm") != "RESET") return sendJson(400, "{\"error\":\"초기화 확인 문자열이 올바르지 않습니다.\"}");
+  if (!prefs.clear()) return sendJson(500, "{\"error\":\"설정 저장공간을 초기화하지 못했습니다.\"}");
   sendJson(200, "{\"ok\":true,\"restarting\":true}");
   delay(250);
   WiFi.disconnect(true, true);
-  prefs.clear();
   delay(100);
   ESP.restart();
 }
@@ -2835,18 +2902,23 @@ void handleSettingsReset() {
   if (!validToken()) return sendJson(403, "{\"error\":\"유효하지 않은 세션 토큰입니다.\"}");
   if (server.arg("confirm") != "DEFAULTS") return sendJson(400, "{\"error\":\"설정 초기화 확인 문자열이 올바르지 않습니다.\"}");
 
+  const Config previous = config;
   SavedNetwork networks[MAX_SAVED_NETWORKS];
-  const uint8_t networkCount = config.savedNetworkCount;
+  const uint8_t networkCount = previous.savedNetworkCount;
   for (uint8_t i = 0; i < networkCount; ++i) networks[i] = config.savedNetworks[i];
-  const uint64_t lastSync = config.lastSync;
-  const int32_t lastDday = config.lastDday;
+  const uint64_t lastSync = previous.lastSync;
+  const int32_t lastDday = previous.lastDday;
 
   loadDefaults(config);
   config.savedNetworkCount = networkCount;
   for (uint8_t i = 0; i < networkCount; ++i) config.savedNetworks[i] = networks[i];
   config.lastSync = lastSync;
   config.lastDday = lastDday;
-  saveConfigAll();
+  if (!saveConfigAll()) {
+    config = previous;
+    if (!saveConfigAll()) logLine("settings reset rollback could not be persisted");
+    return sendJson(500, "{\"error\":\"기본 설정을 저장하지 못했습니다.\"}");
+  }
 
   currentView = View::DDAY_TIME;
   currentCycleIndex = 0;
@@ -2870,8 +2942,13 @@ void handleDeleteSavedWifi() {
   if (index < 0) return sendJson(404, "{\"error\":\"저장된 Wi-Fi를 찾을 수 없습니다.\"}");
   String connectedSsid = WiFi.status() == WL_CONNECTED ? WiFi.SSID() : "";
   const bool removedCurrentNetwork = connectedSsid == ssid;
+  const Config previous = config;
   removeSavedNetworkAt(static_cast<uint8_t>(index));
-  saveWifiNetworks();
+  if (!saveWifiNetworks()) {
+    config = previous;
+    if (!saveWifiNetworks()) logLine("saved Wi-Fi deletion rollback could not be persisted");
+    return sendJson(500, "{\"error\":\"Wi-Fi 삭제 내용을 저장하지 못했습니다.\"}");
+  }
   if (removedCurrentNetwork) {
     WiFi.scanDelete();
     WiFi.disconnect(false, true);
@@ -2978,9 +3055,16 @@ void restoreConfiguredWifiAfterFailedTest() {
   logLine("restoring the previously saved Wi-Fi");
 }
 
+void failWifiTest(const String &reason);
+
 void finishWifiTestSuccess() {
-  upsertSavedNetwork(pendingSsid, pendingPass);
-  saveConfigAll();
+  const Config previous = config;
+  if (!upsertSavedNetwork(pendingSsid, pendingPass) || !saveConfigAll()) {
+    config = previous;
+    if (!saveConfigAll()) logLine("tested Wi-Fi save rollback could not be persisted");
+    failWifiTest("Wi-Fi 확인은 성공했지만 설정 저장에 실패했습니다.");
+    return;
+  }
   pendingSsid = "";
   pendingPass = "";
   wifiTestError = "";
@@ -3021,7 +3105,7 @@ bool firmwareUpdateCheckDue() {
 
 void finishNormalNtpSuccess() {
   markNtpSuccess();
-  promoteSavedNetwork(activeWifiIndex);
+  if (!promoteSavedNetwork(activeWifiIndex)) logLine("preferred Wi-Fi order could not be persisted");
   setRuntimeState(RuntimeState::RUNNING_ONLINE);
   startMdns();
   if (bootUpdateCheckPending) {
@@ -3085,7 +3169,7 @@ void processNetwork() {
       }
       if (initialStationAttempt && !config.bootSync && timeIsValid()) {
         initialStationAttempt = false;
-        promoteSavedNetwork(activeWifiIndex);
+        if (!promoteSavedNetwork(activeWifiIndex)) logLine("preferred Wi-Fi order could not be persisted");
         setRuntimeState(RuntimeState::RUNNING_OFFLINE);
         startMdns();
         scheduleRetry();
@@ -3177,8 +3261,8 @@ void processFirmwareUpdate() {
     else logLine(String("OTA rollback validation not active: ") + String(static_cast<int>(result)));
     otaBootConfirmationPending = false;
     lastOtaResult = "installed";
-    prefs.putString("ota_result", lastOtaResult);
-    clearOtaAttemptRecord();
+    if (!putStringVerified("ota_result", lastOtaResult)) logLine("OTA confirmation result save failed");
+    if (!clearOtaAttemptRecord()) logLine("OTA confirmation record clear failed");
     logLine(String("OTA boot confirmed after stability hold: ") + FIRMWARE_VERSION);
   }
 
@@ -3435,9 +3519,21 @@ void performPhysicalFactoryReset() {
     display.sendBuffer();
   }
   logLine("physical factory reset confirmed");
+  if (!prefs.clear()) {
+    logLine("physical factory reset failed: NVS clear error");
+    if (oledReady) {
+      display.clearBuffer();
+      display.setFont(u8g2_font_7x14B_tf);
+      drawCenteredStr("RESET FAILED", 56);
+      display.setFont(u8g2_font_6x10_tf);
+      drawCenteredStr("Storage error", 82);
+      display.sendBuffer();
+    }
+    resetConfirmation = false;
+    return;
+  }
   delay(250);
   WiFi.disconnect(true, true);
-  prefs.clear();
   delay(100);
   ESP.restart();
 }
@@ -3569,7 +3665,7 @@ void setupFirmware() {
   if (previousOtaStage.length()) {
     if (previousOtaStage == "rebooting" && previousOtaTarget == FIRMWARE_VERSION) {
       lastOtaResult = "validating";
-      prefs.putString("ota_result", lastOtaResult);
+      if (!putStringVerified("ota_result", lastOtaResult)) logLine("OTA validation state save failed");
       otaBootConfirmationPending = true;
       otaBootConfirmationStartedMs = millis();
       logLine(String("OTA boot awaiting stability confirmation: ") + FIRMWARE_VERSION);
@@ -3577,8 +3673,8 @@ void setupFirmware() {
       lastOtaResult = String("interrupted-") + previousOtaStage;
       logLine(String("previous OTA interrupted at ") + previousOtaStage +
               " target=" + previousOtaTarget + " reset=" + resetReasonName(esp_reset_reason()));
-      prefs.putString("ota_result", lastOtaResult);
-      clearOtaAttemptRecord();
+      if (!putStringVerified("ota_result", lastOtaResult)) logLine("interrupted OTA result save failed");
+      if (!clearOtaAttemptRecord()) logLine("interrupted OTA record clear failed");
     }
   }
   bool provisioned = loadConfig() && config.savedNetworkCount > 0;

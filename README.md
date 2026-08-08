@@ -18,12 +18,12 @@ ESP32-S3 Zero와 SH1107 128×128 OLED용 통합 펌웨어입니다. OLED 주소�
 - 보드: `Waveshare ESP32-S3-Zero`
 - 포트: `/dev/ttyACM0`
 - `Tools > USB CDC On Boot > Enabled`
-- `Tools > PSRAM > Disabled` (이 펌웨어의 안정성 권장값)
+- `Tools > PSRAM > Enabled` (공식 Waveshare 보드 프로필 사용)
 - `Tools > Partition Scheme > Minimal SPIFFS (1.9MB APP with OTA/190KB SPIFFS)`
 
 1.5.0부터는 인터넷 업데이트를 위해 OTA 앱 슬롯 2개가 반드시 필요합니다. 위 파티션 항목의 문구는 ESP32 보드 패키지 버전에 따라 조금 다를 수 있으므로, 반드시 **OTA 포함**, 앱 슬롯 약 **1.9MB**인 항목을 선택합니다. `Huge APP`처럼 OTA 슬롯이 하나뿐인 구성은 사용할 수 없습니다.
 
-Waveshare ESP32-S3-Zero의 ESP32-S3FH4R2에는 2MB QSPI PSRAM이 내장되어 있지만, 이 펌웨어의 화면·OTA 버퍼와 주요 객체는 내부 RAM만 사용하므로 PSRAM이 필요하지 않습니다. 불필요한 메모리 초기화를 피하기 위해 `PSRAM > Disabled`를 사용합니다. 카메라 프레임, 대형 이미지·오디오 버퍼, 머신러닝 모델처럼 내부 RAM에 들어가지 않는 대용량 데이터를 추가할 때만 공식 Waveshare 보드 프로필의 `Enabled`를 검토하고, 다른 ESP32-S3 프로필에서 OPI PSRAM을 강제로 선택하지 마십시오.
+Waveshare ESP32-S3-Zero의 ESP32-S3FH4R2에는 2MB QSPI PSRAM이 내장되어 있습니다. 현재 화면·OTA 버퍼와 주요 객체는 여전히 내부 RAM을 사용하지만 1.5.7 릴리스부터 공식 Waveshare 보드 프로필의 `PSRAM > Enabled` 설정으로 빌드합니다. 향후 카메라 프레임, 대형 이미지·오디오 버퍼, 머신러닝 모델 같은 대용량 기능을 추가할 수 있으며, 다른 ESP32-S3 프로필에서 OPI PSRAM을 강제로 선택하지 마십시오.
 
 Arduino IDE의 `Tools > Manage Libraries…`에서 다음 라이브러리를 설치합니다.
 
@@ -183,14 +183,14 @@ Wi-Fi 절전을 사용해도 업데이트 확인 시에는 저장된 Wi-Fi에 �
 
 ### Release 파일 만들기
 
-`tools/make-release.sh`는 설치된 `arduino-cli` 또는 Arduino IDE 내장 CLI를 사용해 권장 보드, OTA 파티션, PSRAM 비활성화 설정으로 직접 컴파일합니다. IDE에서 BIN을 따로 내보낼 필요가 없습니다.
+`tools/make-release.sh`는 설치된 `arduino-cli` 또는 Arduino IDE 내장 CLI를 사용해 권장 보드, OTA 파티션, 공식 온보드 PSRAM 활성화 설정으로 직접 컴파일합니다. IDE에서 BIN을 따로 내보낼 필요가 없습니다.
 
 ```bash
 chmod +x tools/make-release.sh
-./tools/make-release.sh 1.5.6 "PSRAM 비활성화 및 장기 안정성 개선"
+./tools/make-release.sh 1.5.7 "Enable onboard PSRAM build configuration"
 ```
 
-기본 설명을 사용하려면 `./tools/make-release.sh 1.5.6`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
+기본 설명을 사용하려면 `./tools/make-release.sh 1.5.7`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
 
 다음 두 파일이 `release/`에 생성됩니다.
 
@@ -204,11 +204,11 @@ release/MILESTONE_Core.json
 ### GitHub Release 게시
 
 1. 저장소의 `Releases`에서 `Draft a new release`를 선택합니다.
-2. 버전과 동일한 태그를 만듭니다. 예: `v1.5.6`
-3. Release 제목을 `MILESTONE Core v1.5.6`으로 지정합니다.
+2. 버전과 동일한 태그를 만듭니다. 예: `v1.5.7`
+3. Release 제목을 `MILESTONE Core v1.5.7`로 지정합니다.
 4. `release/MILESTONE_Core.bin`과 `release/MILESTONE_Core.json`을 첨부합니다.
 5. Pre-release가 아닌 최신 정식 Release로 게시합니다.
-6. 1.5.5가 설치된 기기에서 1.5.6 OTA 업데이트를 검증합니다.
+6. 1.5.6이 설치된 기기에서 1.5.7 OTA 업데이트를 검증합니다.
 
 두 파일의 이름은 모든 Release에서 정확히 같아야 합니다. 초안이나 Pre-release는 `latest` 업데이트 대상으로 사용하지 않습니다.
 
@@ -247,6 +247,15 @@ release/MILESTONE_Core.json
 - 업데이트 실패 6시간 재시도와 Wi-Fi 절전 자동 복귀
 - 5페이지 기기 세부정보 화면과 설정 포털의 실시간 시스템 상태
 - 비차단 3초 부팅 로고와 최신 버전 확인 1초 안내
+
+## v1.5.7 업데이트 안내
+
+- 펌웨어 버전을 1.5.7로 변경하고 기존 설정 스키마 6을 유지
+- 공식 Waveshare ESP32-S3-Zero 보드 프로필의 온보드 2MB PSRAM을 활성화해 빌드
+- OTA 실패 후 mDNS와 Wi-Fi 절전 상태를 복구하고, OTA 진행 상태를 저장하지 못하면 설치를 안전하게 중단
+- 숨김 SSID를 포함해 저장된 모든 Wi-Fi를 직접 연결 후보로 시도하도록 복구 경로 보강
+- 설정·Wi-Fi·초기화·OTA 관련 NVS 쓰기 실패를 감지하고 가능한 경우 이전 설정으로 롤백
+- 기기 세부정보와 설정 포털에서는 사용하지 않는 PSRAM 항목을 계속 숨김
 
 ## v1.5.6 업데이트 안내
 
@@ -327,4 +336,4 @@ release/MILESTONE_Core.json
 - 기존 설정 스키마, 저장된 Wi-Fi, 여섯 가지 화면을 그대로 유지
 - 기기 세부정보 화면은 OTA 검증용 1.5.1에서 추가 예정
 
-정식 버전: `1.5.6`
+정식 버전: `1.5.7`

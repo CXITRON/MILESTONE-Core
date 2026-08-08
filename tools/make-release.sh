@@ -3,20 +3,20 @@ set -euo pipefail
 
 if (( $# < 1 || $# > 2 )); then
   echo "사용법: $0 VERSION [NOTES]" >&2
-  echo "예: $0 1.5.6 'PSRAM 비활성화 및 장기 안정성 개선'" >&2
+  echo "예: $0 1.5.7 'Enable onboard PSRAM build configuration'" >&2
   exit 2
 fi
 
 version=$1
 notes=${2:-"MILESTONE Core v${version}"}
-fqbn='esp32:esp32:waveshare_esp32_s3_zero:CDCOnBoot=default,PSRAM=disabled,PartitionScheme=min_spiffs'
+fqbn='esp32:esp32:waveshare_esp32_s3_zero:CDCOnBoot=default,PSRAM=enabled,PartitionScheme=min_spiffs'
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 project_dir=$(cd -- "$script_dir/.." && pwd)
 release_dir="$project_dir/release"
 
 if [[ ! $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "오류: VERSION은 1.5.6과 같은 형식이어야 합니다." >&2
+  echo "오류: VERSION은 1.5.7과 같은 형식이어야 합니다." >&2
   exit 2
 fi
 
