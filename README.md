@@ -189,10 +189,10 @@ Wi-Fi 절전을 사용해도 업데이트 확인 시에는 저장된 Wi-Fi에 �
 
 ```bash
 chmod +x tools/make-release.sh
-./tools/make-release.sh 1.5.8 "Prioritize NTP synchronization and show background update checks in the status icon"
+./tools/make-release.sh 1.5.9 "Stabilize cold-boot Wi-Fi before NTP and update checks"
 ```
 
-기본 설명을 사용하려면 `./tools/make-release.sh 1.5.8`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
+기본 설명을 사용하려면 `./tools/make-release.sh 1.5.9`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
 
 다음 두 파일이 `release/`에 생성됩니다.
 
@@ -206,11 +206,11 @@ release/MILESTONE_Core.json
 ### GitHub Release 게시
 
 1. 저장소의 `Releases`에서 `Draft a new release`를 선택합니다.
-2. 버전과 동일한 태그를 만듭니다. 예: `v1.5.8`
-3. Release 제목을 `MILESTONE Core v1.5.8`로 지정합니다.
+2. 버전과 동일한 태그를 만듭니다. 예: `v1.5.9`
+3. Release 제목을 `MILESTONE Core v1.5.9`로 지정합니다.
 4. `release/MILESTONE_Core.bin`과 `release/MILESTONE_Core.json`을 첨부합니다.
 5. Pre-release가 아닌 최신 정식 Release로 게시합니다.
-6. 1.5.7이 설치된 기기에서 1.5.8 OTA 업데이트를 검증합니다.
+6. 이전 버전이 설치된 기기에서 1.5.9 OTA 업데이트를 검증합니다.
 
 두 파일의 이름은 모든 Release에서 정확히 같아야 합니다. 초안이나 Pre-release는 `latest` 업데이트 대상으로 사용하지 않습니다.
 
@@ -249,6 +249,16 @@ release/MILESTONE_Core.json
 - 업데이트 실패 6시간 재시도와 Wi-Fi 절전 자동 복귀
 - 5페이지 기기 세부정보 화면과 설정 포털의 실시간 시스템 상태
 - 비차단 3초 부팅 로고와 우상단 업데이트 확인 상태 아이콘
+
+## v1.5.9 업데이트 안내
+
+- 펌웨어 버전을 1.5.9로 변경하고 기존 설정 스키마 6을 유지
+- 콜드 부팅 STA 연결에서도 설정 모드와 동일하게 DHCP·NTP·업데이트 확인이 끝날 때까지 Wi-Fi 절전을 해제
+- Wi-Fi 드라이버 시작 직후 100ms 안정화 시간을 두고 연결을 시작
+- 연결 판정을 SSID 연결 여부가 아니라 IP·게이트웨이·DNS 확보 후 750ms 유지로 강화
+- 콜드 부팅 연결 제한시간을 20초에서 30초로 늘려 DHCP가 늦은 공유기도 수용
+- 연결이 끊기거나 후보 네트워크 연결에 실패하면 15초 뒤 빠르게 다시 시도
+- NTP 실패 재시도 주기와 업데이트 실패 알림 정책은 기존 설정을 그대로 유지
 
 ## v1.5.8 업데이트 안내
 
@@ -350,4 +360,4 @@ release/MILESTONE_Core.json
 - 기존 설정 스키마, 저장된 Wi-Fi, 여섯 가지 화면을 그대로 유지
 - 기기 세부정보 화면은 OTA 검증용 1.5.1에서 추가 예정
 
-정식 버전: `1.5.8`
+정식 버전: `1.5.9`

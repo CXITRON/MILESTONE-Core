@@ -32,7 +32,7 @@ SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 
 namespace Milestone {
 
-constexpr char FIRMWARE_VERSION[] = "1.5.8";
+constexpr char FIRMWARE_VERSION[] = "1.5.9";
 constexpr char AP_SSID[] = "MILESTONE-D1-SETUP";
 constexpr char HOSTNAME[] = "milestone-d1";
 constexpr char PREFS_NS[] = "milestone";
@@ -53,7 +53,10 @@ constexpr uint8_t OLED_ADDR_PRIMARY = 0x3C;
 constexpr uint8_t OLED_ADDR_SECONDARY = 0x3D;
 
 constexpr uint32_t AP_TIMEOUT_MS = 10UL * 60UL * 1000UL;
-constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 20UL * 1000UL;
+constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 30UL * 1000UL;
+constexpr uint32_t WIFI_DRIVER_SETTLE_MS = 100UL;
+constexpr uint32_t WIFI_IP_STABLE_MS = 750UL;
+constexpr uint32_t WIFI_QUICK_RETRY_MS = 15UL * 1000UL;
 // SNTP may wait about 15 seconds before falling back from an unresponsive
 // server. Keep the request alive long enough to use all configured servers;
 // the OLED leaves the boot splash independently, so this does not extend the
@@ -303,6 +306,7 @@ uint32_t deviceInfoStartedMs = 0;
 uint32_t portalStartedMs = 0;
 uint32_t portalSuccessMs = 0;
 uint32_t wifiDeadlineMs = 0;
+uint32_t wifiNetworkReadySinceMs = 0;
 uint32_t ntpDeadlineMs = 0;
 uint32_t nextRetryMs = 0;
 uint32_t lastDisplayMs = 0;
@@ -1860,9 +1864,15 @@ void beginStationConnection(const String &ssid, const String &password, bool pre
   ntpFailed = false;
   WiFi.mode(preserveAp ? WIFI_AP_STA : WIFI_STA);
   WiFi.setAutoReconnect(false);  // The firmware selects among saved networks itself.
-  WiFi.setSleep(true);
+  // Keep the radio fully awake from cold driver start through DHCP, NTP, and
+  // the optional update check. AP+STA testing already behaved this way in
+  // practice; applying it to STA-only boot removes the cold-start difference.
+  WiFi.setSleep(false);
+  delay(WIFI_DRIVER_SETTLE_MS);
   WiFi.disconnect(false, false);
+  delay(50);
   WiFi.begin(ssid.c_str(), password.c_str());
+  wifiNetworkReadySinceMs = 0;
   wifiDeadlineMs = millis() + WIFI_CONNECT_TIMEOUT_MS;
   if (wifiTestState == WifiTestState::IDLE) setRuntimeState(RuntimeState::CONNECTING);
   logLine("Wi-Fi connection started");
@@ -1960,7 +1970,11 @@ bool tryNextSavedWifiCandidate() {
   return true;
 }
 
-void scheduleRetry() {
+void scheduleRetry(bool quick = false) {
+  if (quick) {
+    nextRetryMs = millis() + WIFI_QUICK_RETRY_MS;
+    return;
+  }
   uint32_t retrySeconds = config.retryPeriodSec < 30 ? 30 : config.retryPeriodSec;
   nextRetryMs = millis() + retrySeconds * 1000UL;
 }
@@ -1972,6 +1986,7 @@ void sendJson(int status, const String &json);
 void enterWifiSleep();
 void requestFirmwareUpdateCheck(UpdateCheckReason reason);
 void processFirmwareUpdate();
+bool stationNetworkReady();
 
 void startPortal() {
   if (thermalSafeMode) return;
@@ -2291,7 +2306,7 @@ bool checkFirmwareManifest(UpdateCheckReason reason) {
     failFirmwareUpdate("temperature protection active");
     return false;
   }
-  if (WiFi.status() != WL_CONNECTED) {
+  if (!stationNetworkReady()) {
     failFirmwareUpdate("Wi-Fi disconnected");
     return false;
   }
@@ -2388,7 +2403,7 @@ bool installFirmwareUpdate() {
     deferFirmwareInstall("temperature too high");
     return false;
   }
-  if (WiFi.status() != WL_CONNECTED) {
+  if (!stationNetworkReady()) {
     deferFirmwareInstall("Wi-Fi disconnected");
     return false;
   }
@@ -2932,7 +2947,7 @@ void handleUpdateCheck() {
   if (thermalSafeMode || temperatureSensorFault || thermalWarning) {
     return sendJson(409, "{\"error\":\"온도 보호 상태에서는 업데이트를 확인할 수 없습니다.\"}");
   }
-  if (WiFi.status() != WL_CONNECTED) {
+  if (!stationNetworkReady()) {
     return sendJson(409, "{\"error\":\"인터넷에 연결된 Wi-Fi가 필요합니다.\"}");
   }
   if (!timeIsValid() || !freshNtpSinceBoot) {
@@ -2954,7 +2969,7 @@ void handleUpdateInstall() {
   if (thermalSafeMode || temperatureSensorFault || thermalWarning) {
     return sendJson(409, "{\"error\":\"온도 보호 상태에서는 업데이트할 수 없습니다.\"}");
   }
-  if (WiFi.status() != WL_CONNECTED) {
+  if (!stationNetworkReady()) {
     if (config.savedNetworkCount == 0) {
       return sendJson(409, "{\"error\":\"인터넷에 연결된 Wi-Fi가 필요합니다.\"}");
     }
@@ -3083,6 +3098,27 @@ void finishNormalNtpSuccess() {
   }
 }
 
+bool stationNetworkReady() {
+  if (WiFi.status() != WL_CONNECTED) return false;
+  const IPAddress zero(0, 0, 0, 0);
+  return WiFi.localIP() != zero && WiFi.gatewayIP() != zero &&
+         (WiFi.dnsIP(0) != zero || WiFi.dnsIP(1) != zero);
+}
+
+bool stationNetworkStable(uint32_t now) {
+  if (!stationNetworkReady()) {
+    wifiNetworkReadySinceMs = 0;
+    return false;
+  }
+  if (wifiNetworkReadySinceMs == 0) {
+    wifiNetworkReadySinceMs = now;
+    logLine(String("Wi-Fi obtained IP ") + WiFi.localIP().toString() +
+            " RSSI=" + String(WiFi.RSSI()) + " dBm; stabilizing");
+    return false;
+  }
+  return elapsed(now, wifiNetworkReadySinceMs, WIFI_IP_STABLE_MS);
+}
+
 void processNetwork() {
   if (thermalSafeMode) return;
   const uint32_t now = millis();
@@ -3102,7 +3138,8 @@ void processNetwork() {
   }
 
   if (wifiTestState == WifiTestState::CONNECTING) {
-    if (WiFi.status() == WL_CONNECTED) {
+    if (stationNetworkStable(now)) {
+      wifiNetworkReadySinceMs = 0;
       wifiTestState = WifiTestState::TIME_SYNCING;
       beginNtpRequest();
       setRuntimeState(RuntimeState::TIME_SYNCING);
@@ -3113,7 +3150,7 @@ void processNetwork() {
   }
 
   if (wifiTestState == WifiTestState::TIME_SYNCING) {
-    if (WiFi.status() != WL_CONNECTED) {
+    if (!stationNetworkReady()) {
       failWifiTest("시간 확인 중 Wi-Fi 연결이 끊겼습니다.");
     } else if (ntpSyncEvent && timeIsValid()) {
       ntpSyncEvent = false;
@@ -3125,7 +3162,8 @@ void processNetwork() {
   }
 
   if (runtimeState == RuntimeState::CONNECTING) {
-    if (WiFi.status() == WL_CONNECTED) {
+    if (stationNetworkStable(now)) {
+      wifiNetworkReadySinceMs = 0;
       if (savedWifiScanActive) {
         WiFi.scanDelete();
         savedWifiScanActive = false;
@@ -3146,26 +3184,26 @@ void processNetwork() {
       if (!finishSavedWifiScanAndConnect()) {
         initialStationAttempt = false;
         setRuntimeState(RuntimeState::RUNNING_OFFLINE);
-        scheduleRetry();
+        scheduleRetry(true);
         logLine("no reachable saved Wi-Fi network found; offline mode");
       }
     } else if (deadlineReached(now, wifiDeadlineMs)) {
       if (tryNextSavedWifiCandidate()) return;
       initialStationAttempt = false;
       setRuntimeState(RuntimeState::RUNNING_OFFLINE);
-      scheduleRetry();
+      scheduleRetry(true);
       logLine("Wi-Fi connection timed out; offline mode");
     }
     return;
   }
 
   if (runtimeState == RuntimeState::TIME_SYNCING) {
-    if (WiFi.status() != WL_CONNECTED) {
+    if (!stationNetworkReady()) {
       ntpRequestActive = false;
       internetVerified = false;
       ntpFailed = false;
       setRuntimeState(RuntimeState::RUNNING_OFFLINE);
-      scheduleRetry();
+      scheduleRetry(true);
     } else if (ntpSyncEvent && timeIsValid()) {
       ntpSyncEvent = false;
       finishNormalNtpSuccess();
@@ -3173,7 +3211,6 @@ void processNetwork() {
       ntpRequestActive = false;
       internetVerified = false;
       ntpFailed = true;
-      WiFi.setSleep(true);
       setRuntimeState(RuntimeState::RUNNING_OFFLINE);
       scheduleRetry();
       logLine("NTP timed out; last known D-day will be displayed");
@@ -3181,16 +3218,16 @@ void processNetwork() {
     return;
   }
 
-  if (runtimeState == RuntimeState::RUNNING_ONLINE && WiFi.status() != WL_CONNECTED) {
+  if (runtimeState == RuntimeState::RUNNING_ONLINE && !stationNetworkReady()) {
     internetVerified = false;
     ntpFailed = false;
     setRuntimeState(RuntimeState::RUNNING_OFFLINE);
-    scheduleRetry();
+    scheduleRetry(true);
   }
 
   // SNTP itself can complete just after the application-level deadline. Do
   // not discard that valid external round trip while Wi-Fi is still present.
-  if (runtimeState == RuntimeState::RUNNING_OFFLINE && WiFi.status() == WL_CONNECTED &&
+  if (runtimeState == RuntimeState::RUNNING_OFFLINE && stationNetworkReady() &&
       ntpSyncEvent && timeIsValid()) {
     ntpSyncEvent = false;
     finishNormalNtpSuccess();
@@ -3203,10 +3240,10 @@ void processNetwork() {
   bool retryDue = runtimeState == RuntimeState::RUNNING_OFFLINE && deadlineReached(now, nextRetryMs);
 
   if (!portalActive && config.savedNetworkCount > 0) {
-    if (periodicNtpDue && WiFi.status() == WL_CONNECTED) {
+    if (periodicNtpDue && stationNetworkReady()) {
       beginNtpRequest();
       setRuntimeState(RuntimeState::TIME_SYNCING);
-    } else if (retryDue && WiFi.status() == WL_CONNECTED) {
+    } else if (retryDue && stationNetworkReady()) {
       beginNtpRequest();
       setRuntimeState(RuntimeState::TIME_SYNCING);
     } else if (periodicNtpDue || retryDue) {
@@ -3217,7 +3254,7 @@ void processNetwork() {
   const bool updateRetryDue = nextUpdateRetryMs != 0 && deadlineReached(now, nextUpdateRetryMs);
   const bool updateCanPause = updateState == UpdateState::IDLE || updateState == UpdateState::AVAILABLE;
   if (config.wifiSleep && runtimeState == RuntimeState::RUNNING_ONLINE &&
-      WiFi.status() == WL_CONNECTED && !portalActive && !ntpRequestActive &&
+      stationNetworkReady() && !portalActive && !ntpRequestActive &&
       pendingUpdateCheckReason == UpdateCheckReason::NONE && !updateInstallRequested &&
       !updatePromptVisible && updateCanPause && !bootUpdateCheckPending &&
       !updateCheckAfterNetworkReady && !firmwareUpdateCheckDue() && !updateRetryDue) {
@@ -3274,7 +3311,7 @@ void processFirmwareUpdate() {
     const UpdateCheckReason reason = pendingUpdateCheckReason;
     pendingUpdateCheckReason = UpdateCheckReason::NONE;
     const bool success = checkFirmwareManifest(reason);
-    if (success && WiFi.status() == WL_CONNECTED && timeIsValid()) {
+    if (success && stationNetworkReady() && timeIsValid()) {
       internetVerified = true;
       ntpFailed = false;
       if (runtimeState != RuntimeState::SETUP_AP) setRuntimeState(RuntimeState::RUNNING_ONLINE);
@@ -3294,7 +3331,7 @@ void processFirmwareUpdate() {
   if (portalActive || resetConfirmation || thermalSafeMode || temperatureSensorFault || thermalWarning ||
       wifiTestState != WifiTestState::IDLE) return;
 
-  if (WiFi.status() == WL_CONNECTED && timeIsValid() && freshNtpSinceBoot) {
+  if (stationNetworkReady() && timeIsValid() && freshNtpSinceBoot) {
     wifiSleepDeferredForUpdate = config.wifiSleep;
     updateCheckNotBeforeMs = millis() + UPDATE_NETWORK_SETTLE_MS;
     requestFirmwareUpdateCheck(bootUpdateCheckPending ? UpdateCheckReason::BOOT : UpdateCheckReason::WEEKLY);
