@@ -179,9 +179,9 @@ https://github.com/CXITRON/MILESTONE-Core
 
 업데이트 파일은 HTTPS 인증서로 서버를 검증하고, manifest에 기록된 크기와 SHA-256이 모두 일치해야만 다음 부팅 펌웨어로 확정됩니다. HTTP로 낮아지는 주소, 비정상 manifest, 용량 부족, RAM 부족, 연결 중단, 고온·온도 센서 오류 상태에서는 설치하지 않습니다.
 
-GitHub와 Release 자산 전달 호스트의 인증서 체인을 검증할 수 있도록 DigiCert Global Root G2, ISRG Root X1, USERTrust RSA/ECC 루트를 포함합니다. DNS 사전 조회는 진단용으로만 사용하며 그 한 번의 실패만으로 업데이트 확인을 중단하지 않습니다. 실제 HTTPS 요청은 리디렉션을 제한된 횟수만 따라가며, DNS·TLS·HTTP 오류와 요청 당시의 RSSI·여유 RAM은 시리얼 로그에 기록합니다. Wi-Fi 연결 해제 reason code와 DHCP 완료 후 IP·게이트웨이·DNS도 기록해 공유기 문제와 GitHub 요청 문제를 분리할 수 있습니다.
+GitHub와 Release 자산 전달 호스트의 인증서 체인을 검증할 수 있도록 DigiCert Global Root G2, ISRG Root X1, USERTrust RSA/ECC 루트를 포함합니다. 별도의 `hostByName()` 사전 조회는 하지 않습니다. HTTPS 연결이 자체적으로 DNS 조회를 수행하므로 중복 조회를 없애 블로킹과 추가 실패 지점을 줄였습니다. 실제 HTTPS 요청은 리디렉션을 제한된 횟수만 따라가며, 요청 당시의 DNS 서버·RSSI·여유 RAM과 HTTP/TLS 오류를 시리얼 로그에 기록합니다. Wi-Fi 연결 해제 reason code와 DHCP 완료 후 IP·게이트웨이·DNS도 기록해 공유기 문제와 GitHub 요청 문제를 분리할 수 있습니다.
 
-Wi-Fi 절전을 사용해도 업데이트 확인 시에는 저장된 Wi-Fi에 잠시 연결하고, 작업이 끝나면 다시 절전 상태로 돌아갑니다. HTTPS 인증서의 유효기간을 확인하려면 정확한 시간이 필요하므로, 부팅 시간 동기화를 꺼 두었더라도 전원이 완전히 끊겨 시각이 유효하지 않으면 업데이트 확인을 위해 NTP를 한 번 수행합니다.
+`동기화 뒤 Wi-Fi 끄기`를 사용하면 업데이트 확인 시에는 저장된 Wi-Fi에 잠시 연결하고, 작업이 끝난 뒤 Wi-Fi 자체를 다시 끕니다. 이 옵션을 사용하지 않는 항상 연결 모드에서는 ESP 모뎀 절전을 별도로 켜지 않고 무선부를 깨어 있게 유지해 설정 모드와 콜드 부팅 STA 모드의 통신 조건을 최대한 같게 맞춥니다. HTTPS 인증서의 유효기간을 확인하려면 정확한 시간이 필요하므로, 부팅 시간 동기화를 꺼 두었더라도 전원이 완전히 끊겨 시각이 유효하지 않으면 업데이트 확인을 위해 NTP를 한 번 수행합니다.
 
 ### Release 파일 만들기
 
@@ -256,12 +256,15 @@ release/MILESTONE_Core.json
 - 저해상도 OLED에서도 혼동되지 않도록 NTP 동기화는 우상단 `T`, 업데이트 확인은 `U`로 표시
 - GitHub manifest 확인을 최대 3회로 분리하고 DNS·TLS·408·429·5xx 등 일시적 오류에 짧은 증가형 백오프 적용
 - 업데이트 확인 중 Wi-Fi가 끊기면 즉시 실패 확정하지 않고 15초 빠른 Wi-Fi 복구 주기를 기다린 뒤 남은 확인 횟수를 사용
-- GitHub DNS 사전 조회를 진단용으로 변경해 단 한 번의 DNS probe 실패가 전체 업데이트 확인 실패로 직결되지 않도록 수정
+- GitHub DNS 사전 조회를 완전히 제거해 HTTPS 직전의 중복 resolver 호출과 추가 블로킹·실패 지점을 제거
 - HTTPS 연결·읽기·TLS handshake 제한시간과 최대 리디렉션 수를 명시하고 요청마다 새 연결을 사용해 이전 실패 연결 상태의 재사용을 방지
 - manifest 본문을 HTTPClient 전송 디코더로 읽어 chunked 응답을 처리하고, 길이 불일치·빈 본문·완결되지 않은 JSON을 일시적 전송 실패로 판정
 - 업데이트 확인 실패와 실제 OTA 설치 실패 기록을 분리해 manifest 조회 오류가 설치 실패 상태를 덮어쓰지 않도록 수정
 - 일시적인 업데이트 확인 실패는 10분 후 재시도하고, 비정상 manifest나 실제 OTA 실패는 기존 6시간 재시도 정책 유지
 - Wi-Fi DISCONNECTED reason code와 GOT_IP 시 IP·게이트웨이·DNS·RSSI를 시리얼 로그에 추가
+- 항상 연결 모드에서는 NTP·업데이트 종료 뒤에도 ESP 모뎀 절전을 켜지 않고 무선부를 유지하며, `동기화 뒤 Wi-Fi 끄기`가 켜진 경우에만 기존처럼 Wi-Fi 자체를 OFF
+- Wi-Fi/DHCP가 복구되지 않은 상태에서는 GitHub HTTPS 재시도 횟수를 소모하지 않도록 업데이트 상태기계 보강
+- 부팅 후 첫 NTP가 시간 초과되면 현재 Wi-Fi/DHCP 연결을 유지한 채 15초 후 NTP만 빠르게 재시도하고, 첫 성공 이후의 주기 동기화 실패는 기존 사용자 재시도 설정을 유지
 - 펌웨어 다운로드는 manifest의 크기와 HTTP Content-Length가 정확히 일치할 때만 OTA 쓰기를 시작해 잘못된 스트림 기록 방지
 
 ## v1.5.9 업데이트 안내
