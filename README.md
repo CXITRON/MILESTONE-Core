@@ -189,10 +189,10 @@ GitHub와 Release 자산 전달 호스트의 인증서 체인을 검증할 수 �
 
 ```bash
 chmod +x tools/make-release.sh
-./tools/make-release.sh 1.5.10 "Harden internet and GitHub update communication"
+./tools/make-release.sh 1.5.11 "Finalize update status and OTA install reliability"
 ```
 
-기본 설명을 사용하려면 `./tools/make-release.sh 1.5.10`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
+기본 설명을 사용하려면 `./tools/make-release.sh 1.5.11`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
 
 다음 두 파일이 `release/`에 생성됩니다.
 
@@ -206,11 +206,11 @@ release/MILESTONE_Core.json
 ### GitHub Release 게시
 
 1. 저장소의 `Releases`에서 `Draft a new release`를 선택합니다.
-2. 버전과 동일한 태그를 만듭니다. 예: `v1.5.10`
-3. Release 제목을 `MILESTONE Core v1.5.10`으로 지정합니다.
+2. 버전과 동일한 태그를 만듭니다. 예: `v1.5.11`
+3. Release 제목을 `MILESTONE Core v1.5.11`으로 지정합니다.
 4. `release/MILESTONE_Core.bin`과 `release/MILESTONE_Core.json`을 첨부합니다.
 5. Pre-release가 아닌 최신 정식 Release로 게시합니다.
-6. 이전 버전이 설치된 기기에서 1.5.10 OTA 업데이트를 검증합니다.
+6. 이전 버전이 설치된 기기에서 1.5.11 OTA 업데이트를 검증합니다.
 
 두 파일의 이름은 모든 Release에서 정확히 같아야 합니다. 초안이나 Pre-release는 `latest` 업데이트 대상으로 사용하지 않습니다.
 
@@ -250,6 +250,17 @@ release/MILESTONE_Core.json
 - 5페이지 기기 세부정보 화면과 설정 포털의 실시간 시스템 상태
 - 비차단 3초 부팅 로고와 우상단 NTP `T`·업데이트 `U` 상태 아이콘
 
+## v1.5.11 업데이트 안내
+
+- 펌웨어 버전을 1.5.11로 변경하고 기존 설정 스키마 6을 유지
+- 업데이트 확인 상태 `U`가 동기식 HTTPS 요청 전에 실제 OLED에 먼저 렌더링되도록 보장
+- 설정 포털 업데이트 설치 버튼의 브라우저 `confirm()` 의존을 제거하고 2단계 확인 방식으로 변경
+- 설치 가능 여부와 설치 대기 상태를 펌웨어 API와 포털 UI가 직접 동기화하도록 보강
+- OTA 설치 요청 후 HTTP 202 응답이 브라우저에 전달될 시간을 확보한 뒤 다운로드를 시작하도록 수정
+- 수동 업데이트 확인에서도 새 버전 발견 시 OLED 전체 알림을 표시하고 최신 버전이면 메인 화면을 유지
+- GitHub HTTPS 음수 오류 코드를 서버 HTTP 거부와 구분해 transport/TLS 단계 오류로 정확히 기록
+- 기존 1.5.10의 Wi-Fi·NTP·GitHub 재시도, 백오프, 연결 복구 및 모뎀 절전 안정화 로직을 유지
+
 ## v1.5.10 업데이트 안내
 
 - 펌웨어 버전을 1.5.10으로 변경하고 기존 설정 스키마 6을 유지
@@ -266,6 +277,14 @@ release/MILESTONE_Core.json
 - Wi-Fi/DHCP가 복구되지 않은 상태에서는 GitHub HTTPS 재시도 횟수를 소모하지 않도록 업데이트 상태기계 보강
 - 부팅 후 첫 NTP가 시간 초과되면 현재 Wi-Fi/DHCP 연결을 유지한 채 15초 후 NTP만 빠르게 재시도하고, 첫 성공 이후의 주기 동기화 실패는 기존 사용자 재시도 설정을 유지
 - 펌웨어 다운로드는 manifest의 크기와 HTTP Content-Length가 정확히 일치할 때만 OTA 쓰기를 시작해 잘못된 스트림 기록 방지
+- 동기식 GitHub HTTPS 확인을 시작하기 전에 `CHECKING` 상태를 실제 OLED에 먼저 렌더링하도록 변경해 정상적인 첫 시도에서도 우상단 `U`가 반드시 표시되도록 수정
+- 설정 포털과 기기 세부정보 화면에서도 업데이트 확인 중에는 우상단에 `U`를 표시하고, NTP 동기화 중에는 `T`를 우선 표시
+- 설정 포털의 업데이트 설치 버튼에서 브라우저 `confirm()` 의존을 제거하고 `업데이트 설치` → `정말 설치`의 2단계 확인 방식으로 변경
+- 설치 가능 여부를 release metadata까지 검증한 `update_install_ready` 상태로 판단하고, 비활성 버튼 스타일·설치 요청/진행 상태를 명확하게 표시
+- 포털에서 설치 요청을 수락한 뒤 실제 OTA 다운로드 시작까지 1.5초를 확보해 HTTP 202 응답과 사용자 피드백이 브라우저에 전달될 시간을 보장
+- 포털 상태 응답에 설치 대기 상태를 포함해 브라우저 버튼 상태가 펌웨어의 실제 설치 큐와 동기화되도록 보강
+- GitHub 연결 실패 로그를 HTTP 응답 오류와 HTTPS 전송/TLS 단계 오류로 구분해 `connection refused` 같은 HTTPClient 음수 코드를 서버의 HTTP 거부로 오해하지 않도록 진단 문구 개선
+- 자동 확인뿐 아니라 설정 포털에서 수동 확인한 경우에도 새 버전이 발견되면 OLED `UPDATE AVAILABLE` 전체 화면을 표시하고, 최신 버전인 경우에는 별도 전체 화면을 표시하지 않음
 
 ## v1.5.9 업데이트 안내
 
@@ -377,4 +396,4 @@ release/MILESTONE_Core.json
 - 기존 설정 스키마, 저장된 Wi-Fi, 여섯 가지 화면을 그대로 유지
 - 기기 세부정보 화면은 OTA 검증용 1.5.1에서 추가 예정
 
-정식 버전: `1.5.10`
+정식 버전: `1.5.11`
