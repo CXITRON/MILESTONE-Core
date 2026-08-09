@@ -32,7 +32,7 @@ SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 
 namespace Milestone {
 
-constexpr char FIRMWARE_VERSION[] = "1.5.9";
+constexpr char FIRMWARE_VERSION[] = "1.5.10";
 constexpr char AP_SSID[] = "MILESTONE-D1-SETUP";
 constexpr char HOSTNAME[] = "milestone-d1";
 constexpr char PREFS_NS[] = "milestone";
@@ -78,13 +78,19 @@ constexpr uint32_t THERMAL_RECOVERY_HOLD_MS = 60UL * 1000UL;
 constexpr uint32_t TEMPERATURE_FAULT_SAFE_HOLD_MS = 60UL * 1000UL;
 constexpr uint32_t UPDATE_PROMPT_MS = 15UL * 1000UL;
 constexpr uint32_t UPDATE_CURRENT_HOLD_MS = 1000UL;
-constexpr uint32_t UPDATE_NETWORK_SETTLE_MS = 1000UL;
+constexpr uint32_t UPDATE_NETWORK_SETTLE_MS = 2000UL;
 constexpr uint32_t BOOT_SPLASH_MS = 3000UL;
 constexpr uint32_t DEVICE_INFO_PAGE_MS = 5000UL;
 constexpr uint8_t DEVICE_INFO_PAGE_COUNT = 5;
 constexpr uint32_t UPDATE_WEEKLY_SEC = 7UL * 24UL * 60UL * 60UL;
-constexpr uint32_t UPDATE_RETRY_MS = 6UL * 60UL * 60UL * 1000UL;
-constexpr uint32_t UPDATE_HTTP_TIMEOUT_MS = 15UL * 1000UL;
+constexpr uint32_t UPDATE_CHECK_TRANSIENT_RETRY_MS = 10UL * 60UL * 1000UL;
+constexpr uint32_t UPDATE_FAILURE_RETRY_MS = 6UL * 60UL * 60UL * 1000UL;
+constexpr uint32_t UPDATE_HTTP_CONNECT_TIMEOUT_MS = 10UL * 1000UL;
+constexpr uint32_t UPDATE_HTTP_TIMEOUT_MS = 12UL * 1000UL;
+constexpr uint32_t UPDATE_CHECK_ATTEMPT_BACKOFF_MS = 1500UL;
+constexpr uint8_t UPDATE_CHECK_MAX_ATTEMPTS = 3;
+constexpr uint8_t UPDATE_REDIRECT_LIMIT = 5;
+constexpr uint8_t UPDATE_TLS_HANDSHAKE_TIMEOUT_SEC = 10;
 constexpr uint32_t UPDATE_DOWNLOAD_STALL_MS = 20UL * 1000UL;
 constexpr uint32_t UPDATE_INSTALL_RESPONSE_HOLD_MS = 500UL;
 constexpr uint32_t OTA_BOOT_CONFIRM_MS = 10UL * 1000UL;
@@ -165,6 +171,12 @@ enum class UpdateCheckReason : uint8_t {
   BOOT,
   WEEKLY,
   MANUAL
+};
+
+enum class UpdateCheckAttemptResult : uint8_t {
+  SUCCESS,
+  RETRYABLE_FAILURE,
+  FATAL_FAILURE
 };
 
 enum class LedState : uint8_t {
@@ -286,6 +298,7 @@ uint32_t updateStateStartedMs = 0;
 uint32_t updateCurrentVisibleMs = 0;
 uint32_t updateCheckNotBeforeMs = 0;
 uint32_t nextUpdateRetryMs = 0;
+uint8_t updateCheckAttempt = 0;
 uint64_t lastUpdateCheckEpoch = 0;
 bool bootUpdateCheckPending = true;
 bool updateCheckAfterNetworkReady = false;
@@ -1110,20 +1123,15 @@ void drawStatusIcon(int x, int y) {
     return;
   }
   if (ntpRequestActive || runtimeState == RuntimeState::TIME_SYNCING) {
-    display.drawCircle(x + 5, y + 5, 4);
-    display.drawLine(x + 7, y + 1, x + 10, y + 1);
-    display.drawLine(x + 10, y + 1, x + 10, y + 4);
+    // Letter icons remain distinguishable on the low-resolution OLED even
+    // when circular/spinner glyphs blur together.
+    display.setFont(u8g2_font_6x10_tf);
+    display.drawStr(x + 2, y + 8, "T");
     return;
   }
   if (updateState == UpdateState::CHECKING) {
-    // Compact four-frame spinner: update checks remain visible without
-    // replacing the user's normal clock or D-day screen.
-    display.drawCircle(x + 5, y + 5, 4);
-    const uint8_t phase = static_cast<uint8_t>((millis() / 250UL) % 4UL);
-    if (phase == 0) display.drawDisc(x + 5, y, 1);
-    else if (phase == 1) display.drawDisc(x + 10, y + 5, 1);
-    else if (phase == 2) display.drawDisc(x + 5, y + 10, 1);
-    else display.drawDisc(x, y + 5, 1);
+    display.setFont(u8g2_font_6x10_tf);
+    display.drawStr(x + 2, y + 8, "U");
     return;
   }
   if (runtimeState == RuntimeState::WIFI_SLEEP) {
@@ -1747,7 +1755,7 @@ void drawUpdateScreen() {
     if (line.length() > 23) line = line.substring(0, 23);
     drawCenteredStr(line.c_str(), 62);
     display.setFont(u8g2_font_6x10_tf);
-    drawCenteredStr("Retry in 6 hours", 94);
+    drawCenteredStr("AUTO RETRY SCHEDULED", 94);
     drawCenteredStr("or next reboot", 116);
   }
   display.sendBuffer();
@@ -1819,6 +1827,14 @@ void startMdns() {
 
 void ntpTimeAvailable(struct timeval *) {
   ntpSyncEvent = true;
+}
+
+void wifiDisconnectedEvent(WiFiEvent_t, WiFiEventInfo_t info) {
+  // Arduino-ESP32 documents Serial as thread-safe for network callbacks. Keep
+  // the callback diagnostic-only: never mutate the firmware state machine or
+  // call WiFi APIs from this separate FreeRTOS task.
+  Serial.printf("[MILESTONE] Wi-Fi STA disconnected reason=%u\n",
+                static_cast<unsigned>(info.wifi_sta_disconnected.reason));
 }
 
 void cancelPortalWifiScan();
@@ -2208,8 +2224,24 @@ bool recordOtaStage(const char *stage) {
 }
 
 void restoreNetworkAfterFirmwareOperation() {
-  WiFi.setSleep(true);
-  if (WiFi.status() == WL_CONNECTED) startMdns();
+  if (WiFi.status() != WL_CONNECTED) return;
+  // During NTP/update traffic the radio is intentionally kept fully awake.
+  // Once the operation finishes, return to the normal connected STA policy.
+  // Full WIFI_OFF sleep, when configured, is handled separately by
+  // enterWifiSleep() after the update state machine has finished.
+  WiFi.setSleep(portalActive ? false : true);
+  startMdns();
+}
+
+void failFirmwareCheck(const String &reason, bool transient) {
+  updateError = reason;
+  updateInstallRequested = false;
+  updateInstallNotBeforeMs = 0;
+  updatePromptVisible = false;
+  nextUpdateRetryMs = millis() + (transient ? UPDATE_CHECK_TRANSIENT_RETRY_MS : UPDATE_FAILURE_RETRY_MS);
+  if (!putStringVerified("ota_check", "failed")) logLine("OTA check failure metadata save failed");
+  setUpdateState(UpdateState::ERROR_STATE);
+  logLine(String("firmware check failed: ") + reason);
 }
 
 void failFirmwareUpdate(const String &reason) {
@@ -2217,7 +2249,7 @@ void failFirmwareUpdate(const String &reason) {
   updateInstallRequested = false;
   updateInstallNotBeforeMs = 0;
   updatePromptVisible = false;
-  nextUpdateRetryMs = millis() + UPDATE_RETRY_MS;
+  nextUpdateRetryMs = millis() + UPDATE_FAILURE_RETRY_MS;
   lastOtaResult = "failed";
   if (!putStringVerified("ota_result", lastOtaResult)) logLine("OTA failure result save failed");
   if (!clearOtaAttemptRecord()) logLine("OTA attempt record clear failed");
@@ -2238,16 +2270,24 @@ void deferFirmwareInstall(const String &reason) {
   logLine(String("firmware installation deferred: ") + reason);
 }
 
-bool prepareUpdateNetworkRequest(const char *resource) {
+bool prepareUpdateNetworkRequest(const char *resource, String &failure) {
   cancelPortalWifiScan();
-  IPAddress address;
-  if (WiFi.hostByName(UPDATE_GITHUB_HOST, address) != 1) {
-    failFirmwareUpdate(String(resource) + " DNS failed");
+  if (!stationNetworkReady()) {
+    failure = String(resource) + " Wi-Fi disconnected";
     return false;
   }
-  logLine(String(resource) + " DNS " + address.toString() +
-          " heap=" + ESP.getFreeHeap() + " max=" + ESP.getMaxAllocHeap() +
-          " stack=" + uxTaskGetStackHighWaterMark(nullptr));
+  IPAddress address;
+  if (WiFi.hostByName(UPDATE_GITHUB_HOST, address) != 1) {
+    // Do not make the diagnostic DNS probe a second independent point of
+    // failure. HTTPClient performs its own resolver lookup when connecting,
+    // which may succeed even if this probe loses a transient DNS response.
+    logLine(String(resource) + " DNS probe failed; HTTPS resolver will still try");
+  } else {
+    logLine(String(resource) + " DNS " + address.toString() +
+            " heap=" + ESP.getFreeHeap() + " max=" + ESP.getMaxAllocHeap() +
+            " stack=" + uxTaskGetStackHighWaterMark(nullptr));
+  }
+  failure = "";
   return true;
 }
 
@@ -2258,7 +2298,9 @@ String describeHttpFailure(const char *resource, int response, NetworkClientSecu
 
   String diagnostic = String(resource) + " request failed: code=" + response;
   if (httpDetails.length()) diagnostic += " (" + httpDetails + ")";
-  diagnostic += " heap=" + String(ESP.getFreeHeap()) + " max=" + String(ESP.getMaxAllocHeap());
+  diagnostic += " wifi=" + String(static_cast<int>(WiFi.status())) +
+                " rssi=" + String(WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0) +
+                " heap=" + String(ESP.getFreeHeap()) + " max=" + String(ESP.getMaxAllocHeap());
   logLine(diagnostic);
   if (tlsError != 0) {
     logLine(String(resource) + " TLS " + tlsError + ": " + tlsDetails);
@@ -2268,89 +2310,118 @@ String describeHttpFailure(const char *resource, int response, NetworkClientSecu
   return String(resource) + " HTTP " + response;
 }
 
-bool readBoundedHttpBody(HTTPClient &http, String &body, size_t maximumBytes) {
-  const int contentLength = http.getSize();
-  if (contentLength > static_cast<int>(maximumBytes)) return false;
-  NetworkClient *stream = http.getStreamPtr();
-  body = "";
-  if (contentLength > 0) body.reserve(contentLength + 1);
-  uint32_t lastDataMs = millis();
-  uint8_t buffer[256];
-  while (http.connected() || stream->available()) {
-    int available = stream->available();
-    if (available > 0) {
-      size_t wanted = min(static_cast<size_t>(available), sizeof(buffer));
-      int count = stream->read(buffer, wanted);
-      if (count <= 0) continue;
-      if (body.length() + static_cast<size_t>(count) > maximumBytes) return false;
-      for (int i = 0; i < count; ++i) body += static_cast<char>(buffer[i]);
-      lastDataMs = millis();
-      if (contentLength >= 0 && body.length() >= static_cast<size_t>(contentLength)) break;
-    } else {
-      if (elapsed(millis(), lastDataMs, UPDATE_HTTP_TIMEOUT_MS)) return false;
-      delay(1);
-    }
+bool transientHttpFailure(int response) {
+  if (response < 0) return true;
+  return response == HTTP_CODE_REQUEST_TIMEOUT || response == HTTP_CODE_MISDIRECTED_REQUEST ||
+         response == 425 || response == HTTP_CODE_TOO_MANY_REQUESTS ||
+         (response >= 500 && response <= 599);
+}
+
+UpdateCheckAttemptResult readManifestBody(HTTPClient &http, String &body, String &failure) {
+  const int declaredLength = http.getSize();
+  if (declaredLength > static_cast<int>(UPDATE_MANIFEST_MAX_BYTES)) {
+    failure = "manifest too large";
+    return UpdateCheckAttemptResult::FATAL_FAILURE;
   }
-  return body.length() > 0 && (contentLength < 0 || body.length() == static_cast<size_t>(contentLength));
+
+  // HTTPClient::getString() routes through writeToStream(), which correctly
+  // decodes both identity and chunked transfer encodings. The previous custom
+  // socket loop could mistake a valid unknown-length/chunked response for a
+  // timeout while a keep-alive connection remained open.
+  body = http.getString();
+  const int decodedLength = http.getSize();
+  if (body.length() > UPDATE_MANIFEST_MAX_BYTES) {
+    failure = "manifest too large";
+    return UpdateCheckAttemptResult::FATAL_FAILURE;
+  }
+  if (body.length() == 0) {
+    failure = "manifest body empty or timed out";
+    return UpdateCheckAttemptResult::RETRYABLE_FAILURE;
+  }
+  if (declaredLength >= 0 && body.length() != static_cast<size_t>(declaredLength)) {
+    failure = "manifest body incomplete";
+    return UpdateCheckAttemptResult::RETRYABLE_FAILURE;
+  }
+  if (decodedLength >= 0 && body.length() != static_cast<size_t>(decodedLength)) {
+    failure = "manifest decoded length mismatch";
+    return UpdateCheckAttemptResult::RETRYABLE_FAILURE;
+  }
+  body.trim();
+  // getString() intentionally hides writeToStream()'s return code. A transfer
+  // interrupted while using an unknown-length response can therefore leave a
+  // non-empty partial String. Require a complete JSON object envelope before
+  // trusting any fields so a truncated 200 response is retried rather than
+  // accidentally accepted as a valid release manifest.
+  if (!body.startsWith("{") || !body.endsWith("}")) {
+    failure = "manifest body incomplete";
+    return UpdateCheckAttemptResult::RETRYABLE_FAILURE;
+  }
+  failure = "";
+  return UpdateCheckAttemptResult::SUCCESS;
 }
 
 void requestFirmwareUpdateCheck(UpdateCheckReason reason) {
   if (pendingUpdateCheckReason != UpdateCheckReason::NONE || firmwareUpdateBusy() ||
       updateState == UpdateState::CURRENT) return;
   pendingUpdateCheckReason = reason;
+  updateCheckAttempt = 0;
+  updateError = "";
 }
 
-bool checkFirmwareManifest(UpdateCheckReason reason) {
-  if (reason == UpdateCheckReason::BOOT) bootUpdateCheckPending = false;
+UpdateCheckAttemptResult checkFirmwareManifestAttempt(UpdateCheckReason reason, String &failure) {
   if (thermalSafeMode || temperatureSensorFault || thermalWarning) {
-    failFirmwareUpdate("temperature protection active");
-    return false;
+    failure = "temperature protection active";
+    return UpdateCheckAttemptResult::FATAL_FAILURE;
   }
   if (!stationNetworkReady()) {
-    failFirmwareUpdate("Wi-Fi disconnected");
-    return false;
+    failure = "Wi-Fi disconnected";
+    return UpdateCheckAttemptResult::RETRYABLE_FAILURE;
   }
-  if (!timeIsValid()) {
-    failFirmwareUpdate("secure clock unavailable");
-    return false;
+  if (!timeIsValid() || !freshNtpSinceBoot) {
+    failure = "secure clock unavailable";
+    return UpdateCheckAttemptResult::RETRYABLE_FAILURE;
   }
   if (ESP.getFreeHeap() < UPDATE_MIN_FREE_HEAP || ESP.getMaxAllocHeap() < UPDATE_MIN_LARGEST_BLOCK) {
-    failFirmwareUpdate("not enough internal RAM");
-    return false;
+    failure = "not enough internal RAM";
+    return UpdateCheckAttemptResult::FATAL_FAILURE;
   }
-  WiFi.setSleep(false);
-  if (!prepareUpdateNetworkRequest("manifest")) return false;
 
-  setUpdateState(UpdateState::CHECKING);
-  drawMainScreen();
-  processLed();
+  WiFi.setSleep(false);
+  if (!prepareUpdateNetworkRequest("manifest", failure)) {
+    return UpdateCheckAttemptResult::RETRYABLE_FAILURE;
+  }
+
+  logLine(String("manifest HTTPS attempt ") + String(updateCheckAttempt) + "/" +
+          String(UPDATE_CHECK_MAX_ATTEMPTS));
   NetworkClientSecure secureClient;
   secureClient.setCACert(MILESTONE_UPDATE_ROOT_CA);
-  secureClient.setHandshakeTimeout(12);
+  secureClient.setHandshakeTimeout(UPDATE_TLS_HANDSHAKE_TIMEOUT_SEC);
   HTTPClient http;
-  http.setConnectTimeout(UPDATE_HTTP_TIMEOUT_MS);
+  http.setConnectTimeout(UPDATE_HTTP_CONNECT_TIMEOUT_MS);
   http.setTimeout(UPDATE_HTTP_TIMEOUT_MS);
   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+  http.setRedirectLimit(UPDATE_REDIRECT_LIMIT);
+  http.setReuse(false);
+  http.setAcceptEncoding("identity");
+  http.setUserAgent(String("MILESTONE-Core/") + FIRMWARE_VERSION);
   if (!http.begin(secureClient, UPDATE_MANIFEST_URL)) {
-    failFirmwareUpdate("manifest request setup failed");
-    return false;
+    failure = "manifest request setup failed";
+    return UpdateCheckAttemptResult::FATAL_FAILURE;
   }
   http.addHeader("Accept", "application/json");
-  http.addHeader("User-Agent", String("MILESTONE-Core/") + FIRMWARE_VERSION);
-  int response = http.GET();
+  http.addHeader("Cache-Control", "no-cache");
+  const int response = http.GET();
   if (response != HTTP_CODE_OK) {
-    const String failure = describeHttpFailure("manifest", response, secureClient);
+    failure = describeHttpFailure("manifest", response, secureClient);
     http.end();
-    failFirmwareUpdate(failure);
-    return false;
+    return transientHttpFailure(response) ? UpdateCheckAttemptResult::RETRYABLE_FAILURE
+                                          : UpdateCheckAttemptResult::FATAL_FAILURE;
   }
+
   String manifest;
-  bool bodyRead = readBoundedHttpBody(http, manifest, UPDATE_MANIFEST_MAX_BYTES);
+  UpdateCheckAttemptResult bodyResult = readManifestBody(http, manifest, failure);
   http.end();
-  if (!bodyRead) {
-    failFirmwareUpdate("manifest too large or timed out");
-    return false;
-  }
+  if (bodyResult != UpdateCheckAttemptResult::SUCCESS) return bodyResult;
 
   String version, sha256, notes;
   uint32_t size = 0;
@@ -2358,8 +2429,8 @@ bool checkFirmwareManifest(UpdateCheckReason reason) {
   if (!parseJsonStringField(manifest, "version", version) || !parseSemanticVersion(version, versionParts) ||
       !parseJsonUintField(manifest, "size", size) || size == 0 ||
       !parseJsonStringField(manifest, "sha256", sha256) || !validSha256(sha256)) {
-    failFirmwareUpdate("invalid release manifest");
-    return false;
+    failure = "invalid release manifest";
+    return UpdateCheckAttemptResult::FATAL_FAILURE;
   }
   parseJsonStringField(manifest, "notes", notes);
   sha256.toLowerCase();
@@ -2382,14 +2453,16 @@ bool checkFirmwareManifest(UpdateCheckReason reason) {
     updatePromptStartedMs = millis();
     setUpdateState(UpdateState::AVAILABLE);
     logLine(String("firmware update available: ") + FIRMWARE_VERSION + " -> " + latestFirmwareVersion);
-    return true;
+    failure = "";
+    return UpdateCheckAttemptResult::SUCCESS;
   }
 
   updatePromptVisible = false;
   setUpdateState(UpdateState::CURRENT);
   updateCurrentVisibleMs = millis();
   logLine(String("firmware is current: ") + FIRMWARE_VERSION);
-  return true;
+  failure = "";
+  return UpdateCheckAttemptResult::SUCCESS;
 }
 
 bool installFirmwareUpdate() {
@@ -2415,7 +2488,11 @@ bool installFirmwareUpdate() {
     deferFirmwareInstall("OTA partition too small");
     return false;
   }
-  if (!prepareUpdateNetworkRequest("firmware")) return false;
+  String networkFailure;
+  if (!prepareUpdateNetworkRequest("firmware", networkFailure)) {
+    deferFirmwareInstall(networkFailure.length() ? networkFailure : "firmware network unavailable");
+    return false;
+  }
 
   // Keep the setup AP and the already loaded portal page alive until the
   // verified image is ready to reboot. The synchronous transfer temporarily
@@ -2440,17 +2517,20 @@ bool installFirmwareUpdate() {
   const String firmwareUrl = String(UPDATE_RELEASE_BASE_URL) + latestFirmwareVersion + '/' + UPDATE_ASSET_NAME;
   NetworkClientSecure secureClient;
   secureClient.setCACert(MILESTONE_UPDATE_ROOT_CA);
-  secureClient.setHandshakeTimeout(12);
+  secureClient.setHandshakeTimeout(UPDATE_TLS_HANDSHAKE_TIMEOUT_SEC);
   HTTPClient http;
-  http.setConnectTimeout(UPDATE_HTTP_TIMEOUT_MS);
+  http.setConnectTimeout(UPDATE_HTTP_CONNECT_TIMEOUT_MS);
   http.setTimeout(UPDATE_DOWNLOAD_STALL_MS);
   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+  http.setRedirectLimit(UPDATE_REDIRECT_LIMIT);
+  http.setReuse(false);
+  http.setAcceptEncoding("identity");
+  http.setUserAgent(String("MILESTONE-Core/") + FIRMWARE_VERSION);
   if (!http.begin(secureClient, firmwareUrl)) {
     failFirmwareUpdate("firmware request setup failed");
     return false;
   }
   http.addHeader("Accept", "application/octet-stream");
-  http.addHeader("User-Agent", String("MILESTONE-Core/") + FIRMWARE_VERSION);
   int response = http.GET();
   if (response != HTTP_CODE_OK) {
     const String failure = describeHttpFailure("firmware", response, secureClient);
@@ -2459,7 +2539,12 @@ bool installFirmwareUpdate() {
     return false;
   }
   int responseSize = http.getSize();
-  if (responseSize >= 0 && static_cast<uint32_t>(responseSize) != latestFirmwareSize) {
+  if (responseSize < 0) {
+    http.end();
+    failFirmwareUpdate("firmware size header missing");
+    return false;
+  }
+  if (static_cast<uint32_t>(responseSize) != latestFirmwareSize) {
     http.end();
     failFirmwareUpdate("firmware size header mismatch");
     return false;
@@ -3113,6 +3198,9 @@ bool stationNetworkStable(uint32_t now) {
   if (wifiNetworkReadySinceMs == 0) {
     wifiNetworkReadySinceMs = now;
     logLine(String("Wi-Fi obtained IP ") + WiFi.localIP().toString() +
+            " gateway=" + WiFi.gatewayIP().toString() +
+            " dns0=" + WiFi.dnsIP(0).toString() +
+            " dns1=" + WiFi.dnsIP(1).toString() +
             " RSSI=" + String(WiFi.RSSI()) + " dBm; stabilizing");
     return false;
   }
@@ -3309,13 +3397,46 @@ void processFirmwareUpdate() {
     // once before a synchronous HTTPS check can occupy loopTask.
     if (bootSplashActive() || !deadlineReached(now, updateCheckNotBeforeMs)) return;
     const UpdateCheckReason reason = pendingUpdateCheckReason;
-    pendingUpdateCheckReason = UpdateCheckReason::NONE;
-    const bool success = checkFirmwareManifest(reason);
-    if (success && stationNetworkReady() && timeIsValid()) {
+    if (updateState != UpdateState::CHECKING) setUpdateState(UpdateState::CHECKING);
+    if (updateCheckAttempt < UINT8_MAX) ++updateCheckAttempt;
+
+    String failure;
+    const UpdateCheckAttemptResult result = checkFirmwareManifestAttempt(reason, failure);
+    if (result == UpdateCheckAttemptResult::SUCCESS) {
+      pendingUpdateCheckReason = UpdateCheckReason::NONE;
+      updateCheckAttempt = 0;
       internetVerified = true;
       ntpFailed = false;
       if (runtimeState != RuntimeState::SETUP_AP) setRuntimeState(RuntimeState::RUNNING_ONLINE);
+      restoreNetworkAfterFirmwareOperation();
+      if (wifiSleepDeferredForUpdate && !updatePromptVisible && !portalActive) {
+        wifiSleepDeferredForUpdate = false;
+        enterWifiSleep();
+      }
+      return;
     }
+
+    if (result == UpdateCheckAttemptResult::RETRYABLE_FAILURE &&
+        updateCheckAttempt < UPDATE_CHECK_MAX_ATTEMPTS) {
+      updateError = failure;
+      // If the HTTPS attempt itself knocked the STA offline, let processNetwork()
+      // perform its normal quick reconnect before consuming another GitHub
+      // attempt. Otherwise use a short increasing backoff for transient
+      // DNS/TLS/HTTP failures while the link remains healthy.
+      const uint32_t retryDelay = stationNetworkReady() && timeIsValid()
+                                    ? UPDATE_CHECK_ATTEMPT_BACKOFF_MS * updateCheckAttempt
+                                    : WIFI_QUICK_RETRY_MS + 1000UL;
+      updateCheckNotBeforeMs = millis() + retryDelay;
+      logLine(String("manifest check retry scheduled after attempt ") + String(updateCheckAttempt) +
+              " in " + String(retryDelay) + " ms: " + failure);
+      return;
+    }
+
+    pendingUpdateCheckReason = UpdateCheckReason::NONE;
+    if (reason == UpdateCheckReason::BOOT) bootUpdateCheckPending = false;
+    const bool transient = result == UpdateCheckAttemptResult::RETRYABLE_FAILURE;
+    failFirmwareCheck(failure.length() ? failure : "manifest check failed", transient);
+    updateCheckAttempt = 0;
     restoreNetworkAfterFirmwareOperation();
     if (wifiSleepDeferredForUpdate && !updatePromptVisible && !portalActive) {
       wifiSleepDeferredForUpdate = false;
@@ -3657,6 +3778,9 @@ void setupFirmware() {
                 static_cast<unsigned long>(ESP.getMaxAllocHeap()));
   // ESP32 requires the STA hostname to be set before Wi-Fi is started.
   WiFi.setHostname(HOSTNAME);
+  // The disconnect reason is valuable when distinguishing RF/AP failures from
+  // DNS/TLS/GitHub failures. The callback itself remains diagnostic-only.
+  WiFi.onEvent(wifiDisconnectedEvent, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
   pinMode(PIN_BOOT, INPUT_PULLUP);
   buttonRawPressed = digitalRead(PIN_BOOT) == LOW;
   buttonStablePressed = buttonRawPressed;
