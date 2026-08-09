@@ -167,9 +167,9 @@ picocom -b 115200 /dev/ttyACM0
 https://github.com/CXITRON/MILESTONE-Core
 ```
 
-기기는 부팅 후 Wi-Fi 연결과 NTP 동기화를 먼저 완료해 시간과 디데이를 확정합니다. 최신 정식 Release 확인은 새 부팅에서 실제 NTP 응답을 받아 외부 연결을 확인한 뒤 시작하며, 확인 중에는 일반 화면을 유지하고 우상단 상태 아이콘만 회전합니다. 계속 켜져 있는 경우 마지막 정상 확인 시각으로부터 7일 뒤 다시 확인합니다. 확인 실패 시에는 6시간 뒤 또는 다음 재부팅 때 재시도합니다. 자동 확인은 설치까지 자동으로 실행하지 않습니다.
+기기는 부팅 후 Wi-Fi 연결과 NTP 동기화를 먼저 완료해 시간과 디데이를 확정합니다. 최신 정식 Release 확인은 새 부팅에서 실제 NTP 응답을 받아 외부 연결을 확인한 뒤 시작하며, 확인 중에는 일반 화면을 유지하고 우상단에 `U`를 표시합니다. 계속 켜져 있는 경우 마지막 정상 확인 시각으로부터 7일 뒤 다시 확인합니다. DNS·TLS·일시적 HTTP 오류는 짧은 백오프로 최대 3회 확인한 뒤 10분 후 자동 재시도하며, 명백한 비정상 Release 응답이나 실제 OTA 설치 실패는 6시간 뒤 재시도합니다. 자동 확인은 설치까지 자동으로 실행하지 않습니다.
 
-부팅 로고는 네트워크 응답을 기다리지 않고 약 3초 뒤 종료됩니다. NTP 서버 응답이 느리면 일반 화면의 우상단 동기화 아이콘을 표시한 채 백그라운드에서 최대 60초 동안 대체 서버까지 시도합니다. NTP 성공 전에는 GitHub 업데이트 확인을 시작하지 않습니다.
+부팅 로고는 네트워크 응답을 기다리지 않고 약 3초 뒤 종료됩니다. NTP 서버 응답이 느리면 일반 화면의 우상단에 `T`를 표시한 채 백그라운드에서 최대 60초 동안 대체 서버까지 시도합니다. 저해상도 OLED에서 시간 동기화와 업데이트 확인을 혼동하지 않도록 두 상태를 각각 `T`와 `U` 문자로 구분합니다. NTP 성공 전에는 GitHub 업데이트 확인을 시작하지 않습니다.
 
 업데이트 확인이 정상적으로 끝나 현재 버전이 최신이면 별도 전체 화면을 표시하지 않습니다. 확인 실패 또는 새 버전 발견 때만 OLED 전체 화면에 안내가 나타나며, 새 버전 안내는 15초 동안 유지됩니다.
 
@@ -179,7 +179,7 @@ https://github.com/CXITRON/MILESTONE-Core
 
 업데이트 파일은 HTTPS 인증서로 서버를 검증하고, manifest에 기록된 크기와 SHA-256이 모두 일치해야만 다음 부팅 펌웨어로 확정됩니다. HTTP로 낮아지는 주소, 비정상 manifest, 용량 부족, RAM 부족, 연결 중단, 고온·온도 센서 오류 상태에서는 설치하지 않습니다.
 
-GitHub Release 자산 서버의 Let’s Encrypt 인증서 체인 검증을 위해 ISRG Root X1을 포함합니다. DNS, TLS, HTTP 요청 실패는 서로 구분해 화면과 설정 포털에 표시하며, 세부 TLS 오류와 요청 당시의 여유 RAM은 시리얼 로그에 기록합니다.
+GitHub와 Release 자산 전달 호스트의 인증서 체인을 검증할 수 있도록 DigiCert Global Root G2, ISRG Root X1, USERTrust RSA/ECC 루트를 포함합니다. DNS 사전 조회는 진단용으로만 사용하며 그 한 번의 실패만으로 업데이트 확인을 중단하지 않습니다. 실제 HTTPS 요청은 리디렉션을 제한된 횟수만 따라가며, DNS·TLS·HTTP 오류와 요청 당시의 RSSI·여유 RAM은 시리얼 로그에 기록합니다. Wi-Fi 연결 해제 reason code와 DHCP 완료 후 IP·게이트웨이·DNS도 기록해 공유기 문제와 GitHub 요청 문제를 분리할 수 있습니다.
 
 Wi-Fi 절전을 사용해도 업데이트 확인 시에는 저장된 Wi-Fi에 잠시 연결하고, 작업이 끝나면 다시 절전 상태로 돌아갑니다. HTTPS 인증서의 유효기간을 확인하려면 정확한 시간이 필요하므로, 부팅 시간 동기화를 꺼 두었더라도 전원이 완전히 끊겨 시각이 유효하지 않으면 업데이트 확인을 위해 NTP를 한 번 수행합니다.
 
@@ -189,10 +189,10 @@ Wi-Fi 절전을 사용해도 업데이트 확인 시에는 저장된 Wi-Fi에 �
 
 ```bash
 chmod +x tools/make-release.sh
-./tools/make-release.sh 1.5.9 "Stabilize cold-boot Wi-Fi before NTP and update checks"
+./tools/make-release.sh 1.5.10 "Harden internet and GitHub update communication"
 ```
 
-기본 설명을 사용하려면 `./tools/make-release.sh 1.5.9`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
+기본 설명을 사용하려면 `./tools/make-release.sh 1.5.10`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
 
 다음 두 파일이 `release/`에 생성됩니다.
 
@@ -206,11 +206,11 @@ release/MILESTONE_Core.json
 ### GitHub Release 게시
 
 1. 저장소의 `Releases`에서 `Draft a new release`를 선택합니다.
-2. 버전과 동일한 태그를 만듭니다. 예: `v1.5.9`
-3. Release 제목을 `MILESTONE Core v1.5.9`로 지정합니다.
+2. 버전과 동일한 태그를 만듭니다. 예: `v1.5.10`
+3. Release 제목을 `MILESTONE Core v1.5.10`으로 지정합니다.
 4. `release/MILESTONE_Core.bin`과 `release/MILESTONE_Core.json`을 첨부합니다.
 5. Pre-release가 아닌 최신 정식 Release로 게시합니다.
-6. 이전 버전이 설치된 기기에서 1.5.9 OTA 업데이트를 검증합니다.
+6. 이전 버전이 설치된 기기에서 1.5.10 OTA 업데이트를 검증합니다.
 
 두 파일의 이름은 모든 Release에서 정확히 같아야 합니다. 초안이나 Pre-release는 `latest` 업데이트 대상으로 사용하지 않습니다.
 
@@ -246,9 +246,23 @@ release/MILESTONE_Core.json
 - 부팅 시 및 주 1회 GitHub Release 업데이트 확인
 - HTTPS 인증서·크기·SHA-256 검증 후 OTA 설치
 - OLED·RGB LED·설정 포털의 업데이트 상태와 진행률 표시
-- 업데이트 실패 6시간 재시도와 Wi-Fi 절전 자동 복귀
+- 일시적 업데이트 확인 실패 10분·설치/구조적 실패 6시간 재시도와 Wi-Fi 절전 자동 복귀
 - 5페이지 기기 세부정보 화면과 설정 포털의 실시간 시스템 상태
-- 비차단 3초 부팅 로고와 우상단 업데이트 확인 상태 아이콘
+- 비차단 3초 부팅 로고와 우상단 NTP `T`·업데이트 `U` 상태 아이콘
+
+## v1.5.10 업데이트 안내
+
+- 펌웨어 버전을 1.5.10으로 변경하고 기존 설정 스키마 6을 유지
+- 저해상도 OLED에서도 혼동되지 않도록 NTP 동기화는 우상단 `T`, 업데이트 확인은 `U`로 표시
+- GitHub manifest 확인을 최대 3회로 분리하고 DNS·TLS·408·429·5xx 등 일시적 오류에 짧은 증가형 백오프 적용
+- 업데이트 확인 중 Wi-Fi가 끊기면 즉시 실패 확정하지 않고 15초 빠른 Wi-Fi 복구 주기를 기다린 뒤 남은 확인 횟수를 사용
+- GitHub DNS 사전 조회를 진단용으로 변경해 단 한 번의 DNS probe 실패가 전체 업데이트 확인 실패로 직결되지 않도록 수정
+- HTTPS 연결·읽기·TLS handshake 제한시간과 최대 리디렉션 수를 명시하고 요청마다 새 연결을 사용해 이전 실패 연결 상태의 재사용을 방지
+- manifest 본문을 HTTPClient 전송 디코더로 읽어 chunked 응답을 처리하고, 길이 불일치·빈 본문·완결되지 않은 JSON을 일시적 전송 실패로 판정
+- 업데이트 확인 실패와 실제 OTA 설치 실패 기록을 분리해 manifest 조회 오류가 설치 실패 상태를 덮어쓰지 않도록 수정
+- 일시적인 업데이트 확인 실패는 10분 후 재시도하고, 비정상 manifest나 실제 OTA 실패는 기존 6시간 재시도 정책 유지
+- Wi-Fi DISCONNECTED reason code와 GOT_IP 시 IP·게이트웨이·DNS·RSSI를 시리얼 로그에 추가
+- 펌웨어 다운로드는 manifest의 크기와 HTTP Content-Length가 정확히 일치할 때만 OTA 쓰기를 시작해 잘못된 스트림 기록 방지
 
 ## v1.5.9 업데이트 안내
 
@@ -360,4 +374,4 @@ release/MILESTONE_Core.json
 - 기존 설정 스키마, 저장된 Wi-Fi, 여섯 가지 화면을 그대로 유지
 - 기기 세부정보 화면은 OTA 검증용 1.5.1에서 추가 예정
 
-정식 버전: `1.5.9`
+정식 버전: `1.5.10`
