@@ -32,7 +32,7 @@ SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 
 namespace Milestone {
 
-constexpr char FIRMWARE_VERSION[] = "1.5.7";
+constexpr char FIRMWARE_VERSION[] = "1.5.8";
 constexpr char AP_SSID[] = "MILESTONE-D1-SETUP";
 constexpr char HOSTNAME[] = "milestone-d1";
 constexpr char PREFS_NS[] = "milestone";
@@ -54,7 +54,11 @@ constexpr uint8_t OLED_ADDR_SECONDARY = 0x3D;
 
 constexpr uint32_t AP_TIMEOUT_MS = 10UL * 60UL * 1000UL;
 constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 20UL * 1000UL;
-constexpr uint32_t NTP_TIMEOUT_MS = 18UL * 1000UL;
+// SNTP may wait about 15 seconds before falling back from an unresponsive
+// server. Keep the request alive long enough to use all configured servers;
+// the OLED leaves the boot splash independently, so this does not extend the
+// visible boot sequence.
+constexpr uint32_t NTP_TIMEOUT_MS = 60UL * 1000UL;
 constexpr uint32_t PORTAL_SUCCESS_HOLD_MS = 3000UL;
 constexpr uint32_t DISPLAY_REFRESH_MS = 250UL;
 constexpr uint32_t BUTTON_DISPLAY_REFRESH_MS = 250UL;
@@ -71,6 +75,7 @@ constexpr uint32_t THERMAL_RECOVERY_HOLD_MS = 60UL * 1000UL;
 constexpr uint32_t TEMPERATURE_FAULT_SAFE_HOLD_MS = 60UL * 1000UL;
 constexpr uint32_t UPDATE_PROMPT_MS = 15UL * 1000UL;
 constexpr uint32_t UPDATE_CURRENT_HOLD_MS = 1000UL;
+constexpr uint32_t UPDATE_NETWORK_SETTLE_MS = 1000UL;
 constexpr uint32_t BOOT_SPLASH_MS = 3000UL;
 constexpr uint32_t DEVICE_INFO_PAGE_MS = 5000UL;
 constexpr uint8_t DEVICE_INFO_PAGE_COUNT = 5;
@@ -253,6 +258,7 @@ bool portalClosingAfterSuccess = false;
 bool initialStationAttempt = true;
 bool internetVerified = false;
 bool ntpFailed = false;
+bool freshNtpSinceBoot = false;
 volatile bool ntpSyncEvent = false;
 bool savedWifiScanActive = false;
 bool savedWifiScanCompleted = false;
@@ -275,6 +281,7 @@ uint32_t updateDownloadedBytes = 0;
 uint32_t updatePromptStartedMs = 0;
 uint32_t updateStateStartedMs = 0;
 uint32_t updateCurrentVisibleMs = 0;
+uint32_t updateCheckNotBeforeMs = 0;
 uint32_t nextUpdateRetryMs = 0;
 uint64_t lastUpdateCheckEpoch = 0;
 bool bootUpdateCheckPending = true;
@@ -462,7 +469,7 @@ bool firmwareTransferActive() {
 }
 
 bool firmwareUpdateBusy() {
-  return updateState == UpdateState::CHECKING || firmwareTransferActive() || updateState == UpdateState::CURRENT;
+  return updateState == UpdateState::CHECKING || firmwareTransferActive();
 }
 
 View topModeView(TopMode mode) {
@@ -1104,6 +1111,17 @@ void drawStatusIcon(int x, int y) {
     display.drawLine(x + 10, y + 1, x + 10, y + 4);
     return;
   }
+  if (updateState == UpdateState::CHECKING) {
+    // Compact four-frame spinner: update checks remain visible without
+    // replacing the user's normal clock or D-day screen.
+    display.drawCircle(x + 5, y + 5, 4);
+    const uint8_t phase = static_cast<uint8_t>((millis() / 250UL) % 4UL);
+    if (phase == 0) display.drawDisc(x + 5, y, 1);
+    else if (phase == 1) display.drawDisc(x + 10, y + 5, 1);
+    else if (phase == 2) display.drawDisc(x + 5, y + 10, 1);
+    else display.drawDisc(x, y + 5, 1);
+    return;
+  }
   if (runtimeState == RuntimeState::WIFI_SLEEP) {
     display.drawCircle(x + 5, y + 5, 4);
     return;
@@ -1683,12 +1701,7 @@ void drawUpdateScreen() {
   if (!oledReady) return;
   display.clearBuffer();
   display.setFont(u8g2_font_7x14B_tf);
-  if (updateState == UpdateState::CHECKING) {
-    drawCenteredStr("CHECKING UPDATE", 34);
-    display.setFont(u8g2_font_6x10_tf);
-    drawCenteredStr("GitHub Release", 65);
-    drawCenteredStr("Please wait...", 88);
-  } else if (updateState == UpdateState::AVAILABLE && updatePromptVisible) {
+  if (updateState == UpdateState::AVAILABLE && updatePromptVisible) {
     drawCenteredStr("UPDATE AVAILABLE", 25);
     display.setFont(u8g2_font_6x10_tf);
     String versions = String(FIRMWARE_VERSION) + " -> " + latestFirmwareVersion;
@@ -1723,12 +1736,6 @@ void drawUpdateScreen() {
     drawCenteredStr("Rebooting into", 72);
     String version = String("version ") + latestFirmwareVersion;
     drawCenteredStr(version.c_str(), 94);
-  } else if (updateState == UpdateState::CURRENT) {
-    drawCenteredStr("UP TO DATE", 34);
-    display.setFont(u8g2_font_6x10_tf);
-    String version = String("Version ") + FIRMWARE_VERSION;
-    drawCenteredStr(version.c_str(), 68);
-    drawCenteredStr("Latest firmware", 96);
   } else if (updateState == UpdateState::ERROR_STATE) {
     drawCenteredStr("UPDATE ERROR", 27);
     display.setFont(u8g2_font_5x8_tf);
@@ -1760,11 +1767,7 @@ void drawMainScreen() {
     drawPortalScreen();
     return;
   }
-  if (updateState == UpdateState::CURRENT && updateCurrentVisibleMs == 0) {
-    updateCurrentVisibleMs = millis();
-  }
-  if (updateState == UpdateState::CHECKING || updateState == UpdateState::CURRENT ||
-      (updateState == UpdateState::AVAILABLE && updatePromptVisible)) {
+  if (updateState == UpdateState::AVAILABLE && updatePromptVisible) {
     drawUpdateScreen();
     return;
   }
@@ -1819,6 +1822,9 @@ void cancelPortalWifiScan();
 void beginNtpRequest() {
   if (WiFi.status() != WL_CONNECTED) return;
   cancelPortalWifiScan();
+  // Favor latency and packet reliability during the short UDP exchange. The
+  // normal power-save policy is restored after success or timeout.
+  WiFi.setSleep(false);
   ntpSyncEvent = false;
   ntpFailed = false;
   ntpRequestActive = true;
@@ -1831,6 +1837,7 @@ void markNtpSuccess() {
   ntpRequestActive = false;
   internetVerified = true;
   ntpFailed = false;
+  freshNtpSinceBoot = true;
   config.lastSync = static_cast<uint64_t>(time(nullptr));
   if (prefs.putULong64("last_sync", config.lastSync) != sizeof(uint64_t)) logLine("NTP timestamp save failed");
   invalidateTimeDisplayCache();
@@ -2273,7 +2280,8 @@ bool readBoundedHttpBody(HTTPClient &http, String &body, size_t maximumBytes) {
 }
 
 void requestFirmwareUpdateCheck(UpdateCheckReason reason) {
-  if (pendingUpdateCheckReason != UpdateCheckReason::NONE || firmwareUpdateBusy()) return;
+  if (pendingUpdateCheckReason != UpdateCheckReason::NONE || firmwareUpdateBusy() ||
+      updateState == UpdateState::CURRENT) return;
   pendingUpdateCheckReason = reason;
 }
 
@@ -2295,10 +2303,11 @@ bool checkFirmwareManifest(UpdateCheckReason reason) {
     failFirmwareUpdate("not enough internal RAM");
     return false;
   }
+  WiFi.setSleep(false);
   if (!prepareUpdateNetworkRequest("manifest")) return false;
 
   setUpdateState(UpdateState::CHECKING);
-  drawUpdateScreen();
+  drawMainScreen();
   processLed();
   NetworkClientSecure secureClient;
   secureClient.setCACert(MILESTONE_UPDATE_ROOT_CA);
@@ -2363,11 +2372,7 @@ bool checkFirmwareManifest(UpdateCheckReason reason) {
 
   updatePromptVisible = false;
   setUpdateState(UpdateState::CURRENT);
-  if (portalActive) updateCurrentVisibleMs = millis();
-  else if (!bootSplashActive()) {
-    updateCurrentVisibleMs = millis();
-    drawUpdateScreen();
-  }
+  updateCurrentVisibleMs = millis();
   logLine(String("firmware is current: ") + FIRMWARE_VERSION);
   return true;
 }
@@ -2921,7 +2926,7 @@ void handleDeleteSavedWifi() {
 
 void handleUpdateCheck() {
   if (!authorizePortalRequest()) return;
-  if (firmwareUpdateBusy()) {
+  if (firmwareUpdateBusy() || updateState == UpdateState::CURRENT) {
     return sendJson(409, "{\"error\":\"업데이트 작업이 이미 진행 중입니다.\"}");
   }
   if (thermalSafeMode || temperatureSensorFault || thermalWarning) {
@@ -2930,12 +2935,13 @@ void handleUpdateCheck() {
   if (WiFi.status() != WL_CONNECTED) {
     return sendJson(409, "{\"error\":\"인터넷에 연결된 Wi-Fi가 필요합니다.\"}");
   }
-  if (!timeIsValid()) {
+  if (!timeIsValid() || !freshNtpSinceBoot) {
     updateCheckAfterNetworkReady = true;
     beginNtpRequest();
     setRuntimeState(RuntimeState::TIME_SYNCING);
     return sendJson(202, "{\"ok\":true,\"state\":\"time_syncing\"}");
   }
+  updateCheckNotBeforeMs = millis() + UPDATE_NETWORK_SETTLE_MS;
   requestFirmwareUpdateCheck(UpdateCheckReason::MANUAL);
   sendJson(202, "{\"ok\":true,\"state\":\"queued\"}");
 }
@@ -3061,14 +3067,19 @@ void finishNormalNtpSuccess() {
   setRuntimeState(RuntimeState::RUNNING_ONLINE);
   startMdns();
   if (bootUpdateCheckPending) {
+    updateCheckAfterNetworkReady = false;
     wifiSleepDeferredForUpdate = config.wifiSleep;
+    updateCheckNotBeforeMs = millis() + UPDATE_NETWORK_SETTLE_MS;
     requestFirmwareUpdateCheck(UpdateCheckReason::BOOT);
   } else if (updateCheckAfterNetworkReady || firmwareUpdateCheckDue()) {
     updateCheckAfterNetworkReady = false;
     wifiSleepDeferredForUpdate = config.wifiSleep;
+    updateCheckNotBeforeMs = millis() + UPDATE_NETWORK_SETTLE_MS;
     requestFirmwareUpdateCheck(UpdateCheckReason::WEEKLY);
   } else if (config.wifiSleep) {
     enterWifiSleep();
+  } else {
+    WiFi.setSleep(true);
   }
 }
 
@@ -3125,9 +3136,7 @@ void processNetwork() {
         setRuntimeState(RuntimeState::RUNNING_OFFLINE);
         startMdns();
         scheduleRetry();
-        wifiSleepDeferredForUpdate = config.wifiSleep;
-        requestFirmwareUpdateCheck(UpdateCheckReason::BOOT);
-        logLine("boot-time NTP skipped; secure clock retained for update check");
+        logLine("boot-time NTP skipped; update check waits for the next confirmed NTP sync");
       } else {
         initialStationAttempt = false;
         beginNtpRequest();
@@ -3164,6 +3173,7 @@ void processNetwork() {
       ntpRequestActive = false;
       internetVerified = false;
       ntpFailed = true;
+      WiFi.setSleep(true);
       setRuntimeState(RuntimeState::RUNNING_OFFLINE);
       scheduleRetry();
       logLine("NTP timed out; last known D-day will be displayed");
@@ -3178,6 +3188,15 @@ void processNetwork() {
     scheduleRetry();
   }
 
+  // SNTP itself can complete just after the application-level deadline. Do
+  // not discard that valid external round trip while Wi-Fi is still present.
+  if (runtimeState == RuntimeState::RUNNING_OFFLINE && WiFi.status() == WL_CONNECTED &&
+      ntpSyncEvent && timeIsValid()) {
+    ntpSyncEvent = false;
+    finishNormalNtpSuccess();
+    return;
+  }
+
   bool periodicNtpDue = (runtimeState == RuntimeState::RUNNING_ONLINE || runtimeState == RuntimeState::WIFI_SLEEP) &&
                          config.ntpPeriodSec > 0 && timeIsValid() && config.lastSync > 0 &&
                          static_cast<uint64_t>(time(nullptr)) >= config.lastSync + config.ntpPeriodSec;
@@ -3185,6 +3204,9 @@ void processNetwork() {
 
   if (!portalActive && config.savedNetworkCount > 0) {
     if (periodicNtpDue && WiFi.status() == WL_CONNECTED) {
+      beginNtpRequest();
+      setRuntimeState(RuntimeState::TIME_SYNCING);
+    } else if (retryDue && WiFi.status() == WL_CONNECTED) {
       beginNtpRequest();
       setRuntimeState(RuntimeState::TIME_SYNCING);
     } else if (periodicNtpDue || retryDue) {
@@ -3246,6 +3268,9 @@ void processFirmwareUpdate() {
     return;
   }
   if (pendingUpdateCheckReason != UpdateCheckReason::NONE) {
+    // Always let the three-second splash finish and render the normal screen
+    // once before a synchronous HTTPS check can occupy loopTask.
+    if (bootSplashActive() || !deadlineReached(now, updateCheckNotBeforeMs)) return;
     const UpdateCheckReason reason = pendingUpdateCheckReason;
     pendingUpdateCheckReason = UpdateCheckReason::NONE;
     const bool success = checkFirmwareManifest(reason);
@@ -3254,6 +3279,7 @@ void processFirmwareUpdate() {
       ntpFailed = false;
       if (runtimeState != RuntimeState::SETUP_AP) setRuntimeState(RuntimeState::RUNNING_ONLINE);
     }
+    restoreNetworkAfterFirmwareOperation();
     if (wifiSleepDeferredForUpdate && !updatePromptVisible && !portalActive) {
       wifiSleepDeferredForUpdate = false;
       enterWifiSleep();
@@ -3268,8 +3294,9 @@ void processFirmwareUpdate() {
   if (portalActive || resetConfirmation || thermalSafeMode || temperatureSensorFault || thermalWarning ||
       wifiTestState != WifiTestState::IDLE) return;
 
-  if (WiFi.status() == WL_CONNECTED && timeIsValid()) {
+  if (WiFi.status() == WL_CONNECTED && timeIsValid() && freshNtpSinceBoot) {
     wifiSleepDeferredForUpdate = config.wifiSleep;
+    updateCheckNotBeforeMs = millis() + UPDATE_NETWORK_SETTLE_MS;
     requestFirmwareUpdateCheck(bootUpdateCheckPending ? UpdateCheckReason::BOOT : UpdateCheckReason::WEEKLY);
   } else if (runtimeState == RuntimeState::WIFI_SLEEP && config.savedNetworkCount > 0) {
     updateCheckAfterNetworkReady = true;
