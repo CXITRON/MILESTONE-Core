@@ -39,7 +39,6 @@ constexpr char PREFS_NS[] = "milestone";
 constexpr char UPDATE_MANIFEST_URL[] = "https://github.com/CXITRON/MILESTONE-Core/releases/latest/download/MILESTONE_Core.json";
 constexpr char UPDATE_RELEASE_BASE_URL[] = "https://github.com/CXITRON/MILESTONE-Core/releases/download/v";
 constexpr char UPDATE_ASSET_NAME[] = "MILESTONE_Core.bin";
-constexpr char UPDATE_GITHUB_HOST[] = "github.com";
 constexpr uint16_t CONFIG_VERSION = 6;
 constexpr uint8_t VIEW_COUNT = 7;
 constexpr uint8_t MAX_SAVED_NETWORKS = 8;
@@ -1842,8 +1841,9 @@ void cancelPortalWifiScan();
 void beginNtpRequest() {
   if (WiFi.status() != WL_CONNECTED) return;
   cancelPortalWifiScan();
-  // Favor latency and packet reliability during the short UDP exchange. The
-  // normal power-save policy is restored after success or timeout.
+  // Favor latency and packet reliability during the UDP exchange. Always-
+  // connected mode keeps the modem awake afterward; the explicit Wi-Fi-off
+  // setting is handled separately once sync/update work is complete.
   WiFi.setSleep(false);
   ntpSyncEvent = false;
   ntpFailed = false;
@@ -2226,10 +2226,13 @@ bool recordOtaStage(const char *stage) {
 void restoreNetworkAfterFirmwareOperation() {
   if (WiFi.status() != WL_CONNECTED) return;
   // During NTP/update traffic the radio is intentionally kept fully awake.
-  // Once the operation finishes, return to the normal connected STA policy.
+  // Keep it awake after the operation as well. The user-facing "Wi-Fi sleep"
+  // setting means WIFI_OFF between sync windows, not ESP modem power-save.
+  // Re-enabling modem sleep here made the normal always-connected mode behave
+  // differently from setup/AP testing and could reintroduce latency/dropouts.
   // Full WIFI_OFF sleep, when configured, is handled separately by
   // enterWifiSleep() after the update state machine has finished.
-  WiFi.setSleep(portalActive ? false : true);
+  WiFi.setSleep(false);
   startMdns();
 }
 
@@ -2276,17 +2279,18 @@ bool prepareUpdateNetworkRequest(const char *resource, String &failure) {
     failure = String(resource) + " Wi-Fi disconnected";
     return false;
   }
-  IPAddress address;
-  if (WiFi.hostByName(UPDATE_GITHUB_HOST, address) != 1) {
-    // Do not make the diagnostic DNS probe a second independent point of
-    // failure. HTTPClient performs its own resolver lookup when connecting,
-    // which may succeed even if this probe loses a transient DNS response.
-    logLine(String(resource) + " DNS probe failed; HTTPS resolver will still try");
-  } else {
-    logLine(String(resource) + " DNS " + address.toString() +
-            " heap=" + ESP.getFreeHeap() + " max=" + ESP.getMaxAllocHeap() +
-            " stack=" + uxTaskGetStackHighWaterMark(nullptr));
-  }
+  // Do not call hostByName() as a separate preflight. HTTPClient/secureClient
+  // must resolve the target anyway, so a second resolver transaction only
+  // adds another blocking/failure point and can make a weak DNS path look less
+  // reliable than it is. Log the DHCP-provided resolvers instead; the actual
+  // HTTPS result below remains the authoritative GitHub-path check.
+  logLine(String(resource) + " network ready: ip=" + WiFi.localIP().toString() +
+          " gw=" + WiFi.gatewayIP().toString() +
+          " dns0=" + WiFi.dnsIP(0).toString() +
+          " dns1=" + WiFi.dnsIP(1).toString() +
+          " rssi=" + String(WiFi.RSSI()) + " dBm" +
+          " heap=" + ESP.getFreeHeap() + " max=" + ESP.getMaxAllocHeap() +
+          " stack=" + uxTaskGetStackHighWaterMark(nullptr));
   failure = "";
   return true;
 }
@@ -3179,7 +3183,10 @@ void finishNormalNtpSuccess() {
   } else if (config.wifiSleep) {
     enterWifiSleep();
   } else {
-    WiFi.setSleep(true);
+    // Always-connected mode prioritizes network reliability. Do not silently
+    // enable modem power-save after NTP; setup/AP tests also run with the radio
+    // fully awake, so keeping STA awake removes that behavioral mismatch.
+    WiFi.setSleep(false);
   }
 }
 
@@ -3300,8 +3307,17 @@ void processNetwork() {
       internetVerified = false;
       ntpFailed = true;
       setRuntimeState(RuntimeState::RUNNING_OFFLINE);
-      scheduleRetry();
-      logLine("NTP timed out; last known D-day will be displayed");
+      // Before the first successful NTP exchange of this boot, time/DDAY sync
+      // remains the highest-priority network task. Keep the existing STA/DHCP
+      // lease and retry NTP quickly instead of waiting the normal configured
+      // offline interval. Periodic failures after a successful boot sync still
+      // respect the user's normal retry interval.
+      const bool quickNtpRetry = !freshNtpSinceBoot;
+      const uint32_t retrySeconds = quickNtpRetry ? WIFI_QUICK_RETRY_MS / 1000UL
+                                                  : (config.retryPeriodSec < 30 ? 30 : config.retryPeriodSec);
+      scheduleRetry(quickNtpRetry);
+      logLine(String("NTP timed out; retry in ") + String(retrySeconds) +
+              " sec; last known D-day will be displayed");
     }
     return;
   }
@@ -3396,6 +3412,16 @@ void processFirmwareUpdate() {
     // Always let the three-second splash finish and render the normal screen
     // once before a synchronous HTTPS check can occupy loopTask.
     if (bootSplashActive() || !deadlineReached(now, updateCheckNotBeforeMs)) return;
+
+    // A Wi-Fi/DHCP loss is a link-layer recovery problem, not a consumed
+    // GitHub attempt. processNetwork() owns reconnection; wait until the STA
+    // again has IP/gateway/DNS before spending one of the HTTPS retry slots.
+    // The same principle applies to the secure clock prerequisite.
+    if (!stationNetworkReady() || !timeIsValid() || !freshNtpSinceBoot) {
+      updateCheckNotBeforeMs = now + 1000UL;
+      return;
+    }
+
     const UpdateCheckReason reason = pendingUpdateCheckReason;
     if (updateState != UpdateState::CHECKING) setUpdateState(UpdateState::CHECKING);
     if (updateCheckAttempt < UINT8_MAX) ++updateCheckAttempt;
