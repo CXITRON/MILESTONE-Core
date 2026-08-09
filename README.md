@@ -65,14 +65,23 @@ Arduino IDE의 `Tools > Manage Libraries…`에서 다음 라이브러리를 설
 휴대폰이나 PC에서 해당 Wi-Fi에 접속합니다. “인터넷 없음” 경고는 정상입니다. 자동 설정 창이 뜨지 않으면 브라우저에서 `http://192.168.4.1`을 직접 엽니다.
 
 1. **주변 Wi-Fi 검색**을 누르고 사용할 **2.4GHz Wi-Fi**를 선택합니다.
-2. 비밀번호를 입력합니다.
-3. **Wi-Fi 시험 후 확정 저장**을 누릅니다.
-4. ESP32가 설정 Wi-Fi를 유지한 상태로 Wi-Fi와 NTP를 시험합니다.
-5. 성공해야만 새 SSID와 비밀번호가 저장되며, 약 3초 뒤 설정 Wi-Fi가 닫힙니다.
+2. 일반 가정용 Wi-Fi는 `Personal / Open`, 학교·기관의 802.1X 계정형 Wi-Fi는 `Enterprise (PEAP)`를 선택합니다. 검색 결과에서 Enterprise AP가 감지되면 자동 선택됩니다.
+3. Personal은 비밀번호를 입력하고, Enterprise는 사용자명·비밀번호와 필요 시 identity를 입력합니다.
+4. **Wi-Fi 시험 후 확정 저장**을 누릅니다.
+5. ESP32가 설정 Wi-Fi를 유지한 상태로 Wi-Fi와 NTP를 시험합니다.
+6. 성공해야만 새 네트워크 자격 증명이 저장되며, 약 3초 뒤 설정 Wi-Fi가 닫힙니다.
 
-화면 내용과 모드는 별도의 **화면·시간 설정 저장** 버튼으로 저장합니다. Wi-Fi 비밀번호는 조회 API나 OLED에 다시 표시되지 않습니다.
+화면 내용과 모드는 별도의 **화면·시간 설정 저장** 버튼으로 저장합니다. Wi-Fi 비밀번호와 Enterprise 사용자명·identity는 조회 API나 OLED에 다시 표시되지 않습니다. 같은 저장 네트워크를 다시 시험할 때 자격 증명 입력칸을 비워 두면 NVS에 저장된 값을 내부적으로 재사용합니다.
 
-연결에 성공한 Wi-Fi는 최근 성공 순으로 최대 8개까지 기억합니다. 부팅할 때 가장 최근에 성공한 네트워크를 먼저 시도하고, 실패하면 주변에서 검색되는 저장 네트워크를 신호가 강한 순서로 시도합니다. 목록이 가득 찬 상태에서 새로운 Wi-Fi를 저장하면 가장 오래 사용되지 않은 항목이 제거됩니다. 저장된 SSID를 다시 선택할 때 비밀번호 입력칸을 비워 두면 기존 비밀번호를 사용하며, 포털에서 각 항목을 개별 삭제할 수 있습니다.
+연결에 성공한 Wi-Fi는 Personal/Enterprise 구분과 함께 최근 성공 순으로 최대 8개까지 기억합니다. 부팅할 때 가장 최근에 성공한 네트워크를 먼저 시도하고, 실패하면 주변에서 검색되는 저장 네트워크를 신호가 강한 순서로 시도합니다. 목록이 가득 찬 상태에서 새로운 Wi-Fi를 저장하면 가장 오래 사용되지 않은 항목이 제거됩니다. 저장된 SSID를 같은 보안 방식으로 다시 선택하고 자격 증명 입력칸을 모두 비워 두면 기존 값을 재사용하며, 포털에서 각 항목을 개별 삭제할 수 있습니다.
+
+### Enterprise Wi-Fi 지원
+
+1.6.0은 ESP32-S3의 802.1X Enterprise 기능을 사용해 **PEAP 사용자명/비밀번호 인증**을 지원합니다. identity는 선택 사항이며 비워 두면 사용자명을 outer identity로 사용합니다. 일반적인 학교 Wi-Fi처럼 SSID 접속 단계에서 계정 ID와 비밀번호를 요구하는 환경을 대상으로 합니다.
+
+현재 설정 포털에서는 인증서 기반 EAP-TLS 및 사용자 지정 CA 인증서를 받지 않습니다. 따라서 학교에서 CA 인증서 검증이나 EAP-TLS를 강제하는 경우에는 연결할 수 없습니다. WPA3-Enterprise는 서버 인증서 검증이 필수인 구성도 있으므로 네트워크 정책에 따라 별도 인증서 지원이 필요할 수 있습니다.
+
+1.5.11 이하에서 저장한 기존 Wi-Fi는 1.6.0의 설정 스키마 7로 자동 변환됩니다. 기존 `wifi_ssidN`과 `wifi_passN` 저장 키를 그대로 사용하며, 새 Enterprise 메타데이터는 Enterprise 네트워크에만 추가합니다. 따라서 기존 Personal Wi-Fi는 저장 형식을 바꾸지 않고 그대로 유지됩니다. **표시 설정 기본값 복원** 역시 Personal/Enterprise를 포함한 저장 Wi-Fi 전체를 보존하며, **공장 초기화**만 모든 Wi-Fi 자격 증명을 삭제합니다.
 
 ## 4. 설정 초기화와 공장 초기화
 
@@ -105,7 +114,7 @@ Arduino IDE의 `Tools > Manage Libraries…`에서 다음 라이브러리를 설
 
 일곱 번째 화면은 5초마다 다음 페이지로 자동 전환하며, 다른 화면으로 나갔다가 다시 들어오면 첫 페이지부터 시작합니다. BOOT 버튼의 2초 수동 페이지 전환 기능은 안정성을 위해 제거했습니다. 시스템, 메모리, 저장공간, 네트워크, 시간·업데이트 상태와 펌웨어 버전, 64비트 가동 시간, 재부팅 원인, 칩 모델·리비전·코어 수, CPU 주파수와 온도, 힙·작업 스택, 플래시·앱·OTA 공간, SSID·RSSI·채널·IP·게이트웨이·MAC, NTP 및 업데이트 확인 정보를 확인할 수 있습니다.
 
-기존 1.5.0 설정은 스키마 6으로 자동 변환됩니다. 저장된 Wi-Fi와 기존 여섯 화면의 순환 순서는 유지되며, 기기 세부정보 화면은 순환 순서 끝에 추가됩니다. 기존 사용자의 자동 순환에는 임의로 포함하지 않지만 설정 포털에서 선택할 수 있습니다.
+기존 설정은 현재 스키마 7로 자동 변환됩니다. 1.5.x의 저장된 Personal Wi-Fi와 기존 화면·순환 설정은 유지되며, 1.6.0은 Enterprise용 보안 방식·사용자명·identity 필드만 추가합니다.
 
 ## 7. RGB 상태 LED
 
@@ -189,10 +198,10 @@ GitHub와 Release 자산 전달 호스트의 인증서 체인을 검증할 수 �
 
 ```bash
 chmod +x tools/make-release.sh
-./tools/make-release.sh 1.5.11 "Finalize update status and OTA install reliability"
+./tools/make-release.sh 1.6.0 "Add WPA2/WPA3 Enterprise PEAP Wi-Fi support"
 ```
 
-기본 설명을 사용하려면 `./tools/make-release.sh 1.5.11`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
+기본 설명을 사용하려면 `./tools/make-release.sh 1.6.0`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
 
 다음 두 파일이 `release/`에 생성됩니다.
 
@@ -206,11 +215,11 @@ release/MILESTONE_Core.json
 ### GitHub Release 게시
 
 1. 저장소의 `Releases`에서 `Draft a new release`를 선택합니다.
-2. 버전과 동일한 태그를 만듭니다. 예: `v1.5.11`
-3. Release 제목을 `MILESTONE Core v1.5.11`으로 지정합니다.
+2. 버전과 동일한 태그를 만듭니다. 예: `v1.6.0`
+3. Release 제목을 `MILESTONE Core v1.6.0`으로 지정합니다.
 4. `release/MILESTONE_Core.bin`과 `release/MILESTONE_Core.json`을 첨부합니다.
 5. Pre-release가 아닌 최신 정식 Release로 게시합니다.
-6. 이전 버전이 설치된 기기에서 1.5.11 OTA 업데이트를 검증합니다.
+6. 이전 버전이 설치된 기기에서 1.6.0 OTA 업데이트를 검증합니다.
 
 두 파일의 이름은 모든 Release에서 정확히 같아야 합니다. 초안이나 Pre-release는 `latest` 업데이트 대상으로 사용하지 않습니다.
 
@@ -234,6 +243,8 @@ release/MILESTONE_Core.json
 - 반응형 로컬 설정 포털과 captive portal
 - 슬라이더와 숫자 입력칸이 연동되는 OLED·LED 밝기 조절
 - 최근 성공 순 최대 8개 Wi-Fi 저장, 자동 대체 연결, 개별 삭제
+- WPA2/WPA3 Enterprise AP 감지 및 사용자명·비밀번호 기반 PEAP 연결
+- 1.5.x Personal Wi-Fi 저장 데이터 보존형 스키마 7 마이그레이션
 - Wi-Fi를 보존하는 표시 설정 기본값 복원
 - 선택 가능한 ESP32-S3 내부 온도 표시와 상시 과열 보호
 - 밝기·야간 밝기·번인 이동·자동 화면 끄기
@@ -249,6 +260,18 @@ release/MILESTONE_Core.json
 - 일시적 업데이트 확인 실패 10분·설치/구조적 실패 6시간 재시도와 Wi-Fi 절전 자동 복귀
 - 5페이지 기기 세부정보 화면과 설정 포털의 실시간 시스템 상태
 - 비차단 3초 부팅 로고와 우상단 NTP `T`·업데이트 `U` 상태 아이콘
+
+## v1.6.0 업데이트 안내
+
+- 펌웨어 버전을 1.6.0으로 변경하고 설정 스키마를 7로 확장
+- WPA2/WPA3 Enterprise 네트워크 검색 표시 및 PEAP 사용자명·비밀번호 인증 추가
+- Enterprise identity 선택 입력 지원, 미입력 시 사용자명을 outer identity로 사용
+- 저장 네트워크마다 Personal/Enterprise 보안 방식과 Enterprise 사용자명·identity를 함께 기억
+- 1.5.11 이하의 기존 `wifi_ssidN`·`wifi_passN` 키를 그대로 유지하고 Personal 항목에는 새 Enterprise 메타데이터 키를 만들지 않아 저장된 Wi-Fi와 비밀번호를 자동 보존
+- 표시 설정 기본값 복원 시 Enterprise 자격 증명을 포함한 저장 Wi-Fi 전체를 그대로 유지
+- Enterprise에서 Personal로 전환할 때 이전 EAP 상태를 초기화해 인증 방식이 서로 간섭하지 않도록 처리
+- Wi-Fi 연결 성공 이후의 DHCP·NTP·GitHub 업데이트 확인 상태기계는 1.5.11 동작을 그대로 유지
+- 설정 포털에서 인증서 기반 EAP-TLS/사용자 지정 CA는 아직 지원하지 않음
 
 ## v1.5.11 업데이트 안내
 
@@ -396,4 +419,4 @@ release/MILESTONE_Core.json
 - 기존 설정 스키마, 저장된 Wi-Fi, 여섯 가지 화면을 그대로 유지
 - 기기 세부정보 화면은 OTA 검증용 1.5.1에서 추가 예정
 
-정식 버전: `1.5.11`
+정식 버전: `1.6.0`

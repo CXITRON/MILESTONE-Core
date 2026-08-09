@@ -12,11 +12,21 @@
 #include <Update.h>
 #include <mbedtls/sha256.h>
 #include <esp_timer.h>
+#include <esp_err.h>
 #include <time.h>
 #include "driver/temperature_sensor.h"
 #include "esp_ota_ops.h"
 #include "esp_sntp.h"
 #include "esp_system.h"
+#if CONFIG_ESP_WIFI_ENTERPRISE_SUPPORT
+#if __has_include("esp_eap_client.h")
+#include "esp_eap_client.h"
+#define MILESTONE_HAS_MODERN_EAP 1
+#else
+#include "esp_wpa2.h"
+#define MILESTONE_HAS_MODERN_EAP 0
+#endif
+#endif
 
 #include "PortalPage.h"
 #include "UpdateCertificates.h"
@@ -32,14 +42,14 @@ SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 
 namespace Milestone {
 
-constexpr char FIRMWARE_VERSION[] = "1.5.11";
+constexpr char FIRMWARE_VERSION[] = "1.6.0";
 constexpr char AP_SSID[] = "MILESTONE-D1-SETUP";
 constexpr char HOSTNAME[] = "milestone-d1";
 constexpr char PREFS_NS[] = "milestone";
 constexpr char UPDATE_MANIFEST_URL[] = "https://github.com/CXITRON/MILESTONE-Core/releases/latest/download/MILESTONE_Core.json";
 constexpr char UPDATE_RELEASE_BASE_URL[] = "https://github.com/CXITRON/MILESTONE-Core/releases/download/v";
 constexpr char UPDATE_ASSET_NAME[] = "MILESTONE_Core.bin";
-constexpr uint16_t CONFIG_VERSION = 6;
+constexpr uint16_t CONFIG_VERSION = 7;
 constexpr uint8_t VIEW_COUNT = 7;
 constexpr uint8_t MAX_SAVED_NETWORKS = 8;
 constexpr uint8_t NO_WIFI_INDEX = 0xFF;
@@ -157,6 +167,11 @@ enum class WifiTestState : uint8_t {
   FAILED
 };
 
+enum class WifiSecurityType : uint8_t {
+  PERSONAL = 0,
+  ENTERPRISE_PEAP = 1
+};
+
 enum class UpdateState : uint8_t {
   IDLE,
   CHECKING,
@@ -205,6 +220,9 @@ enum class LedState : uint8_t {
 struct SavedNetwork {
   String ssid;
   String password;
+  WifiSecurityType security = WifiSecurityType::PERSONAL;
+  String username;
+  String identity;
 };
 
 struct Config {
@@ -261,6 +279,9 @@ WifiTestState wifiTestState = WifiTestState::IDLE;
 String wifiTestError;
 String pendingSsid;
 String pendingPass;
+WifiSecurityType pendingWifiSecurity = WifiSecurityType::PERSONAL;
+String pendingWifiUsername;
+String pendingWifiIdentity;
 String apPassword;
 String sessionToken;
 View currentView = View::DDAY_TIME;
@@ -522,6 +543,40 @@ String savedWifiPassKey(uint8_t index) {
   return String("wifi_pass") + String(index);
 }
 
+String savedWifiSecurityKey(uint8_t index) {
+  return String("wifi_sec") + String(index);
+}
+
+String savedWifiUsernameKey(uint8_t index) {
+  return String("wifi_user") + String(index);
+}
+
+String savedWifiIdentityKey(uint8_t index) {
+  return String("wifi_id") + String(index);
+}
+
+const char *wifiSecurityName(WifiSecurityType security) {
+  switch (security) {
+    case WifiSecurityType::ENTERPRISE_PEAP: return "enterprise_peap";
+    case WifiSecurityType::PERSONAL:
+    default: return "personal";
+  }
+}
+
+bool enterpriseWifiSupported() {
+#if CONFIG_ESP_WIFI_ENTERPRISE_SUPPORT
+  return true;
+#else
+  return false;
+#endif
+}
+
+bool wifiAuthIsEnterprise(wifi_auth_mode_t auth) {
+  return auth == WIFI_AUTH_ENTERPRISE || auth == WIFI_AUTH_WPA2_ENTERPRISE ||
+         auth == WIFI_AUTH_WPA3_ENTERPRISE || auth == WIFI_AUTH_WPA2_WPA3_ENTERPRISE ||
+         auth == WIFI_AUTH_WPA_ENTERPRISE || auth == WIFI_AUTH_WPA3_ENT_192;
+}
+
 int findSavedNetwork(const String &ssid) {
   for (uint8_t i = 0; i < config.savedNetworkCount; ++i) {
     if (config.savedNetworks[i].ssid == ssid) return i;
@@ -543,12 +598,31 @@ bool saveWifiNetworks() {
   for (uint8_t i = 0; i < MAX_SAVED_NETWORKS; ++i) {
     const String ssidKey = savedWifiSsidKey(i);
     const String passKey = savedWifiPassKey(i);
+    const String securityKey = savedWifiSecurityKey(i);
+    const String usernameKey = savedWifiUsernameKey(i);
+    const String identityKey = savedWifiIdentityKey(i);
     if (i < config.savedNetworkCount) {
       if (!putStringVerified(ssidKey.c_str(), config.savedNetworks[i].ssid)) success = false;
       if (!putStringVerified(passKey.c_str(), config.savedNetworks[i].password)) success = false;
+      if (config.savedNetworks[i].security == WifiSecurityType::ENTERPRISE_PEAP) {
+        const uint8_t security = static_cast<uint8_t>(WifiSecurityType::ENTERPRISE_PEAP);
+        if (prefs.putUChar(securityKey.c_str(), security) != sizeof(uint8_t) ||
+            prefs.getUChar(securityKey.c_str(), 0xFF) != security) success = false;
+        if (!putStringVerified(usernameKey.c_str(), config.savedNetworks[i].username)) success = false;
+        if (!putStringVerified(identityKey.c_str(), config.savedNetworks[i].identity)) success = false;
+      } else {
+        // Personal entries retain the exact v1.5.x storage shape. Enterprise
+        // metadata exists only when needed, minimizing migration writes/NVS use.
+        if (!removePreferenceVerified(securityKey.c_str())) success = false;
+        if (!removePreferenceVerified(usernameKey.c_str())) success = false;
+        if (!removePreferenceVerified(identityKey.c_str())) success = false;
+      }
     } else {
       if (!removePreferenceVerified(ssidKey.c_str())) success = false;
       if (!removePreferenceVerified(passKey.c_str())) success = false;
+      if (!removePreferenceVerified(securityKey.c_str())) success = false;
+      if (!removePreferenceVerified(usernameKey.c_str())) success = false;
+      if (!removePreferenceVerified(identityKey.c_str())) success = false;
     }
   }
   // Commit the count last. If power is lost during the preceding writes, the
@@ -577,13 +651,17 @@ bool saveWifiOrRestore(const Config &previous, uint8_t previousActiveWifiIndex, 
   return false;
 }
 
-bool upsertSavedNetwork(const String &ssid, const String &password) {
+bool upsertSavedNetwork(const String &ssid, const String &password, WifiSecurityType security,
+                        const String &username, const String &identity) {
   const Config previous = config;
   const uint8_t previousActiveWifiIndex = activeWifiIndex;
   int existing = findSavedNetwork(ssid);
   SavedNetwork network;
   network.ssid = ssid;
   network.password = password;
+  network.security = security;
+  network.username = username;
+  network.identity = identity;
   if (existing >= 0) removeSavedNetworkAt(static_cast<uint8_t>(existing));
   uint8_t newCount = config.savedNetworkCount < MAX_SAVED_NETWORKS
                        ? config.savedNetworkCount + 1
@@ -685,6 +763,7 @@ bool loadConfig() {
   const bool migrateToV4 = version < 4;
   const bool migrateToV5 = version < 5;
   const bool migrateToV6 = version < 6;
+  const bool migrateToV7 = version < 7;
   config.version = CONFIG_VERSION;
   if (migrateToV4) {
     String legacySsid = prefs.getString("wifi_ssid", "");
@@ -700,9 +779,30 @@ bool loadConfig() {
     for (uint8_t i = 0; i < storedCount; ++i) {
       String ssid = prefs.getString(savedWifiSsidKey(i).c_str(), "");
       String password = prefs.getString(savedWifiPassKey(i).c_str(), "");
-      if (ssid.length() == 0 || ssid.length() > 32 || password.length() > 63) continue;
-      config.savedNetworks[config.savedNetworkCount].ssid = ssid;
-      config.savedNetworks[config.savedNetworkCount].password = password;
+      WifiSecurityType security = WifiSecurityType::PERSONAL;
+      String username;
+      String identity;
+      if (!migrateToV7) {
+        const uint8_t storedSecurity = prefs.getUChar(savedWifiSecurityKey(i).c_str(), 0);
+        if (storedSecurity == static_cast<uint8_t>(WifiSecurityType::ENTERPRISE_PEAP)) {
+          security = WifiSecurityType::ENTERPRISE_PEAP;
+          username = prefs.getString(savedWifiUsernameKey(i).c_str(), "");
+          identity = prefs.getString(savedWifiIdentityKey(i).c_str(), "");
+        }
+      }
+      if (ssid.length() == 0 || ssid.length() > 32) continue;
+      if (security == WifiSecurityType::PERSONAL) {
+        if (password.length() > 63) continue;
+      } else {
+        if (password.length() == 0 || password.length() > 64 || username.length() == 0 ||
+            username.length() > 64 || identity.length() > 64) continue;
+      }
+      SavedNetwork &network = config.savedNetworks[config.savedNetworkCount];
+      network.ssid = ssid;
+      network.password = password;
+      network.security = security;
+      network.username = username;
+      network.identity = identity;
       ++config.savedNetworkCount;
     }
   }
@@ -777,7 +877,7 @@ bool loadConfig() {
   config.lastDday = prefs.getInt("last_dday", 0);
   int y, m, d;
   if (!parseDate(config.target, y, m, d)) config.target = "2026-11-19";
-  if (migrateToV3 || migrateToV4 || migrateToV5 || migrateToV6) {
+  if (migrateToV3 || migrateToV4 || migrateToV5 || migrateToV6 || migrateToV7) {
     if (saveConfigAll()) {
       logLine(String("configuration migrated from schema ") + String(version) + " to " + String(CONFIG_VERSION));
     } else {
@@ -1894,7 +1994,21 @@ void cancelPortalWifiScan() {
   portalWifiScanDeadlineMs = 0;
 }
 
-void beginStationConnection(const String &ssid, const String &password, bool preserveAp) {
+void resetEnterpriseStationAuth() {
+#if CONFIG_ESP_WIFI_ENTERPRISE_SUPPORT
+#if MILESTONE_HAS_MODERN_EAP
+  const esp_err_t result = esp_wifi_sta_enterprise_disable();
+#else
+  const esp_err_t result = esp_wifi_sta_wpa2_ent_disable();
+#endif
+  if (result != ESP_OK && result != ESP_ERR_INVALID_STATE) {
+    logLine(String("Enterprise Wi-Fi state reset failed: ") + esp_err_to_name(result));
+  }
+#endif
+}
+
+void beginStationConnection(const String &ssid, const String &password, WifiSecurityType security,
+                            const String &username, const String &identity, bool preserveAp) {
   cancelPortalWifiScan();
   stopMdns();
   internetVerified = false;
@@ -1908,11 +2022,24 @@ void beginStationConnection(const String &ssid, const String &password, bool pre
   delay(WIFI_DRIVER_SETTLE_MS);
   WiFi.disconnect(false, false);
   delay(50);
-  WiFi.begin(ssid.c_str(), password.c_str());
+  resetEnterpriseStationAuth();
+  wl_status_t beginResult = WL_CONNECT_FAILED;
+  if (security == WifiSecurityType::ENTERPRISE_PEAP) {
+#if CONFIG_ESP_WIFI_ENTERPRISE_SUPPORT
+    const String effectiveIdentity = identity.length() ? identity : username;
+    beginResult = WiFi.begin(ssid.c_str(), WPA2_AUTH_PEAP, effectiveIdentity.c_str(), username.c_str(),
+                             password.c_str(), nullptr, nullptr, nullptr, -1, 0, nullptr, true);
+    logLine(String("Enterprise Wi-Fi PEAP connection started: ") + ssid);
+#else
+    logLine("Enterprise Wi-Fi requested but this ESP32 build has Enterprise support disabled");
+#endif
+  } else {
+    beginResult = WiFi.begin(ssid.c_str(), password.c_str());
+  }
   wifiNetworkReadySinceMs = 0;
-  wifiDeadlineMs = millis() + WIFI_CONNECT_TIMEOUT_MS;
+  wifiDeadlineMs = beginResult == WL_CONNECT_FAILED ? millis() : millis() + WIFI_CONNECT_TIMEOUT_MS;
   if (wifiTestState == WifiTestState::IDLE) setRuntimeState(RuntimeState::CONNECTING);
-  logLine("Wi-Fi connection started");
+  logLine(String("Wi-Fi connection started: security=") + wifiSecurityName(security));
 }
 
 void beginSavedWifiConnection(uint8_t index, bool preserveAp) {
@@ -1920,6 +2047,9 @@ void beginSavedWifiConnection(uint8_t index, bool preserveAp) {
   activeWifiIndex = index;
   beginStationConnection(config.savedNetworks[index].ssid,
                          config.savedNetworks[index].password,
+                         config.savedNetworks[index].security,
+                         config.savedNetworks[index].username,
+                         config.savedNetworks[index].identity,
                          preserveAp);
 }
 
@@ -2061,6 +2191,9 @@ void stopPortal() {
   wifiTestError = "";
   pendingSsid = "";
   pendingPass = "";
+  pendingWifiSecurity = WifiSecurityType::PERSONAL;
+  pendingWifiUsername = "";
+  pendingWifiIdentity = "";
   if (WiFi.status() == WL_CONNECTED) {
     WiFi.mode(WIFI_STA);
     startMdns();
@@ -2731,13 +2864,25 @@ void handleStatus() {
 void handleGetConfig() {
   if (!requireSetupApRequest()) return;
   String json = "{";
-  json.reserve(1024);
+  json.reserve(1400);
   String preferredSsid = config.savedNetworkCount > 0 ? config.savedNetworks[0].ssid : "";
   json += "\"wifi_ssid\":\"" + jsonEscape(preferredSsid) + "\",";
+  if (config.savedNetworkCount > 0) {
+    const SavedNetwork &preferred = config.savedNetworks[0];
+    json += "\"wifi_security\":\"" + String(wifiSecurityName(preferred.security)) + "\",";
+  } else {
+    json += "\"wifi_security\":\"personal\",";
+  }
+  // Do not return saved Enterprise credentials to the browser. Empty fields
+  // reuse the stored values when the same saved network is tested again.
+  json += "\"wifi_username\":\"\",\"wifi_identity\":\"\",";
+  json += "\"enterprise_supported\":" + String(enterpriseWifiSupported() ? "true" : "false") + ",";
   json += "\"saved_networks\":[";
   for (uint8_t i = 0; i < config.savedNetworkCount; ++i) {
     if (i) json += ',';
-    json += "{\"ssid\":\"" + jsonEscape(config.savedNetworks[i].ssid) + "\",\"preferred\":";
+    json += "{\"ssid\":\"" + jsonEscape(config.savedNetworks[i].ssid) + "\",\"security\":\"";
+    json += wifiSecurityName(config.savedNetworks[i].security);
+    json += "\",\"preferred\":";
     json += i == 0 ? "true}" : "false}";
   }
   json += "],";
@@ -2817,8 +2962,10 @@ void handleWifiScan() {
     if (ssid.length() == 0) continue;
     if (!first) json += ',';
     first = false;
+    const wifi_auth_mode_t auth = static_cast<wifi_auth_mode_t>(WiFi.encryptionType(i));
     json += "{\"ssid\":\"" + jsonEscape(ssid) + "\",\"rssi\":" + WiFi.RSSI(i);
-    json += ",\"open\":" + String(WiFi.encryptionType(i) == WIFI_AUTH_OPEN ? "true" : "false") + "}";
+    json += ",\"open\":" + String(auth == WIFI_AUTH_OPEN ? "true" : "false");
+    json += ",\"enterprise\":" + String(wifiAuthIsEnterprise(auth) ? "true" : "false") + "}";
   }
   json += "]}";
   WiFi.scanDelete();
@@ -2958,17 +3105,59 @@ void handleWifiTest() {
   if (!authorizePortalRequest()) return;
   String ssid = server.arg("ssid");
   String password = server.arg("pass");
+  String securityText = server.arg("security");
+  String username = server.arg("username");
+  String identity = server.arg("identity");
+  const WifiSecurityType security = securityText == "enterprise_peap"
+                                      ? WifiSecurityType::ENTERPRISE_PEAP
+                                      : WifiSecurityType::PERSONAL;
   if (ssid.length() == 0 || ssid.length() > 32) return sendJson(400, "{\"error\":\"SSID를 확인하세요.\"}");
-  if (password.length() > 63) return sendJson(400, "{\"error\":\"Wi-Fi 비밀번호가 너무 깁니다.\"}");
+  if (securityText != "personal" && securityText != "enterprise_peap") {
+    return sendJson(400, "{\"error\":\"Wi-Fi 보안 방식이 잘못되었습니다.\"}");
+  }
   int savedIndex = findSavedNetwork(ssid);
-  if (password.length() == 0 && savedIndex >= 0) {
-    password = config.savedNetworks[savedIndex].password;
+  if (savedIndex >= 0 && config.savedNetworks[savedIndex].security == security) {
+    if (security == WifiSecurityType::ENTERPRISE_PEAP) {
+      const bool reuseStoredCredentials = password.length() == 0 && username.length() == 0 && identity.length() == 0;
+      if (reuseStoredCredentials) {
+        password = config.savedNetworks[savedIndex].password;
+        username = config.savedNetworks[savedIndex].username;
+        identity = config.savedNetworks[savedIndex].identity;
+      } else {
+        if (password.length() == 0) password = config.savedNetworks[savedIndex].password;
+        if (username.length() == 0) username = config.savedNetworks[savedIndex].username;
+      }
+    } else if (password.length() == 0) {
+      password = config.savedNetworks[savedIndex].password;
+    }
+  }
+  if (security == WifiSecurityType::PERSONAL) {
+    if (password.length() > 63) return sendJson(400, "{\"error\":\"Wi-Fi 비밀번호가 너무 깁니다.\"}");
+    username = "";
+    identity = "";
+  } else {
+    if (!enterpriseWifiSupported()) {
+      return sendJson(501, "{\"error\":\"이 ESP32 빌드에서는 Enterprise Wi-Fi를 지원하지 않습니다.\"}");
+    }
+    if (username.length() == 0 || username.length() > 64) {
+      return sendJson(400, "{\"error\":\"Enterprise 사용자명은 1~64자여야 합니다.\"}");
+    }
+    if (password.length() == 0 || password.length() > 64) {
+      return sendJson(400, "{\"error\":\"Enterprise 비밀번호는 1~64자여야 합니다.\"}");
+    }
+    if (identity.length() > 64) {
+      return sendJson(400, "{\"error\":\"Enterprise identity는 64자 이하여야 합니다.\"}");
+    }
   }
   pendingSsid = ssid;
   pendingPass = password;
+  pendingWifiSecurity = security;
+  pendingWifiUsername = username;
+  pendingWifiIdentity = identity;
   wifiTestError = "";
   wifiTestState = WifiTestState::CONNECTING;
-  beginStationConnection(pendingSsid, pendingPass, true);
+  beginStationConnection(pendingSsid, pendingPass, pendingWifiSecurity,
+                         pendingWifiUsername, pendingWifiIdentity, true);
   sendJson(202, "{\"ok\":true,\"state\":\"connecting\"}");
 }
 
@@ -3152,8 +3341,7 @@ void registerPortalRoutes() {
 void restoreConfiguredWifiAfterFailedTest() {
   if (config.savedNetworkCount == 0) return;
   WiFi.disconnect(false, false);
-  activeWifiIndex = 0;
-  WiFi.begin(config.savedNetworks[0].ssid.c_str(), config.savedNetworks[0].password.c_str());
+  beginSavedWifiConnection(0, true);
   logLine("restoring the previously saved Wi-Fi");
 }
 
@@ -3161,7 +3349,8 @@ void failWifiTest(const String &reason);
 
 void finishWifiTestSuccess() {
   const Config previous = config;
-  if (!upsertSavedNetwork(pendingSsid, pendingPass) || !saveConfigAll()) {
+  if (!upsertSavedNetwork(pendingSsid, pendingPass, pendingWifiSecurity,
+                          pendingWifiUsername, pendingWifiIdentity) || !saveConfigAll()) {
     config = previous;
     if (!saveConfigAll()) logLine("tested Wi-Fi save rollback could not be persisted");
     failWifiTest("Wi-Fi 확인은 성공했지만 설정 저장에 실패했습니다.");
@@ -3169,6 +3358,9 @@ void finishWifiTestSuccess() {
   }
   pendingSsid = "";
   pendingPass = "";
+  pendingWifiSecurity = WifiSecurityType::PERSONAL;
+  pendingWifiUsername = "";
+  pendingWifiIdentity = "";
   wifiTestError = "";
   wifiTestState = WifiTestState::SUCCESS;
   markNtpSuccess();
@@ -3186,6 +3378,9 @@ void failWifiTest(const String &reason) {
   wifiTestError = reason;
   pendingSsid = "";
   pendingPass = "";
+  pendingWifiSecurity = WifiSecurityType::PERSONAL;
+  pendingWifiUsername = "";
+  pendingWifiIdentity = "";
   setRuntimeState(RuntimeState::SETUP_AP);
   restoreConfiguredWifiAfterFailedTest();
   logLine(String("Wi-Fi test failed: ") + reason);
@@ -3279,7 +3474,7 @@ void processNetwork() {
       beginNtpRequest();
       setRuntimeState(RuntimeState::TIME_SYNCING);
     } else if (deadlineReached(now, wifiDeadlineMs)) {
-      failWifiTest("Wi-Fi 연결 시간 초과. SSID와 비밀번호를 확인하세요.");
+      failWifiTest("Wi-Fi 연결 시간 초과. SSID와 Wi-Fi 자격 증명을 확인하세요.");
     }
     return;
   }
@@ -3553,6 +3748,9 @@ void enterThermalSafeMode(bool sensorFault = false) {
   wifiTestError = "";
   pendingSsid = "";
   pendingPass = "";
+  pendingWifiSecurity = WifiSecurityType::PERSONAL;
+  pendingWifiUsername = "";
+  pendingWifiIdentity = "";
   savedWifiScanActive = false;
   portalWifiScanActive = false;
   portalWifiScanDeadlineMs = 0;
