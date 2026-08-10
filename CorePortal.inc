@@ -6,7 +6,7 @@ void handleStatus() {
   else wifiLabel = "disconnected";
   String ip = portalActive ? WiFi.softAPIP().toString() : (WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString() : "");
   String json = "{";
-  json.reserve(768);
+  json.reserve(1024);
   json += "\"firmware\":\"" + String(FIRMWARE_VERSION) + "\",";
   json += "\"state\":\"" + String(runtimeStateName(runtimeState)) + "\",";
   json += "\"wifi\":\"" + jsonEscape(wifiLabel) + "\",";
@@ -43,6 +43,11 @@ void handleStatus() {
   json += "\"update_progress\":" + String(updateProgress) + ",";
   json += "\"update_error\":\"" + jsonEscape(updateError) + "\",";
   json += "\"last_ota_result\":\"" + jsonEscape(lastOtaResult) + "\",";
+  json += "\"rollback_armed\":" + String(otaRollbackArmed ? "true" : "false") + ",";
+  json += "\"rollback_previous\":\"" + jsonEscape(otaRollbackPreviousVersion) + "\",";
+  json += "\"rollback_attempt\":" + String(otaRollbackBootAttempts) + ",";
+  json += "\"rollback_last\":\"" + jsonEscape(otaRollbackLastAction) + "\",";
+  json += "\"rollback_reason\":\"" + jsonEscape(otaRollbackLastReason) + "\",";
   json += "\"last_update_check\":\"" + jsonEscape(formatEpoch(lastUpdateCheckEpoch)) + "\"}";
   sendJson(200, json);
 }

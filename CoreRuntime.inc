@@ -217,16 +217,7 @@ void processNetwork() {
 void processFirmwareUpdate() {
   const uint32_t now = millis();
 
-  if (otaBootConfirmationPending && elapsed(now, otaBootConfirmationStartedMs, OTA_BOOT_CONFIRM_MS)) {
-    const esp_err_t result = esp_ota_mark_app_valid_cancel_rollback();
-    if (result == ESP_OK) logLine("OTA application marked valid");
-    else logLine(String("OTA rollback validation not active: ") + String(static_cast<int>(result)));
-    otaBootConfirmationPending = false;
-    lastOtaResult = "installed";
-    if (!putStringVerified("ota_result", lastOtaResult)) logLine("OTA confirmation result save failed");
-    if (!clearOtaAttemptRecord()) logLine("OTA confirmation record clear failed");
-    logLine(String("OTA boot confirmed after stability hold: ") + FIRMWARE_VERSION);
-  }
+  processRollbackConfirmation();
 
   if (updateState == UpdateState::CURRENT && updateCurrentVisibleMs != 0 &&
       elapsed(now, updateCurrentVisibleMs, UPDATE_CURRENT_HOLD_MS)) {
@@ -686,19 +677,15 @@ void setupFirmware() {
   lastOtaResult = prefsReady ? prefs.getString("ota_result", "") : "";
   const String previousOtaStage = prefsReady ? prefs.getString("ota_stage", "") : "";
   const String previousOtaTarget = prefsReady ? prefs.getString("ota_target", "") : "";
-  if (previousOtaStage.length()) {
-    if (previousOtaStage == "rebooting" && previousOtaTarget == FIRMWARE_VERSION) {
-      lastOtaResult = "validating";
-      if (!putStringVerified("ota_result", lastOtaResult)) logLine("OTA validation state save failed");
-      otaBootConfirmationPending = true;
-      otaBootConfirmationStartedMs = millis();
-      logLine(String("OTA boot awaiting stability confirmation: ") + FIRMWARE_VERSION);
-    } else {
+  initializeRollbackProtection(previousOtaStage, previousOtaTarget);
+  if (previousOtaStage.length() && !otaBootConfirmationPending) {
+    if (!(previousOtaStage == "rebooting" && previousOtaTarget == FIRMWARE_VERSION)) {
       lastOtaResult = String("interrupted-") + previousOtaStage;
       logLine(String("previous OTA interrupted at ") + previousOtaStage +
               " target=" + previousOtaTarget + " reset=" + resetReasonName(esp_reset_reason()));
       if (!putStringVerified("ota_result", lastOtaResult)) logLine("interrupted OTA result save failed");
       if (!clearOtaAttemptRecord()) logLine("interrupted OTA record clear failed");
+      if (!clearRollbackActiveRecord()) logLine("interrupted rollback record clear failed");
     }
   }
   bool provisioned = loadConfig() && config.savedNetworkCount > 0;

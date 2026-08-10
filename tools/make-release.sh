@@ -3,7 +3,7 @@ set -euo pipefail
 
 if (( $# < 1 || $# > 2 )); then
   echo "사용법: $0 VERSION [NOTES]" >&2
-  echo "예: $0 1.7.0 'Mechanical source layout refactor'" >&2
+  echo "예: $0 1.8.0 'Add safe OTA rollback and boot verification'" >&2
   exit 2
 fi
 
@@ -16,7 +16,7 @@ project_dir=$(cd -- "$script_dir/.." && pwd)
 release_dir="$project_dir/release"
 
 if [[ ! $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "오류: VERSION은 1.7.0과 같은 형식이어야 합니다." >&2
+  echo "오류: VERSION은 1.8.0과 같은 형식이어야 합니다." >&2
   exit 2
 fi
 

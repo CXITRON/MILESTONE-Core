@@ -156,6 +156,7 @@ void failFirmwareUpdate(const String &reason) {
   lastOtaResult = "failed";
   if (!putStringVerified("ota_result", lastOtaResult)) logLine("OTA failure result save failed");
   if (!clearOtaAttemptRecord()) logLine("OTA attempt record clear failed");
+  if (!clearRollbackActiveRecord()) logLine("OTA rollback record clear failed");
   restoreNetworkAfterFirmwareOperation();
   setUpdateState(UpdateState::ERROR_STATE);
   logLine(String("firmware update failed: ") + reason);
@@ -416,6 +417,10 @@ bool installFirmwareUpdate() {
   WiFi.setSleep(false);
   updatePromptVisible = false;
   updateDownloadedBytes = 0;
+  if (!prepareRollbackRecord(latestFirmwareVersion)) {
+    deferFirmwareInstall("rollback source preparation failed");
+    return false;
+  }
   lastOtaResult = "installing";
   if (!putStringVerified("ota_result", lastOtaResult) ||
       !putStringVerified("ota_target", latestFirmwareVersion) ||
@@ -544,9 +549,11 @@ bool installFirmwareUpdate() {
   }
 
   lastOtaResult = "installed";
-  if (!putStringVerified("ota_result", lastOtaResult) || !recordOtaStage("rebooting")) {
+  if (!putStringVerified("ota_result", lastOtaResult) ||
+      !recordOtaStage("rebooting") || !armRollbackRecord()) {
     const esp_err_t rollbackResult = esp_ota_set_boot_partition(esp_ota_get_running_partition());
-    failFirmwareUpdate(rollbackResult == ESP_OK ? "OTA reboot state save failed" :
+    clearRollbackActiveRecord();
+    failFirmwareUpdate(rollbackResult == ESP_OK ? "OTA reboot/rollback state save failed" :
                                                 "OTA reboot state and boot rollback failed");
     return false;
   }

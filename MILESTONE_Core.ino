@@ -16,6 +16,8 @@
 #include <time.h>
 #include "driver/temperature_sensor.h"
 #include "esp_ota_ops.h"
+#include "esp_partition.h"
+#include "esp_app_desc.h"
 #include "esp_sntp.h"
 #include "esp_system.h"
 #if CONFIG_ESP_WIFI_ENTERPRISE_SUPPORT
@@ -42,7 +44,7 @@ SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 
 namespace Milestone {
 
-constexpr char FIRMWARE_VERSION[] = "1.7.0";
+constexpr char FIRMWARE_VERSION[] = "1.8.0";
 constexpr char AP_SSID[] = "MILESTONE-D1-SETUP";
 constexpr char HOSTNAME[] = "milestone-d1";
 constexpr char PREFS_NS[] = "milestone";
@@ -333,6 +335,13 @@ bool updateCheckIndicatorRendered = false;
 bool wifiSleepDeferredForUpdate = false;
 bool otaBootConfirmationPending = false;
 uint32_t otaBootConfirmationStartedMs = 0;
+bool otaRollbackArmed = false;
+uint8_t otaRollbackBootAttempts = 0;
+String otaRollbackPreviousLabel;
+String otaRollbackPreviousVersion;
+String otaRollbackTargetVersion;
+String otaRollbackLastAction;
+String otaRollbackLastReason;
 
 // Keep the OTA transfer buffer out of loopTask's limited stack. TLS, HTTPClient,
 // SHA-256 and String locals already consume a substantial part of that stack.
@@ -537,6 +546,7 @@ void setRuntimeState(RuntimeState next) {
 }
 
 #include "CoreConfig.inc"
+#include "CoreRollback.inc"
 #include "CoreDisplay.inc"
 #include "CoreNetwork.inc"
 #include "CoreUpdate.inc"
