@@ -545,6 +545,11 @@ void setRuntimeState(RuntimeState next) {
   logLine(String("state -> ") + runtimeStateName(next));
 }
 
+// CoreRollback.inc needs this helper before its implementation appears in
+// CoreDisplay.inc. Arduino's automatic prototype generation does not cross
+// this mechanically split .inc boundary reliably, so declare it explicitly.
+const char *resetReasonName(esp_reset_reason_t reason);
+
 #include "CoreConfig.inc"
 #include "CoreRollback.inc"
 #include "CoreDisplay.inc"
