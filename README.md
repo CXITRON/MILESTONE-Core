@@ -44,6 +44,8 @@ Arduino IDE의 `Tools > Manage Libraries…`에서 다음 라이브러리를 설
 6. 출력 끝에 `Hard resetting via RTS pin...`이 나타나면 업로드 완료입니다. 멈춘 것이 아닙니다.
 7. OLED가 바뀌지 않으면 보드의 `RESET` 버튼을 한 번 눌렀다 놓습니다.
 
+1.7.0부터 `MILESTONE_Core.ino`는 공통 선언과 Arduino 진입점만 유지하고, 구현부를 같은 translation unit에 포함되는 `CoreConfig.inc`, `CoreDisplay.inc`, `CoreNetwork.inc`, `CoreUpdate.inc`, `CorePortal.inc`, `CoreRuntime.inc`로 기계적으로 분리합니다. Arduino IDE에서는 이전과 동일하게 `MILESTONE_Core.ino`만 열면 됩니다.
+
 1.3.1에서 1.5.0으로 넘어갈 때는 파티션 테이블도 OTA용으로 바뀌어야 하므로 **Arduino IDE의 일반 업로드**를 사용해야 합니다. 앱 BIN 하나만 `0x10000` 주소에 기록하는 방식으로 최초 설치하지 마십시오. 1.5.0이 정상 설치된 뒤부터 Release의 `MILESTONE_Core.bin`만으로 인터넷 업데이트할 수 있습니다.
 
 업로드가 포트 대기 상태에서 실패할 때만 다음 순서로 수동 다운로드 모드에 진입합니다.
@@ -77,11 +79,11 @@ Arduino IDE의 `Tools > Manage Libraries…`에서 다음 라이브러리를 설
 
 ### Enterprise Wi-Fi 지원
 
-1.6.1은 ESP32-S3의 802.1X Enterprise 기능을 사용해 **WPA2-Enterprise PEAP 사용자명/비밀번호 인증**을 지원합니다. identity는 선택 사항이며 비워 두면 사용자명을 outer identity로 사용합니다. 일반적인 학교 Wi-Fi처럼 SSID 접속 단계에서 계정 ID와 비밀번호를 요구하는 환경을 대상으로 합니다.
+현재 펌웨어는 ESP32-S3의 802.1X Enterprise 기능을 사용해 **WPA2-Enterprise PEAP 사용자명/비밀번호 인증**을 지원합니다. identity는 선택 사항이며 비워 두면 사용자명을 outer identity로 사용합니다. 일반적인 학교 Wi-Fi처럼 SSID 접속 단계에서 계정 ID와 비밀번호를 요구하는 환경을 대상으로 합니다.
 
 현재 설정 포털에서는 인증서 기반 EAP-TLS 및 사용자 지정 CA 인증서를 받지 않습니다. 따라서 학교에서 CA 인증서 검증이나 EAP-TLS를 강제하는 경우에는 연결할 수 없습니다. WPA3-Enterprise는 현재 정식 지원 범위에서 제외하며, 스캔에서 감지되면 CA 인증 지원이 필요하다는 안내를 표시합니다.
 
-1.6.0 이하에서 저장한 기존 Wi-Fi와 일반 설정은 1.6.1의 설정 스키마 8로 자동 인식됩니다. 기존 `wifi_ssidN`과 `wifi_passN` 영역은 Wi-Fi Bank A로 그대로 유지하고, Wi-Fi 목록을 실제로 변경할 때만 비활성 Bank에 새 목록을 완전히 기록·검증한 뒤 활성 Bank를 전환합니다. 따라서 기존 Personal/Enterprise Wi-Fi는 다시 입력할 필요가 없습니다. **표시 설정 기본값 복원** 역시 Personal/Enterprise를 포함한 저장 Wi-Fi 전체를 보존하며, **공장 초기화**만 모든 Wi-Fi 자격 증명을 삭제합니다.
+1.6.0 이하에서 저장한 기존 Wi-Fi와 일반 설정은 현재 설정 스키마 8로 자동 인식됩니다. 기존 `wifi_ssidN`과 `wifi_passN` 영역은 Wi-Fi Bank A로 그대로 유지하고, Wi-Fi 목록을 실제로 변경할 때만 비활성 Bank에 새 목록을 완전히 기록·검증한 뒤 활성 Bank를 전환합니다. 따라서 기존 Personal/Enterprise Wi-Fi는 다시 입력할 필요가 없습니다. **표시 설정 기본값 복원** 역시 Personal/Enterprise를 포함한 저장 Wi-Fi 전체를 보존하며, **공장 초기화**만 모든 Wi-Fi 자격 증명을 삭제합니다.
 
 ## 4. 설정 초기화와 공장 초기화
 
@@ -198,10 +200,10 @@ GitHub와 Release 자산 전달 호스트의 인증서 체인을 검증할 수 �
 
 ```bash
 chmod +x tools/make-release.sh
-./tools/make-release.sh 1.6.1 "Harden Wi-Fi storage and Enterprise compatibility"
+./tools/make-release.sh 1.7.0 "Mechanical source layout refactor"
 ```
 
-기본 설명을 사용하려면 `./tools/make-release.sh 1.6.1`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
+기본 설명을 사용하려면 `./tools/make-release.sh 1.7.0`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
 
 다음 두 파일이 `release/`에 생성됩니다.
 
@@ -215,11 +217,11 @@ release/MILESTONE_Core.json
 ### GitHub Release 게시
 
 1. 저장소의 `Releases`에서 `Draft a new release`를 선택합니다.
-2. 버전과 동일한 태그를 만듭니다. 예: `v1.6.1`
-3. Release 제목을 `MILESTONE Core v1.6.1`으로 지정합니다.
+2. 버전과 동일한 태그를 만듭니다. 예: `v1.7.0`
+3. Release 제목을 `MILESTONE Core v1.7.0`으로 지정합니다.
 4. `release/MILESTONE_Core.bin`과 `release/MILESTONE_Core.json`을 첨부합니다.
 5. Pre-release가 아닌 최신 정식 Release로 게시합니다.
-6. 이전 버전이 설치된 기기에서 1.6.1 OTA 업데이트를 검증합니다.
+6. 이전 버전이 설치된 기기에서 1.7.0 OTA 업데이트를 검증합니다.
 
 두 파일의 이름은 모든 Release에서 정확히 같아야 합니다. 초안이나 Pre-release는 `latest` 업데이트 대상으로 사용하지 않습니다.
 
@@ -260,6 +262,15 @@ release/MILESTONE_Core.json
 - 일시적 업데이트 확인 실패 10분·설치/구조적 실패 6시간 재시도와 Wi-Fi 절전 자동 복귀
 - 5페이지 기기 세부정보 화면과 설정 포털의 실시간 시스템 상태
 - 비차단 3초 부팅 로고와 우상단 NTP `T`·업데이트 `U` 상태 아이콘
+
+## v1.7.0 업데이트 안내
+
+- 기능 변경 없이 1.6.1 구현부를 역할별 `*.inc` 파일로 기계적으로 분리
+- 모든 기존 함수 본문을 1.6.1과 바이트 단위로 동일하게 유지
+- 함수 정의 순서와 단일 translation unit 구조를 그대로 유지해 전역 초기화·링커·호출 순서 변화 방지
+- 네트워크·NTP·GitHub 업데이트 확인·OTA 로직을 수정하지 않음
+- 설정 스키마 8 및 기존 저장 Wi-Fi/NVS 구조를 그대로 유지
+- 실제 펌웨어 버전 문자열만 1.7.0으로 변경
 
 ## v1.6.1 업데이트 안내
 
@@ -429,4 +440,4 @@ release/MILESTONE_Core.json
 - 기존 설정 스키마, 저장된 Wi-Fi, 여섯 가지 화면을 그대로 유지
 - 기기 세부정보 화면은 OTA 검증용 1.5.1에서 추가 예정
 
-정식 버전: `1.6.1`
+정식 버전: `1.7.0`
