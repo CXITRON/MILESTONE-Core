@@ -32,6 +32,7 @@
 
 #include "PortalPage.h"
 #include "UpdateCertificates.h"
+#include "CoreLogic.h"
 
 // TLS, HTTP parsing, hashing, display updates, and the Arduino framework all
 // share loopTask during a synchronous OTA transfer. Reserve an explicit stack
@@ -44,7 +45,7 @@ SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 
 namespace Milestone {
 
-constexpr char FIRMWARE_VERSION[] = "1.8.0";
+constexpr char FIRMWARE_VERSION[] = "1.8.1";
 constexpr char AP_SSID[] = "MILESTONE-D1-SETUP";
 constexpr char HOSTNAME[] = "milestone-d1";
 constexpr char PREFS_NS[] = "milestone";
@@ -440,22 +441,13 @@ int clampInt(int value, int low, int high) {
   return value < low ? low : (value > high ? high : value);
 }
 
-bool isLeapYear(int year) {
-  return (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
-}
-
 bool parseDate(const String &text, int &year, int &month, int &day) {
-  if (text.length() != 10 || text[4] != '-' || text[7] != '-') return false;
-  for (uint8_t i : {0, 1, 2, 3, 5, 6, 8, 9}) {
-    if (!isDigit(text[i])) return false;
-  }
-  year = text.substring(0, 4).toInt();
-  month = text.substring(5, 7).toInt();
-  day = text.substring(8, 10).toInt();
-  if (year < 2024 || year > 2099 || month < 1 || month > 12) return false;
-  const uint8_t days[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
-  int maxDay = days[month - 1] + ((month == 2 && isLeapYear(year)) ? 1 : 0);
-  return day >= 1 && day <= maxDay;
+  MilestoneCoreLogic::CivilDate parsed;
+  if (!MilestoneCoreLogic::parseIsoDate(text.c_str(), parsed)) return false;
+  year = parsed.year;
+  month = parsed.month;
+  day = parsed.day;
+  return true;
 }
 
 String cycleOrderToString(const Config &cfg) {
@@ -468,24 +460,7 @@ String cycleOrderToString(const Config &cfg) {
 }
 
 bool parseCycleOrderCount(const String &text, uint8_t *out, uint8_t expectedCount) {
-  bool seen[VIEW_COUNT] = {};
-  uint8_t count = 0;
-  int start = 0;
-  while (start <= static_cast<int>(text.length()) && count < expectedCount) {
-    int comma = text.indexOf(',', start);
-    if (comma < 0) comma = text.length();
-    String part = text.substring(start, comma);
-    part.trim();
-    if (part.length() != 1 || part[0] < '0' || part[0] >= '0' + expectedCount) return false;
-    uint8_t value = part[0] - '0';
-    if (seen[value]) return false;
-    seen[value] = true;
-    out[count++] = value;
-    start = comma + 1;
-  }
-  if (count != expectedCount || start <= static_cast<int>(text.length())) return false;
-  for (uint8_t i = 0; i < expectedCount; ++i) if (!seen[i]) return false;
-  return true;
+  return expectedCount <= VIEW_COUNT && MilestoneCoreLogic::parseCycleOrder(text.c_str(), out, expectedCount);
 }
 
 template <size_t N>

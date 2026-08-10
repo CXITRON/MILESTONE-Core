@@ -200,10 +200,10 @@ GitHub와 Release 자산 전달 호스트의 인증서 체인을 검증할 수 �
 
 ```bash
 chmod +x tools/make-release.sh
-./tools/make-release.sh 1.8.0 "Add safe OTA rollback and boot verification"
+./tools/make-release.sh 1.8.1 "Harden core logic validation and manifest parsing"
 ```
 
-기본 설명을 사용하려면 `./tools/make-release.sh 1.8.0`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
+기본 설명을 사용하려면 `./tools/make-release.sh 1.8.1`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
 
 다음 두 파일이 `release/`에 생성됩니다.
 
@@ -212,16 +212,20 @@ release/MILESTONE_Core.bin
 release/MILESTONE_Core.json
 ```
 
-스크립트가 BIN의 실제 바이트 수와 SHA-256을 계산하므로 JSON을 손으로 수정하지 않는 것이 안전합니다.
+스크립트가 BIN의 실제 바이트 수와 SHA-256을 계산하므로 JSON을 손으로 수정하지 않는 것이 안전합니다. 릴리스 빌드 전에 `tools/test-core.sh`가 자동 실행되어 하드웨어 독립 핵심 로직 테스트가 모두 통과해야 다음 단계로 진행됩니다. 테스트만 따로 실행하려면 다음 명령을 사용합니다.
+
+```bash
+./tools/test-core.sh
+```
 
 ### GitHub Release 게시
 
 1. 저장소의 `Releases`에서 `Draft a new release`를 선택합니다.
-2. 버전과 동일한 태그를 만듭니다. 예: `v1.8.0`
-3. Release 제목을 `MILESTONE Core v1.8.0`으로 지정합니다.
+2. 버전과 동일한 태그를 만듭니다. 예: `v1.8.1`
+3. Release 제목을 `MILESTONE Core v1.8.1`으로 지정합니다.
 4. `release/MILESTONE_Core.bin`과 `release/MILESTONE_Core.json`을 첨부합니다.
 5. Pre-release가 아닌 최신 정식 Release로 게시합니다.
-6. 이전 버전이 설치된 기기에서 1.8.0 OTA 업데이트와 첫 부팅 롤백 보호를 검증합니다.
+6. 이전 버전이 설치된 기기에서 1.8.1 OTA 업데이트와 기존 롤백 보호 동작을 검증합니다.
 
 두 파일의 이름은 모든 Release에서 정확히 같아야 합니다. 초안이나 Pre-release는 `latest` 업데이트 대상으로 사용하지 않습니다.
 
@@ -262,6 +266,16 @@ release/MILESTONE_Core.json
 - 일시적 업데이트 확인 실패 10분·설치/구조적 실패 6시간 재시도와 Wi-Fi 절전 자동 복귀
 - 5페이지 기기 세부정보 화면과 설정 포털의 실시간 시스템 상태
 - 비차단 3초 부팅 로고와 우상단 NTP `T`·업데이트 `U` 상태 아이콘
+
+## v1.8.1 업데이트 안내
+
+- Arduino 프레임워크에 의존하지 않는 `CoreLogic.h`/`CoreLogic.cpp`를 추가하고 semantic version, ISO 날짜, D-day 날짜 차이, 화면 순환 순서, SHA-256 형식 검증을 실제 펌웨어와 호스트 테스트가 공동 사용
+- `tools/test-core.sh`와 `tests/test_core_logic.cpp`를 추가해 Arch Linux의 일반 `g++` 환경에서 핵심 순수 로직을 빠르게 회귀 검사
+- D-day 날짜 차이 계산을 `mktime()`/`difftime()` 기반 시간 계산에서 순수 civil-date 일수 계산으로 분리해 날짜 경계 로직을 직접 테스트 가능하게 변경
+- Release manifest 생성기가 출력할 수 있는 표준 JSON escape `\b`, `\f`를 펌웨어 parser도 정상 해석하도록 producer/consumer 계약 불일치 수정
+- `tools/make-release.sh`가 정식 Arduino 빌드 전에 호스트 핵심 로직 테스트를 실행하도록 강화
+- 설정 스키마 8, NVS key, Wi-Fi/NTP 상태기계, OTA 다운로드 순서, 앱 레벨 롤백 상태기계, OLED/UI 동작은 변경하지 않음
+- 대규모 전역 상태 구조체화와 긴 상태기계 함수 분해는 회귀 위험 대비 실익이 부족해 이번 버전에서 의도적으로 제외
 
 ## v1.8.0 업데이트 안내
 
@@ -452,4 +466,4 @@ release/MILESTONE_Core.json
 - 기존 설정 스키마, 저장된 Wi-Fi, 여섯 가지 화면을 그대로 유지
 - 기기 세부정보 화면은 OTA 검증용 1.5.1에서 추가 예정
 
-정식 버전: `1.8.0`
+정식 버전: `1.8.1`

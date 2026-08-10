@@ -30,11 +30,9 @@ bool parseJsonStringField(const String &json, const char *key, String &value) {
     if (c == '\\') {
       if (position >= static_cast<int>(json.length())) return false;
       c = json[position++];
-      if (c == 'n') value += '\n';
-      else if (c == 'r') value += '\r';
-      else if (c == 't') value += '\t';
-      else if (c == '"' || c == '\\' || c == '/') value += c;
-      else return false;
+      char decoded = 0;
+      if (!MilestoneCoreLogic::decodeJsonEscape(c, decoded)) return false;
+      value += decoded;
     } else {
       value += c;
     }
@@ -56,39 +54,15 @@ bool parseJsonUintField(const String &json, const char *key, uint32_t &value) {
 }
 
 bool parseSemanticVersion(const String &text, uint16_t parts[3]) {
-  int start = 0;
-  for (uint8_t index = 0; index < 3; ++index) {
-    int end = index < 2 ? text.indexOf('.', start) : text.length();
-    if (end <= start || (index < 2 && end < 0)) return false;
-    uint32_t part = 0;
-    for (int i = start; i < end; ++i) {
-      if (!isDigit(text[i])) return false;
-      part = part * 10UL + static_cast<uint8_t>(text[i] - '0');
-      if (part > UINT16_MAX) return false;
-    }
-    parts[index] = static_cast<uint16_t>(part);
-    start = end + 1;
-  }
-  return start == static_cast<int>(text.length()) + 1;
+  return MilestoneCoreLogic::parseSemanticVersion(text.c_str(), parts);
 }
 
 int compareSemanticVersions(const String &left, const String &right) {
-  uint16_t a[3], b[3];
-  if (!parseSemanticVersion(left, a) || !parseSemanticVersion(right, b)) return 0;
-  for (uint8_t i = 0; i < 3; ++i) {
-    if (a[i] < b[i]) return -1;
-    if (a[i] > b[i]) return 1;
-  }
-  return 0;
+  return MilestoneCoreLogic::compareSemanticVersions(left.c_str(), right.c_str());
 }
 
 bool validSha256(const String &value) {
-  if (value.length() != 64) return false;
-  for (size_t i = 0; i < value.length(); ++i) {
-    const char c = value[i];
-    if (!isDigit(c) && !(c >= 'a' && c <= 'f') && !(c >= 'A' && c <= 'F')) return false;
-  }
-  return true;
+  return MilestoneCoreLogic::validSha256(value.c_str());
 }
 
 String sha256Hex(const uint8_t digest[32]) {

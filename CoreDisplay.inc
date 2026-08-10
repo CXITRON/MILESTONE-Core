@@ -425,18 +425,9 @@ bool computeDday(int &result, bool force = false) {
     result = config.lastDday;
     return true;
   }
-  tm today = nowLocal;
-  today.tm_hour = 0;
-  today.tm_min = 0;
-  today.tm_sec = 0;
-  today.tm_isdst = -1;
-  tm target{};
-  target.tm_year = year - 1900;
-  target.tm_mon = month - 1;
-  target.tm_mday = day;
-  target.tm_hour = 0;
-  target.tm_isdst = -1;
-  result = static_cast<int>(difftime(mktime(&target), mktime(&today)) / 86400.0);
+  const MilestoneCoreLogic::CivilDate today{nowLocal.tm_year + 1900, nowLocal.tm_mon + 1, nowLocal.tm_mday};
+  const MilestoneCoreLogic::CivilDate target{year, month, day};
+  result = MilestoneCoreLogic::daysBetween(today, target);
   lastDdayCalcMs = millis();
   lastDdayYear = nowLocal.tm_year;
   lastDdayYearDay = nowLocal.tm_yday;

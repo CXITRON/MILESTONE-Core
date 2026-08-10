@@ -3,7 +3,7 @@ set -euo pipefail
 
 if (( $# < 1 || $# > 2 )); then
   echo "사용법: $0 VERSION [NOTES]" >&2
-  echo "예: $0 1.8.0 'Add safe OTA rollback and boot verification'" >&2
+  echo "예: $0 1.8.1 'Harden core logic validation and manifest parsing'" >&2
   exit 2
 fi
 
@@ -14,9 +14,11 @@ fqbn='esp32:esp32:waveshare_esp32_s3_zero:CDCOnBoot=default,PSRAM=enabled,Partit
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 project_dir=$(cd -- "$script_dir/.." && pwd)
 release_dir="$project_dir/release"
+# shellcheck source=release-json.sh
+source "$script_dir/release-json.sh"
 
 if [[ ! $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "오류: VERSION은 1.8.0과 같은 형식이어야 합니다." >&2
+  echo "오류: VERSION은 1.8.1과 같은 형식이어야 합니다." >&2
   exit 2
 fi
 
@@ -26,14 +28,10 @@ if [[ $source_version != "$version" ]]; then
   exit 2
 fi
 
-notes=${notes//\\/\\\\}
-notes=${notes//\"/\\\"}
-notes=${notes//$'\n'/\\n}
-notes=${notes//$'\r'/\\r}
-notes=${notes//$'\t'/\\t}
-notes=${notes//$'\b'/\\b}
-notes=${notes//$'\f'/\\f}
-if printf '%s' "$notes" | LC_ALL=C grep '[[:cntrl:]]' >/dev/null; then
+echo "호스트 순수 로직 테스트 실행"
+"$project_dir/tools/test-core.sh"
+
+if ! notes=$(milestone_escape_json_string "$notes"); then
   echo "오류: NOTES에 지원되지 않는 제어 문자가 포함되어 있습니다." >&2
   exit 2
 fi
