@@ -29,7 +29,7 @@ if [[ $source_version != "$version" ]]; then
 fi
 
 echo "호스트 순수 로직 테스트 실행"
-"$project_dir/tools/test-core.sh"
+bash "$project_dir/tools/test-core.sh"
 
 if ! notes=$(milestone_escape_json_string "$notes"); then
   echo "오류: NOTES에 지원되지 않는 제어 문자가 포함되어 있습니다." >&2

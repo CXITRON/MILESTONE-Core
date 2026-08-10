@@ -25,4 +25,4 @@ trap cleanup EXIT
   -o "$build_dir/test_core_logic"
 
 "$build_dir/test_core_logic"
-"$project_dir/tests/test_release_manifest.sh"
+bash "$project_dir/tests/test_release_manifest.sh"

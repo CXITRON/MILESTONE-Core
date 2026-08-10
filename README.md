@@ -194,9 +194,34 @@ GitHub와 Release 자산 전달 호스트의 인증서 체인을 검증할 수 �
 
 `동기화 뒤 Wi-Fi 끄기`를 사용하면 업데이트 확인 시에는 저장된 Wi-Fi에 잠시 연결하고, 작업이 끝난 뒤 Wi-Fi 자체를 다시 끕니다. 이 옵션을 사용하지 않는 항상 연결 모드에서는 ESP 모뎀 절전을 별도로 켜지 않고 무선부를 깨어 있게 유지해 설정 모드와 콜드 부팅 STA 모드의 통신 조건을 최대한 같게 맞춥니다. HTTPS 인증서의 유효기간을 확인하려면 정확한 시간이 필요하므로, 부팅 시간 동기화를 꺼 두었더라도 전원이 완전히 끊겨 시각이 유효하지 않으면 업데이트 확인을 위해 NTP를 한 번 수행합니다.
 
-### Release 파일 만들기
+### Release 자동화 (권장)
 
-`tools/make-release.sh`는 설치된 `arduino-cli` 또는 Arduino IDE 내장 CLI를 사용해 권장 보드, OTA 파티션, 공식 온보드 PSRAM 활성화 설정으로 직접 컴파일합니다. IDE에서 BIN을 따로 내보낼 필요가 없습니다.
+반복되는 Taildrop 수신, 검증, 테스트, 빌드, Git push/tag, GitHub Release 게시 절차는 `milestone-release`로 통합합니다. 프로젝트에서 한 번 설치하면 됩니다.
+
+```bash
+./tools/install-milestone-release.sh
+```
+
+PC의 현재 프로젝트를 직접 수정한 경우에는 **MILESTONE_Core 프로젝트 루트에서** 실행합니다.
+
+```bash
+cd /run/media/citron/T7/Documents/Dev/MILESTONE_Core
+milestone-release local 1.8.2 "Short release note"
+```
+
+Tailscale Taildrop으로 `MILESTONE_Core_1.8.2.zip`을 받은 경우에는 어느 디렉터리에서든 실행할 수 있습니다.
+
+```bash
+milestone-release taildrop 1.8.2 "Short release note"
+```
+
+Taildrop 모드는 ZIP을 라이브 프로젝트에 바로 덮어쓰지 않습니다. 별도 staging 디렉터리에서 구조·버전·Git 상태를 검사하고 테스트와 ESP32 릴리즈 빌드까지 성공한 뒤에만 프로젝트를 교체합니다. GitHub 게시 전 실패하면 기존 프로젝트를 자동 복구합니다. `--dry-run`은 테스트/빌드까지만 수행하고 로컬 프로젝트·Git·GitHub를 변경하지 않습니다. `--yes`를 사용하지 않는 기본 동작은 최종 게시 직전에 한 번 확인합니다.
+
+코드 에이전트는 `AGENTS.md`의 릴리즈 규칙을 우선 따라야 하며, 새 버전을 준비한 뒤 사용자에게 위 `local` 또는 `taildrop` 명령 중 상황에 맞는 정확한 한 줄을 안내해야 합니다.
+
+### Release 파일 만들기 (저수준 명령)
+
+`tools/make-release.sh`는 `milestone-release` 내부에서도 사용하는 정식 저수준 빌드 스크립트입니다. 설치된 `arduino-cli` 또는 Arduino IDE 내장 CLI를 사용해 권장 보드, OTA 파티션, 공식 온보드 PSRAM 활성화 설정으로 직접 컴파일합니다. IDE에서 BIN을 따로 내보낼 필요가 없습니다.
 
 ```bash
 chmod +x tools/make-release.sh
@@ -219,6 +244,8 @@ release/MILESTONE_Core.json
 ```
 
 ### GitHub Release 게시
+
+일반적인 게시에는 위의 `milestone-release`를 사용합니다. 아래 수동 절차는 자동화 도구를 복구하거나 디버깅해야 할 때만 참고합니다.
 
 1. 저장소의 `Releases`에서 `Draft a new release`를 선택합니다.
 2. 버전과 동일한 태그를 만듭니다. 예: `v1.8.1`
