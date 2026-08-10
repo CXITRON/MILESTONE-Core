@@ -32,7 +32,7 @@ SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 
 namespace Milestone {
 
-constexpr char FIRMWARE_VERSION[] = "1.5.10";
+constexpr char FIRMWARE_VERSION[] = "1.5.11";
 constexpr char AP_SSID[] = "MILESTONE-D1-SETUP";
 constexpr char HOSTNAME[] = "milestone-d1";
 constexpr char PREFS_NS[] = "milestone";
@@ -91,7 +91,10 @@ constexpr uint8_t UPDATE_CHECK_MAX_ATTEMPTS = 3;
 constexpr uint8_t UPDATE_REDIRECT_LIMIT = 5;
 constexpr uint8_t UPDATE_TLS_HANDSHAKE_TIMEOUT_SEC = 10;
 constexpr uint32_t UPDATE_DOWNLOAD_STALL_MS = 20UL * 1000UL;
-constexpr uint32_t UPDATE_INSTALL_RESPONSE_HOLD_MS = 500UL;
+// Give the captive-portal browser enough time to receive the HTTP 202 response
+// and render the accepted state before the synchronous OTA download occupies
+// loopTask and temporarily pauses portal polling.
+constexpr uint32_t UPDATE_INSTALL_RESPONSE_HOLD_MS = 1500UL;
 constexpr uint32_t OTA_BOOT_CONFIRM_MS = 10UL * 1000UL;
 constexpr size_t UPDATE_MANIFEST_MAX_BYTES = 2048;
 constexpr size_t UPDATE_DOWNLOAD_BUFFER_BYTES = 2048;
@@ -304,6 +307,7 @@ bool updateCheckAfterNetworkReady = false;
 bool updatePromptVisible = false;
 bool updateInstallRequested = false;
 uint32_t updateInstallNotBeforeMs = 0;
+bool updateCheckIndicatorRendered = false;
 bool wifiSleepDeferredForUpdate = false;
 bool otaBootConfirmationPending = false;
 uint32_t otaBootConfirmationStartedMs = 0;
@@ -1131,6 +1135,7 @@ void drawStatusIcon(int x, int y) {
   if (updateState == UpdateState::CHECKING) {
     display.setFont(u8g2_font_6x10_tf);
     display.drawStr(x + 2, y + 8, "U");
+    updateCheckIndicatorRendered = true;
     return;
   }
   if (runtimeState == RuntimeState::WIFI_SLEEP) {
@@ -1540,9 +1545,17 @@ const char *resetReasonName(esp_reset_reason_t reason) {
 void drawDeviceInfoHeader(const char *title, uint8_t page, int8_t ox, int8_t oy) {
   display.setFont(u8g2_font_6x10_tf);
   display.drawStr(1 + ox, 10 + oy, title);
-  char pageText[8];
-  snprintf(pageText, sizeof(pageText), "%u/%u", page + 1, DEVICE_INFO_PAGE_COUNT);
-  display.drawStr(108 + ox, 10 + oy, pageText);
+  if (updateState == UpdateState::CHECKING) {
+    // Device-info normally uses the upper-right corner for its page counter.
+    // While checking for firmware, reserve that corner for the same U indicator
+    // used by all other normal views so the check cannot be invisible.
+    display.drawStr(118 + ox, 10 + oy, "U");
+    updateCheckIndicatorRendered = true;
+  } else {
+    char pageText[8];
+    snprintf(pageText, sizeof(pageText), "%u/%u", page + 1, DEVICE_INFO_PAGE_COUNT);
+    display.drawStr(108 + ox, 10 + oy, pageText);
+  }
   display.drawHLine(0, 14 + oy, 128);
   display.setFont(u8g2_font_5x8_tf);
 }
@@ -1644,7 +1657,15 @@ void drawDeviceInfo(int8_t ox, int8_t oy) {
 void drawPortalScreen() {
   display.clearBuffer();
   display.setFont(u8g2_font_6x10_tf);
-  display.drawStr(0, 10, "MILESTONE SETUP    AP");
+  display.drawStr(0, 10, "MILESTONE SETUP");
+  if (ntpRequestActive || runtimeState == RuntimeState::TIME_SYNCING) {
+    display.drawStr(118, 10, "T");
+  } else if (updateState == UpdateState::CHECKING) {
+    display.drawStr(118, 10, "U");
+    updateCheckIndicatorRendered = true;
+  } else {
+    display.drawStr(116, 10, "AP");
+  }
   display.drawHLine(0, 14, 128);
   display.drawStr(2, 33, "Wi-Fi:");
   display.setFont(u8g2_font_5x8_tf);
@@ -1774,12 +1795,12 @@ void drawMainScreen() {
     drawUpdateScreen();
     return;
   }
-  if (portalActive) {
-    drawPortalScreen();
-    return;
-  }
   if (updateState == UpdateState::AVAILABLE && updatePromptVisible) {
     drawUpdateScreen();
+    return;
+  }
+  if (portalActive) {
+    drawPortalScreen();
     return;
   }
   if (resetConfirmation) {
@@ -2207,6 +2228,7 @@ void setUpdateState(UpdateState state) {
   updateState = state;
   updateStateStartedMs = millis();
   updateCurrentVisibleMs = 0;
+  if (state != UpdateState::CHECKING) updateCheckIndicatorRendered = false;
   wakeDisplay();
   logLine(String("update state -> ") + updateStateName(state));
 }
@@ -2300,15 +2322,18 @@ String describeHttpFailure(const char *resource, int response, NetworkClientSecu
   const int tlsError = secureClient.lastError(tlsDetails, sizeof(tlsDetails));
   const String httpDetails = response < 0 ? HTTPClient::errorToString(response) : String();
 
-  String diagnostic = String(resource) + " request failed: code=" + response;
-  if (httpDetails.length()) diagnostic += " (" + httpDetails + ")";
+  String diagnostic = String(resource) +
+                      (response < 0 ? " HTTPS transport failed before HTTP response: code="
+                                    : " HTTP request failed: status=") +
+                      String(response);
+  if (httpDetails.length()) diagnostic += " (HTTPClient: " + httpDetails + ")";
   diagnostic += " wifi=" + String(static_cast<int>(WiFi.status())) +
                 " rssi=" + String(WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0) +
                 " heap=" + String(ESP.getFreeHeap()) + " max=" + String(ESP.getMaxAllocHeap());
   logLine(diagnostic);
   if (tlsError != 0) {
-    logLine(String(resource) + " TLS " + tlsError + ": " + tlsDetails);
-    return String(resource) + " TLS failed";
+    logLine(String(resource) + " TLS detail " + tlsError + ": " + tlsDetails);
+    return String(resource) + " HTTPS transport failed";
   }
   if (response < 0 && httpDetails.length()) return String(resource) + " " + httpDetails;
   return String(resource) + " HTTP " + response;
@@ -2369,6 +2394,7 @@ void requestFirmwareUpdateCheck(UpdateCheckReason reason) {
       updateState == UpdateState::CURRENT) return;
   pendingUpdateCheckReason = reason;
   updateCheckAttempt = 0;
+  updateCheckIndicatorRendered = false;
   updateError = "";
 }
 
@@ -2453,7 +2479,11 @@ UpdateCheckAttemptResult checkFirmwareManifestAttempt(UpdateCheckReason reason, 
   updateError = "";
 
   if (compareSemanticVersions(FIRMWARE_VERSION, latestFirmwareVersion) < 0) {
-    updatePromptVisible = reason != UpdateCheckReason::MANUAL || !portalActive;
+    // An available release is one of the two update-check outcomes that should
+    // deliberately interrupt the OLED (the other is a check error). Do this for
+    // both automatic and portal-initiated checks so a manual check cannot hide
+    // the device-side notification.
+    updatePromptVisible = true;
     updatePromptStartedMs = millis();
     setUpdateState(UpdateState::AVAILABLE);
     logLine(String("firmware update available: ") + FIRMWARE_VERSION + " -> " + latestFirmwareVersion);
@@ -2685,6 +2715,10 @@ void handleStatus() {
   json += "\"update_state\":\"" + String(updateStateName(updateState)) + "\",";
   json += "\"latest_firmware\":\"" + jsonEscape(latestFirmwareVersion) + "\",";
   json += "\"update_available\":" + String(updateState == UpdateState::AVAILABLE ? "true" : "false") + ",";
+  const bool updateInstallReady = updateState == UpdateState::AVAILABLE && latestFirmwareVersion.length() > 0 &&
+                                  latestFirmwareSize > 0 && validSha256(latestFirmwareSha256);
+  json += "\"update_install_ready\":" + String(updateInstallReady ? "true" : "false") + ",";
+  json += "\"update_install_pending\":" + String(updateInstallRequested ? "true" : "false") + ",";
   const uint32_t updateProgress = latestFirmwareSize > 0
                                     ? static_cast<uint32_t>((updateDownloadedBytes * 100ULL) / latestFirmwareSize) : 0;
   json += "\"update_progress\":" + String(updateProgress) + ",";
@@ -3052,7 +3086,11 @@ void handleUpdateCheck() {
 
 void handleUpdateInstall() {
   if (!authorizePortalRequest()) return;
-  if (updateState != UpdateState::AVAILABLE) {
+  if (updateInstallRequested || firmwareTransferActive()) {
+    return sendJson(409, "{\"error\":\"업데이트 설치가 이미 진행 중입니다.\"}");
+  }
+  if (updateState != UpdateState::AVAILABLE || latestFirmwareVersion.length() == 0 ||
+      latestFirmwareSize == 0 || !validSha256(latestFirmwareSha256)) {
     return sendJson(409, "{\"error\":\"설치할 새 펌웨어가 확인되지 않았습니다.\"}");
   }
   if (thermalSafeMode || temperatureSensorFault || thermalWarning) {
@@ -3068,6 +3106,8 @@ void handleUpdateInstall() {
   }
   updateInstallRequested = true;
   updateInstallNotBeforeMs = millis() + UPDATE_INSTALL_RESPONSE_HOLD_MS;
+  logLine(String("portal firmware install request accepted; target=") + latestFirmwareVersion +
+          ", start_after_ms=" + String(UPDATE_INSTALL_RESPONSE_HOLD_MS));
   sendJson(202, "{\"ok\":true,\"state\":\"queued\"}");
 }
 
@@ -3423,7 +3463,20 @@ void processFirmwareUpdate() {
     }
 
     const UpdateCheckReason reason = pendingUpdateCheckReason;
-    if (updateState != UpdateState::CHECKING) setUpdateState(UpdateState::CHECKING);
+    if (updateState != UpdateState::CHECKING) {
+      // The HTTPS manifest request is synchronous. Previously CHECKING could be
+      // entered and left again before processDisplay() ever sent a frame, so the
+      // U indicator was invisible on successful first-attempt checks. Enter the
+      // state first, return to loop(), and do not start HTTPS until a display
+      // renderer has confirmed that the U frame reached the OLED.
+      updateCheckIndicatorRendered = false;
+      setUpdateState(UpdateState::CHECKING);
+      return;
+    }
+    // If the OLED itself is unavailable there is nothing to render, so do not
+    // make networking depend on a failed display. With a working OLED, however,
+    // require one completed UI pass before entering the blocking HTTPS request.
+    if (oledReady && !updateCheckIndicatorRendered) return;
     if (updateCheckAttempt < UINT8_MAX) ++updateCheckAttempt;
 
     String failure;
