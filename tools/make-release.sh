@@ -3,7 +3,7 @@ set -euo pipefail
 
 if (( $# < 1 || $# > 2 )); then
   echo "사용법: $0 VERSION [NOTES]" >&2
-  echo "예: $0 1.6.0 'Add WPA2/WPA3 Enterprise PEAP Wi-Fi support'" >&2
+  echo "예: $0 1.6.1 'Harden Wi-Fi storage and Enterprise compatibility'" >&2
   exit 2
 fi
 

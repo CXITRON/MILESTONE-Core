@@ -42,14 +42,14 @@ SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 
 namespace Milestone {
 
-constexpr char FIRMWARE_VERSION[] = "1.6.0";
+constexpr char FIRMWARE_VERSION[] = "1.6.1";
 constexpr char AP_SSID[] = "MILESTONE-D1-SETUP";
 constexpr char HOSTNAME[] = "milestone-d1";
 constexpr char PREFS_NS[] = "milestone";
 constexpr char UPDATE_MANIFEST_URL[] = "https://github.com/CXITRON/MILESTONE-Core/releases/latest/download/MILESTONE_Core.json";
 constexpr char UPDATE_RELEASE_BASE_URL[] = "https://github.com/CXITRON/MILESTONE-Core/releases/download/v";
 constexpr char UPDATE_ASSET_NAME[] = "MILESTONE_Core.bin";
-constexpr uint16_t CONFIG_VERSION = 7;
+constexpr uint16_t CONFIG_VERSION = 8;
 constexpr uint8_t VIEW_COUNT = 7;
 constexpr uint8_t MAX_SAVED_NETWORKS = 8;
 constexpr uint8_t NO_WIFI_INDEX = 0xFF;
@@ -265,6 +265,7 @@ struct Config {
 };
 
 Preferences prefs;
+bool prefsReady = false;
 Config config;
 // This generic 1.5-inch module uses SH1107 column offset 0.  The plain
 // SH1107_128X128 profile applies a 96-pixel offset and wraps the leftmost
@@ -535,24 +536,34 @@ void setRuntimeState(RuntimeState next) {
   logLine(String("state -> ") + runtimeStateName(next));
 }
 
-String savedWifiSsidKey(uint8_t index) {
-  return String("wifi_ssid") + String(index);
+String savedWifiSsidKey(uint8_t index, uint8_t bank = 0) {
+  return bank == 0 ? String("wifi_ssid") + String(index) : String("wfb_ssid") + String(index);
 }
 
-String savedWifiPassKey(uint8_t index) {
-  return String("wifi_pass") + String(index);
+String savedWifiPassKey(uint8_t index, uint8_t bank = 0) {
+  return bank == 0 ? String("wifi_pass") + String(index) : String("wfb_pass") + String(index);
 }
 
-String savedWifiSecurityKey(uint8_t index) {
-  return String("wifi_sec") + String(index);
+String savedWifiSecurityKey(uint8_t index, uint8_t bank = 0) {
+  return bank == 0 ? String("wifi_sec") + String(index) : String("wfb_sec") + String(index);
 }
 
-String savedWifiUsernameKey(uint8_t index) {
-  return String("wifi_user") + String(index);
+String savedWifiUsernameKey(uint8_t index, uint8_t bank = 0) {
+  return bank == 0 ? String("wifi_user") + String(index) : String("wfb_user") + String(index);
 }
 
-String savedWifiIdentityKey(uint8_t index) {
-  return String("wifi_id") + String(index);
+String savedWifiIdentityKey(uint8_t index, uint8_t bank = 0) {
+  return bank == 0 ? String("wifi_id") + String(index) : String("wfb_id") + String(index);
+}
+
+const char *savedWifiCountKey(uint8_t bank) {
+  return bank == 0 ? "wifi_count" : "wfb_count";
+}
+
+uint8_t activeWifiBank() {
+  if (!prefsReady) return 0;
+  const uint8_t bank = prefs.getUChar("wifi_bank", 0);
+  return bank <= 1 ? bank : 0;
 }
 
 const char *wifiSecurityName(WifiSecurityType security) {
@@ -577,6 +588,11 @@ bool wifiAuthIsEnterprise(wifi_auth_mode_t auth) {
          auth == WIFI_AUTH_WPA_ENTERPRISE || auth == WIFI_AUTH_WPA3_ENT_192;
 }
 
+bool wifiAuthRequiresEnterpriseCa(wifi_auth_mode_t auth) {
+  return auth == WIFI_AUTH_WPA3_ENTERPRISE || auth == WIFI_AUTH_WPA2_WPA3_ENTERPRISE ||
+         auth == WIFI_AUTH_WPA3_ENT_192;
+}
+
 int findSavedNetwork(const String &ssid) {
   for (uint8_t i = 0; i < config.savedNetworkCount; ++i) {
     if (config.savedNetworks[i].ssid == ssid) return i;
@@ -585,22 +601,25 @@ int findSavedNetwork(const String &ssid) {
 }
 
 bool putStringVerified(const char *key, const String &value) {
+  if (!prefsReady) return false;
   prefs.putString(key, value);
   return prefs.isKey(key) && prefs.getString(key, "") == value;
 }
 
 bool removePreferenceVerified(const char *key) {
+  if (!prefsReady) return false;
   return !prefs.isKey(key) || prefs.remove(key);
 }
 
-bool saveWifiNetworks() {
+bool writeWifiBank(uint8_t bank) {
+  if (!prefsReady || bank > 1) return false;
   bool success = true;
   for (uint8_t i = 0; i < MAX_SAVED_NETWORKS; ++i) {
-    const String ssidKey = savedWifiSsidKey(i);
-    const String passKey = savedWifiPassKey(i);
-    const String securityKey = savedWifiSecurityKey(i);
-    const String usernameKey = savedWifiUsernameKey(i);
-    const String identityKey = savedWifiIdentityKey(i);
+    const String ssidKey = savedWifiSsidKey(i, bank);
+    const String passKey = savedWifiPassKey(i, bank);
+    const String securityKey = savedWifiSecurityKey(i, bank);
+    const String usernameKey = savedWifiUsernameKey(i, bank);
+    const String identityKey = savedWifiIdentityKey(i, bank);
     if (i < config.savedNetworkCount) {
       if (!putStringVerified(ssidKey.c_str(), config.savedNetworks[i].ssid)) success = false;
       if (!putStringVerified(passKey.c_str(), config.savedNetworks[i].password)) success = false;
@@ -611,8 +630,6 @@ bool saveWifiNetworks() {
         if (!putStringVerified(usernameKey.c_str(), config.savedNetworks[i].username)) success = false;
         if (!putStringVerified(identityKey.c_str(), config.savedNetworks[i].identity)) success = false;
       } else {
-        // Personal entries retain the exact v1.5.x storage shape. Enterprise
-        // metadata exists only when needed, minimizing migration writes/NVS use.
         if (!removePreferenceVerified(securityKey.c_str())) success = false;
         if (!removePreferenceVerified(usernameKey.c_str())) success = false;
         if (!removePreferenceVerified(identityKey.c_str())) success = false;
@@ -625,13 +642,23 @@ bool saveWifiNetworks() {
       if (!removePreferenceVerified(identityKey.c_str())) success = false;
     }
   }
-  // Commit the count last. If power is lost during the preceding writes, the
-  // loader can still compact the previously committed set instead of trusting
-  // a new count whose entries may not all exist yet.
-  if (!success || prefs.putUChar("wifi_count", config.savedNetworkCount) != sizeof(uint8_t)) return false;
-  // Version 1-3 keys are intentionally left untouched. Schema 4 ignores them,
-  // and retaining them makes a power loss during migration recoverable.
-  return true;
+  if (!success) return false;
+  const char *countKey = savedWifiCountKey(bank);
+  return prefs.putUChar(countKey, config.savedNetworkCount) == sizeof(uint8_t) &&
+         prefs.getUChar(countKey, 0xFF) == config.savedNetworkCount;
+}
+
+bool saveWifiNetworks() {
+  if (!prefsReady) return false;
+  // Bank A is the exact legacy wifi_ssidN/wifi_passN layout. New writes go to
+  // the inactive bank and are fully verified before the one-byte bank selector
+  // is changed. A power loss can therefore leave only the old or the new full
+  // list active, never a partially reordered list.
+  const uint8_t previousBank = activeWifiBank();
+  const uint8_t nextBank = previousBank ^ 1U;
+  if (!writeWifiBank(nextBank)) return false;
+  if (prefs.putUChar("wifi_bank", nextBank) != sizeof(uint8_t)) return false;
+  return prefs.getUChar("wifi_bank", 0xFF) == nextBank;
 }
 
 void removeSavedNetworkAt(uint8_t index) {
@@ -647,7 +674,7 @@ bool saveWifiOrRestore(const Config &previous, uint8_t previousActiveWifiIndex, 
   if (saveWifiNetworks()) return true;
   config = previous;
   activeWifiIndex = previousActiveWifiIndex;
-  if (!saveWifiNetworks()) logLine(failure);
+  logLine(failure);
   return false;
 }
 
@@ -672,7 +699,7 @@ bool upsertSavedNetwork(const String &ssid, const String &password, WifiSecurity
   config.savedNetworks[0] = network;
   config.savedNetworkCount = newCount;
   activeWifiIndex = 0;
-  return saveWifiOrRestore(previous, previousActiveWifiIndex, "saved Wi-Fi rollback could not be persisted");
+  return saveWifiOrRestore(previous, previousActiveWifiIndex, "saved Wi-Fi update aborted; previous bank retained");
 }
 
 bool promoteSavedNetwork(uint8_t index) {
@@ -685,11 +712,12 @@ bool promoteSavedNetwork(uint8_t index) {
   }
   config.savedNetworks[0] = network;
   activeWifiIndex = 0;
-  return saveWifiOrRestore(previous, previousActiveWifiIndex, "preferred Wi-Fi rollback could not be persisted");
+  return saveWifiOrRestore(previous, previousActiveWifiIndex, "preferred Wi-Fi update aborted; previous bank retained");
 }
 
-bool saveConfigAll() {
-  bool success = saveWifiNetworks();
+bool saveGeneralConfig() {
+  if (!prefsReady) return false;
+  bool success = true;
   if (prefs.putUChar("mode", static_cast<uint8_t>(config.mode)) != sizeof(uint8_t)) success = false;
   if (prefs.putUChar("last_view", static_cast<uint8_t>(config.lastView)) != sizeof(uint8_t)) success = false;
   if (!putStringVerified("title", config.title)) success = false;
@@ -729,6 +757,7 @@ bool saveConfigAll() {
 }
 
 bool saveViewState() {
+  if (!prefsReady) return false;
   const bool viewSaved = prefs.putUChar("last_view", static_cast<uint8_t>(config.lastView)) == sizeof(uint8_t);
   const bool cycleSaved = prefs.putUChar("cycle_idx", config.cycleIndex) == sizeof(uint8_t);
   return viewSaved && cycleSaved;
@@ -752,6 +781,7 @@ void processViewStateSave() {
 
 bool loadConfig() {
   config = Config();
+  if (!prefsReady) return false;
   if (!prefs.isKey("cfg_ver")) return false;
   uint16_t version = prefs.getUShort("cfg_ver", 0);
   if (version < 1 || version > CONFIG_VERSION) {
@@ -764,6 +794,7 @@ bool loadConfig() {
   const bool migrateToV5 = version < 5;
   const bool migrateToV6 = version < 6;
   const bool migrateToV7 = version < 7;
+  const bool migrateToV8 = version < 8;
   config.version = CONFIG_VERSION;
   if (migrateToV4) {
     String legacySsid = prefs.getString("wifi_ssid", "");
@@ -774,20 +805,21 @@ bool loadConfig() {
       config.savedNetworkCount = 1;
     }
   } else {
-    uint8_t storedCount = prefs.getUChar("wifi_count", 0);
+    const uint8_t storedBank = migrateToV8 ? 0 : activeWifiBank();
+    uint8_t storedCount = prefs.getUChar(savedWifiCountKey(storedBank), 0);
     if (storedCount > MAX_SAVED_NETWORKS) storedCount = MAX_SAVED_NETWORKS;
     for (uint8_t i = 0; i < storedCount; ++i) {
-      String ssid = prefs.getString(savedWifiSsidKey(i).c_str(), "");
-      String password = prefs.getString(savedWifiPassKey(i).c_str(), "");
+      String ssid = prefs.getString(savedWifiSsidKey(i, storedBank).c_str(), "");
+      String password = prefs.getString(savedWifiPassKey(i, storedBank).c_str(), "");
       WifiSecurityType security = WifiSecurityType::PERSONAL;
       String username;
       String identity;
       if (!migrateToV7) {
-        const uint8_t storedSecurity = prefs.getUChar(savedWifiSecurityKey(i).c_str(), 0);
+        const uint8_t storedSecurity = prefs.getUChar(savedWifiSecurityKey(i, storedBank).c_str(), 0);
         if (storedSecurity == static_cast<uint8_t>(WifiSecurityType::ENTERPRISE_PEAP)) {
           security = WifiSecurityType::ENTERPRISE_PEAP;
-          username = prefs.getString(savedWifiUsernameKey(i).c_str(), "");
-          identity = prefs.getString(savedWifiIdentityKey(i).c_str(), "");
+          username = prefs.getString(savedWifiUsernameKey(i, storedBank).c_str(), "");
+          identity = prefs.getString(savedWifiIdentityKey(i, storedBank).c_str(), "");
         }
       }
       if (ssid.length() == 0 || ssid.length() > 32) continue;
@@ -877,8 +909,8 @@ bool loadConfig() {
   config.lastDday = prefs.getInt("last_dday", 0);
   int y, m, d;
   if (!parseDate(config.target, y, m, d)) config.target = "2026-11-19";
-  if (migrateToV3 || migrateToV4 || migrateToV5 || migrateToV6 || migrateToV7) {
-    if (saveConfigAll()) {
+  if (migrateToV3 || migrateToV4 || migrateToV5 || migrateToV6 || migrateToV7 || migrateToV8) {
+    if (saveGeneralConfig()) {
       logLine(String("configuration migrated from schema ") + String(version) + " to " + String(CONFIG_VERSION));
     } else {
       logLine("configuration migration could not be persisted");
@@ -2841,6 +2873,8 @@ void handleStatus() {
   json += "\"flash_total\":" + String(ESP.getFlashChipSize()) + ",";
   json += "\"sketch_size\":" + String(ESP.getSketchSize()) + ",";
   json += "\"ota_free\":" + String(ESP.getFreeSketchSpace()) + ",";
+  json += "\"nvs_ready\":" + String(prefsReady ? "true" : "false") + ",";
+  json += "\"nvs_free_entries\":" + String(prefsReady ? prefs.freeEntries() : 0) + ",";
   json += "\"time_valid\":" + String(timeIsValid() ? "true" : "false") + ",";
   json += "\"last_sync\":\"" + jsonEscape(formatEpoch(config.lastSync)) + "\",";
   json += "\"wifi_test\":\"" + String(wifiTestStateName(wifiTestState)) + "\",";
@@ -2965,7 +2999,9 @@ void handleWifiScan() {
     const wifi_auth_mode_t auth = static_cast<wifi_auth_mode_t>(WiFi.encryptionType(i));
     json += "{\"ssid\":\"" + jsonEscape(ssid) + "\",\"rssi\":" + WiFi.RSSI(i);
     json += ",\"open\":" + String(auth == WIFI_AUTH_OPEN ? "true" : "false");
-    json += ",\"enterprise\":" + String(wifiAuthIsEnterprise(auth) ? "true" : "false") + "}";
+    const bool enterpriseCaRequired = wifiAuthRequiresEnterpriseCa(auth);
+    json += ",\"enterprise\":" + String(wifiAuthIsEnterprise(auth) && !enterpriseCaRequired ? "true" : "false");
+    json += ",\"enterprise_ca_required\":" + String(enterpriseCaRequired ? "true" : "false") + "}";
   }
   json += "]}";
   WiFi.scanDelete();
@@ -3079,9 +3115,9 @@ void handlePostConfig() {
   if (next.mode != TopMode::SELECTED_CYCLE) next.lastView = topModeView(next.mode);
   const Config previous = config;
   config = next;
-  if (!saveConfigAll()) {
+  if (!saveGeneralConfig()) {
     config = previous;
-    if (!saveConfigAll()) logLine("configuration rollback could not be persisted");
+    if (!saveGeneralConfig()) logLine("configuration rollback could not be persisted");
     return sendJson(500, "{\"error\":\"설정을 저장하지 못했습니다. 저장공간 상태를 확인하세요.\"}");
   }
   currentCycleIndex = config.cycleIndex;
@@ -3188,6 +3224,7 @@ void restartAfterFactoryReset() {
 
 void handleFactoryReset() {
   if (!authorizePortalRequest()) return;
+  if (!prefsReady) return sendJson(503, "{\"error\":\"NVS 저장공간을 사용할 수 없어 공장 초기화를 실행할 수 없습니다.\"}");
   if (server.arg("confirm") != "RESET") return sendJson(400, "{\"error\":\"초기화 확인 문자열이 올바르지 않습니다.\"}");
   if (!prefs.clear()) return sendJson(500, "{\"error\":\"설정 저장공간을 초기화하지 못했습니다.\"}");
   sendJson(200, "{\"ok\":true,\"restarting\":true}");
@@ -3205,9 +3242,9 @@ void handleSettingsReset() {
   for (uint8_t i = 0; i < networkCount; ++i) config.savedNetworks[i] = previous.savedNetworks[i];
   config.lastSync = previous.lastSync;
   config.lastDday = previous.lastDday;
-  if (!saveConfigAll()) {
+  if (!saveGeneralConfig()) {
     config = previous;
-    if (!saveConfigAll()) logLine("settings reset rollback could not be persisted");
+    if (!saveGeneralConfig()) logLine("settings reset rollback could not be persisted");
     return sendJson(500, "{\"error\":\"기본 설정을 저장하지 못했습니다.\"}");
   }
 
@@ -3349,11 +3386,16 @@ void failWifiTest(const String &reason);
 
 void finishWifiTestSuccess() {
   const Config previous = config;
+  // Persist the non-Wi-Fi schema/defaults first so a brand-new device has a
+  // valid cfg_ver even if the subsequent Wi-Fi bank transaction fails.
+  if (!saveGeneralConfig()) {
+    failWifiTest("Wi-Fi 확인은 성공했지만 일반 설정 저장에 실패했습니다.");
+    return;
+  }
   if (!upsertSavedNetwork(pendingSsid, pendingPass, pendingWifiSecurity,
-                          pendingWifiUsername, pendingWifiIdentity) || !saveConfigAll()) {
+                          pendingWifiUsername, pendingWifiIdentity)) {
     config = previous;
-    if (!saveConfigAll()) logLine("tested Wi-Fi save rollback could not be persisted");
-    failWifiTest("Wi-Fi 확인은 성공했지만 설정 저장에 실패했습니다.");
+    failWifiTest("Wi-Fi 확인은 성공했지만 Wi-Fi 설정 저장에 실패했습니다.");
     return;
   }
   pendingSsid = "";
@@ -4067,10 +4109,13 @@ void setupFirmware() {
   tzset();
   sntp_set_time_sync_notification_cb(ntpTimeAvailable);
 
-  prefs.begin(PREFS_NS, false);
-  lastOtaResult = prefs.getString("ota_result", "");
-  const String previousOtaStage = prefs.getString("ota_stage", "");
-  const String previousOtaTarget = prefs.getString("ota_target", "");
+  prefsReady = prefs.begin(PREFS_NS, false);
+  if (!prefsReady) {
+    logLine("NVS STORAGE ERROR: Preferences namespace could not be opened");
+  }
+  lastOtaResult = prefsReady ? prefs.getString("ota_result", "") : "";
+  const String previousOtaStage = prefsReady ? prefs.getString("ota_stage", "") : "";
+  const String previousOtaTarget = prefsReady ? prefs.getString("ota_target", "") : "";
   if (previousOtaStage.length()) {
     if (previousOtaStage == "rebooting" && previousOtaTarget == FIRMWARE_VERSION) {
       lastOtaResult = "validating";
@@ -4087,8 +4132,8 @@ void setupFirmware() {
     }
   }
   bool provisioned = loadConfig() && config.savedNetworkCount > 0;
-  lastUpdateCheckEpoch = prefs.getULong64("ota_last_ok", 0);
-  latestFirmwareVersion = prefs.getString("ota_latest", "");
+  lastUpdateCheckEpoch = prefsReady ? prefs.getULong64("ota_last_ok", 0) : 0;
+  latestFirmwareVersion = prefsReady ? prefs.getString("ota_latest", "") : "";
   oledReady = initDisplay();
   if (oledReady) bootSplashStartedMs = millis();
   if (!oledReady) setRuntimeState(RuntimeState::ERROR_DISPLAY);
