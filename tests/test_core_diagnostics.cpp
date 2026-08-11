@@ -80,16 +80,34 @@ void testCorruptionFallback() {
 
 void testDuplicateSuppression() {
   using MilestoneDiagnostics::Event;
+  MilestoneDiagnostics::SuppressionEntry entries[3];
+  MilestoneDiagnostics::rememberDiagnosticWrite(Event::NTP_TIMEOUT, 0, 10000, entries, 3);
   EXPECT_TRUE(MilestoneDiagnostics::shouldSuppressDuplicate(
-      Event::NTP_TIMEOUT, 0, 15000, Event::NTP_TIMEOUT, 0, 10000, true, 60000));
+      Event::NTP_TIMEOUT, 0, 15000, entries, 3, 60000));
   EXPECT_FALSE(MilestoneDiagnostics::shouldSuppressDuplicate(
-      Event::NTP_SUCCESS, 0, 15000, Event::NTP_TIMEOUT, 0, 10000, true, 60000));
+      Event::NTP_SUCCESS, 0, 15000, entries, 3, 60000));
   EXPECT_FALSE(MilestoneDiagnostics::shouldSuppressDuplicate(
-      Event::NTP_TIMEOUT, 1, 15000, Event::NTP_TIMEOUT, 0, 10000, true, 60000));
+      Event::NTP_TIMEOUT, 1, 15000, entries, 3, 60000));
   EXPECT_FALSE(MilestoneDiagnostics::shouldSuppressDuplicate(
-      Event::NTP_TIMEOUT, 0, 70000, Event::NTP_TIMEOUT, 0, 10000, true, 60000));
+      Event::NTP_TIMEOUT, 0, 70000, entries, 3, 60000));
+
+  // Interleaved events must not defeat suppression of the original pair.
+  MilestoneDiagnostics::rememberDiagnosticWrite(Event::NTP_SUCCESS, 0, 12000, entries, 3);
   EXPECT_TRUE(MilestoneDiagnostics::shouldSuppressDuplicate(
-      Event::NTP_TIMEOUT, 0, 10, Event::NTP_TIMEOUT, 0, UINT32_MAX - 20, true, 60000));
+      Event::NTP_TIMEOUT, 0, 15000, entries, 3, 60000));
+
+  MilestoneDiagnostics::SuppressionEntry wrapped[1];
+  MilestoneDiagnostics::rememberDiagnosticWrite(Event::NTP_TIMEOUT, 0, UINT32_MAX - 20, wrapped, 1);
+  EXPECT_TRUE(MilestoneDiagnostics::shouldSuppressDuplicate(
+      Event::NTP_TIMEOUT, 0, 10, wrapped, 1, 60000));
+
+  // A full table evicts the least recently written pair.
+  MilestoneDiagnostics::rememberDiagnosticWrite(Event::WIFI_DISCONNECTED, 1, 13000, entries, 3);
+  MilestoneDiagnostics::rememberDiagnosticWrite(Event::OTA_FAILED, 2, 80000, entries, 3);
+  EXPECT_FALSE(MilestoneDiagnostics::shouldSuppressDuplicate(
+      Event::NTP_TIMEOUT, 0, 80001, entries, 3, 60000));
+  EXPECT_TRUE(MilestoneDiagnostics::shouldSuppressDuplicate(
+      Event::OTA_FAILED, 2, 80001, entries, 3, 60000));
 }
 
 void testEventClassification() {

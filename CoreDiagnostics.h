@@ -8,6 +8,7 @@ namespace MilestoneDiagnostics {
 constexpr uint32_t HISTORY_MAGIC = 0x4D444831UL;  // "MDH1"
 constexpr uint16_t HISTORY_VERSION = 1;
 constexpr uint8_t HISTORY_CAPACITY = 16;
+constexpr uint8_t SUPPRESSION_CAPACITY = 16;
 constexpr int16_t DETAIL_MAX = 32767;
 constexpr int32_t VALUE_MAX = 2147483647L;
 
@@ -87,6 +88,13 @@ struct History {
   uint32_t checksum = 0;
 };
 
+struct SuppressionEntry {
+  Event event = Event::NONE;
+  int16_t detail = 0;
+  uint32_t lastWriteMs = 0;
+  bool valid = false;
+};
+
 static_assert(sizeof(Record) == 16, "Diagnostic Record layout changed");
 static_assert(sizeof(History) == 272, "Diagnostic History layout changed");
 
@@ -96,8 +104,10 @@ bool valid(const History &history);
 void append(History &history, const Record &record);
 bool newest(const History &history, uint8_t newestIndex, Record &record);
 bool shouldSuppressDuplicate(Event event, int16_t detail, uint32_t nowMs,
-                             Event lastEvent, int16_t lastDetail, uint32_t lastWriteMs,
-                             bool lastWriteValid, uint32_t windowMs);
+                             const SuppressionEntry *entries, size_t entryCount,
+                             uint32_t windowMs);
+void rememberDiagnosticWrite(Event event, int16_t detail, uint32_t nowMs,
+                             SuppressionEntry *entries, size_t entryCount);
 const char *eventName(Event event);
 bool isError(Event event);
 

@@ -46,7 +46,7 @@ SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 
 namespace Milestone {
 
-constexpr char FIRMWARE_VERSION[] = "1.8.2";
+constexpr char FIRMWARE_VERSION[] = "1.8.3";
 constexpr char AP_SSID[] = "MILESTONE-D1-SETUP";
 constexpr char HOSTNAME[] = "milestone-d1";
 constexpr char PREFS_NS[] = "milestone";
@@ -349,10 +349,7 @@ String otaRollbackLastAction;
 String otaRollbackLastReason;
 
 MilestoneDiagnostics::History diagnosticHistory;
-MilestoneDiagnostics::Event lastDiagnosticEvent = MilestoneDiagnostics::Event::NONE;
-int16_t lastDiagnosticDetail = 0;
-uint32_t lastDiagnosticWriteMs = 0;
-bool lastDiagnosticWriteValid = false;
+MilestoneDiagnostics::SuppressionEntry diagnosticSuppression[MilestoneDiagnostics::SUPPRESSION_CAPACITY];
 bool diagnosticBootValidationPending = false;
 bool diagnosticBootValidated = false;
 uint32_t diagnosticBootValidationStartedMs = 0;

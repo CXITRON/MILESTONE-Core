@@ -1,16 +1,15 @@
 constexpr uint32_t DIAGNOSTIC_DUPLICATE_WINDOW_MS = 60UL * 1000UL;
 
-bool persistDiagnosticHistory() {
+bool persistDiagnosticHistory(const MilestoneDiagnostics::History &history) {
   if (!diagnosticsPrefsReady) return false;
-  const size_t written = diagnosticsPrefs.putBytes("history", &diagnosticHistory, sizeof(diagnosticHistory));
-  return written == sizeof(diagnosticHistory);
+  const size_t written = diagnosticsPrefs.putBytes("history", &history, sizeof(history));
+  return written == sizeof(history);
 }
 
 void resetDiagnosticRuntimeSuppression() {
-  lastDiagnosticEvent = MilestoneDiagnostics::Event::NONE;
-  lastDiagnosticDetail = 0;
-  lastDiagnosticWriteMs = 0;
-  lastDiagnosticWriteValid = false;
+  for (uint8_t i = 0; i < MilestoneDiagnostics::SUPPRESSION_CAPACITY; ++i) {
+    diagnosticSuppression[i] = MilestoneDiagnostics::SuppressionEntry();
+  }
 }
 
 void initializeDiagnosticStorage() {
@@ -31,8 +30,8 @@ void recordDiagnostic(MilestoneDiagnostics::Event event, int16_t detail = 0,
   if (event == MilestoneDiagnostics::Event::NONE) return;
   const uint32_t nowMs = millis();
   if (!force && MilestoneDiagnostics::shouldSuppressDuplicate(
-          event, detail, nowMs, lastDiagnosticEvent, lastDiagnosticDetail,
-          lastDiagnosticWriteMs, lastDiagnosticWriteValid, DIAGNOSTIC_DUPLICATE_WINDOW_MS)) {
+          event, detail, nowMs, diagnosticSuppression,
+          MilestoneDiagnostics::SUPPRESSION_CAPACITY, DIAGNOSTIC_DUPLICATE_WINDOW_MS)) {
     return;
   }
 
@@ -44,17 +43,17 @@ void recordDiagnostic(MilestoneDiagnostics::Event event, int16_t detail = 0,
   record.event = event;
   record.detail = detail;
   record.value = value;
-  MilestoneDiagnostics::append(diagnosticHistory, record);
+  MilestoneDiagnostics::History nextHistory = diagnosticHistory;
+  MilestoneDiagnostics::append(nextHistory, record);
 
-  if (diagnosticsPrefsReady && !persistDiagnosticHistory()) {
+  if (diagnosticsPrefsReady && !persistDiagnosticHistory(nextHistory)) {
     logLine(String("diagnostic history save failed: ") + MilestoneDiagnostics::eventName(event));
     return;
   }
 
-  lastDiagnosticEvent = event;
-  lastDiagnosticDetail = detail;
-  lastDiagnosticWriteMs = nowMs;
-  lastDiagnosticWriteValid = true;
+  diagnosticHistory = nextHistory;
+  MilestoneDiagnostics::rememberDiagnosticWrite(
+      event, detail, nowMs, diagnosticSuppression, MilestoneDiagnostics::SUPPRESSION_CAPACITY);
 }
 
 bool clearDiagnosticHistory() {
@@ -143,7 +142,12 @@ void noteWifiConnected(uint32_t now) {
 void processDiagnostics() {
   if (!diagnosticBootValidationPending ||
       !elapsed(millis(), diagnosticBootValidationStartedMs, OTA_BOOT_CONFIRM_MS)) return;
-  if (!oledReady || !prefsReady) return;
+  const bool stableRuntime = runtimeState == RuntimeState::UNPROVISIONED ||
+                             runtimeState == RuntimeState::SETUP_AP ||
+                             runtimeState == RuntimeState::RUNNING_ONLINE ||
+                             runtimeState == RuntimeState::RUNNING_OFFLINE ||
+                             runtimeState == RuntimeState::WIFI_SLEEP;
+  if (!oledReady || !prefsReady || thermalSafeMode || !stableRuntime) return;
   diagnosticBootValidationPending = false;
   diagnosticBootValidated = true;
   recordDiagnostic(MilestoneDiagnostics::Event::BOOT_VALIDATED, 0, 0, true);

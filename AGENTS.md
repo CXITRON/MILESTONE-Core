@@ -7,7 +7,7 @@ The source code is always the final authority when documentation and implementat
 ## 1. Project baseline
 
 - Product: MILESTONE Core
-- Current firmware baseline: `1.8.2`
+- Current firmware baseline: `1.8.3`
 - Persistent config schema: `8`
 - Hardware: Waveshare ESP32-S3-Zero + SH1107 128×128 OLED
 - Main branch: `main`
@@ -80,7 +80,7 @@ Do not bypass these checks merely to make a release succeed.
 
 ## 4. Versioning
 
-Use patch releases (`1.8.1` → `1.8.2`) for bug fixes, validation hardening, contained backwards-compatible observability/diagnostics additions, small internal changes, documentation/tooling that accompanies a firmware correction, and other narrowly scoped compatible changes.
+Use patch releases (`1.8.2` → `1.8.3`) for bug fixes, validation hardening, contained backwards-compatible observability/diagnostics additions, small internal changes, documentation/tooling that accompanies a firmware correction, and other narrowly scoped compatible changes.
 Use minor releases (`1.8.x` → `1.9.0`) for broad primary-product capabilities, incompatible behavior changes, or substantial firmware architecture changes.
 Do not increment `CONFIG_VERSION` unless the persistent NVS schema actually changes and a migration path is implemented.
 

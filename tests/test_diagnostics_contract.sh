@@ -21,5 +21,10 @@ require_text PortalPage.h "api('/api/diagnostics')"
 require_text PortalPage.h "api('/api/diagnostics/clear'"
 require_text PortalPage.h '진단 정보 복사'
 require_text PortalPage.h '진단 이력 지우기'
+require_text CoreDiagnostics.inc 'MilestoneDiagnostics::History nextHistory = diagnosticHistory;'
+require_text CoreDiagnostics.inc 'persistDiagnosticHistory(nextHistory)'
+require_text CoreDiagnostics.inc 'diagnosticHistory = nextHistory;'
+require_text CoreDiagnostics.inc 'runtimeState == RuntimeState::RUNNING_ONLINE'
+require_text CoreDiagnostics.inc 'thermalSafeMode || !stableRuntime'
 
 printf 'Diagnostics portal/API contract test passed\n'

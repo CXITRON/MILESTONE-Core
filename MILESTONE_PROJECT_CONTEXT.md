@@ -1,6 +1,6 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v1.8.2
+> Current baseline: MILESTONE Core v1.8.3
 > Hardware: Waveshare ESP32-S3-Zero + SH1107 128×128 OLED
 > Repository: `CXITRON/MILESTONE-Core`
 
@@ -68,7 +68,7 @@ The `*.inc` runtime files are intentionally included into the sketch as one tran
 Firmware and persistent schema versions are separate concepts.
 
 ```cpp
-FIRMWARE_VERSION = "1.8.2"
+FIRMWARE_VERSION = "1.8.3"
 CONFIG_VERSION = 8
 ```
 
@@ -106,7 +106,7 @@ Application-level rollback cannot recover a candidate that fails before the roll
 
 ### Diagnostics & Health
 
-v1.8.2 adds `CoreDiagnostics.inc` plus host-testable `CoreDiagnostics.h/.cpp`. The runtime stores only the latest 16 significant events in a fixed-size circular history under the separate `milestone_diag` Preferences namespace. Each record stores numeric event/detail/value fields, uptime, and an epoch only when system time is valid. The history has a version, checksum, and fixed capacity; invalid/corrupt storage is reset without touching normal settings.
+v1.8.2 adds `CoreDiagnostics.inc` plus host-testable `CoreDiagnostics.h/.cpp`. The runtime stores only the latest 16 significant events in a fixed-size circular history under the separate `milestone_diag` Preferences namespace. Each record stores numeric event/detail/value fields, uptime, and an epoch only when system time is valid. The history has a version, checksum, and fixed capacity; invalid/corrupt storage is reset without touching normal settings. v1.8.3 makes diagnostic writes transactional in RAM/NVS, tracks duplicate suppression per event/detail pair even when other events are interleaved, and records boot validation only after the runtime reaches a stable operating state.
 
 Important write-policy invariants:
 
@@ -206,7 +206,7 @@ milestone-release --dry-run taildrop X.Y.Z "short release note"
 
 Use `--yes` only when an unattended final publish is explicitly desired.
 
-## 8. Areas intentionally not refactored through v1.8.2
+## 8. Areas intentionally not refactored through v1.8.3
 
 The following broad refactors were deliberately rejected because their regression risk exceeded their immediate value:
 

@@ -50,10 +50,46 @@ bool newest(const History &history, uint8_t newestIndex, Record &record) {
 }
 
 bool shouldSuppressDuplicate(Event event, int16_t detail, uint32_t nowMs,
-                             Event lastEvent, int16_t lastDetail, uint32_t lastWriteMs,
-                             bool lastWriteValid, uint32_t windowMs) {
-  if (!lastWriteValid || event != lastEvent || detail != lastDetail) return false;
-  return static_cast<uint32_t>(nowMs - lastWriteMs) < windowMs;
+                             const SuppressionEntry *entries, size_t entryCount,
+                             uint32_t windowMs) {
+  if (!entries) return false;
+  for (size_t i = 0; i < entryCount; ++i) {
+    const SuppressionEntry &entry = entries[i];
+    if (entry.valid && entry.event == event && entry.detail == detail) {
+      return static_cast<uint32_t>(nowMs - entry.lastWriteMs) < windowMs;
+    }
+  }
+  return false;
+}
+
+void rememberDiagnosticWrite(Event event, int16_t detail, uint32_t nowMs,
+                             SuppressionEntry *entries, size_t entryCount) {
+  if (!entries || entryCount == 0) return;
+
+  size_t destination = entryCount;
+  uint32_t oldestAge = 0;
+  for (size_t i = 0; i < entryCount; ++i) {
+    SuppressionEntry &entry = entries[i];
+    if (entry.valid && entry.event == event && entry.detail == detail) {
+      destination = i;
+      break;
+    }
+    if (!entry.valid) {
+      destination = i;
+      break;
+    }
+    const uint32_t age = static_cast<uint32_t>(nowMs - entry.lastWriteMs);
+    if (destination == entryCount || age > oldestAge) {
+      destination = i;
+      oldestAge = age;
+    }
+  }
+
+  SuppressionEntry &entry = entries[destination];
+  entry.event = event;
+  entry.detail = detail;
+  entry.lastWriteMs = nowMs;
+  entry.valid = true;
 }
 
 const char *eventName(Event event) {
