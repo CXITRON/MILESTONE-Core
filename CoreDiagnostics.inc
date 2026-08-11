@@ -40,7 +40,7 @@ void recordDiagnostic(MilestoneDiagnostics::Event event, int16_t detail = 0,
   const time_t nowEpoch = time(nullptr);
   record.epoch = nowEpoch >= MIN_VALID_EPOCH ? static_cast<uint32_t>(nowEpoch) : 0;
   const uint64_t up = uptimeSeconds();
-  record.uptimeSec = up > UMilestoneDiagnostics::VALUE_MAX ? UMilestoneDiagnostics::VALUE_MAX : static_cast<uint32_t>(up);
+  record.uptimeSec = up > UINT32_MAX ? UINT32_MAX : static_cast<uint32_t>(up);
   record.event = event;
   record.detail = detail;
   record.value = value;

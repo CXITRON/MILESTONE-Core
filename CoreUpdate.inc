@@ -47,7 +47,7 @@ bool parseJsonUintField(const String &json, const char *key, uint32_t &value) {
   uint64_t parsed = 0;
   while (position < static_cast<int>(json.length()) && isDigit(json[position])) {
     parsed = parsed * 10ULL + static_cast<uint8_t>(json[position++] - '0');
-    if (parsed > UMilestoneDiagnostics::VALUE_MAX) return false;
+    if (parsed > UINT32_MAX) return false;
   }
   value = static_cast<uint32_t>(parsed);
   return true;
