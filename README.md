@@ -530,3 +530,8 @@ release/MILESTONE_Core.json
 - 기기 세부정보 화면은 OTA 검증용 1.5.1에서 추가 예정
 
 정식 버전: `1.8.2`
+
+
+### Taildrop 원격 이력 조정
+
+`milestone-release taildrop`은 ZIP의 HEAD가 최신 `origin/main`을 포함하지 않으면, 양쪽이 공유하는 가장 최신 릴리즈 태그 이후의 Taildrop 커밋만 최신 `origin/main` 위에 재적용합니다. 충돌하거나 안전한 공통 태그를 찾지 못하면 기존 프로젝트를 교체하거나 원격에 push하지 않고 중단합니다. 강제 push는 사용하지 않습니다.

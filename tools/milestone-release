@@ -14,6 +14,7 @@ VERSION=''
 NOTES=''
 ASSUME_YES=0
 DRY_RUN=0
+INPUT_ZIP=''
 PROJECT_DIR=''
 TAILDROP_ROOT=''
 BACKUP_DIR=''
@@ -27,6 +28,7 @@ MILESTONE Core release automation
 Usage:
   milestone-release [--yes] [--dry-run] local VERSION [NOTES]
   milestone-release [--yes] [--dry-run] taildrop VERSION [NOTES]
+  milestone-release [--yes] [--dry-run] --zip FILE taildrop VERSION [NOTES]
 
 Modes:
   local     Run from the MILESTONE_Core project root. Uses the current working tree.
@@ -37,6 +39,8 @@ Options:
   -y, --yes      Accept the final GitHub publish confirmation automatically.
   -n, --dry-run  Validate, test, and build only. Do not commit, replace the local
                  project, create/push a tag, push main, or create a GitHub Release.
+  --zip FILE      Use an already received ZIP instead of calling Tailscale file get.
+                  Valid only with taildrop mode; the source ZIP is not modified.
   -h, --help     Show this help.
 
 Examples:
@@ -104,6 +108,12 @@ while (( $# > 0 )); do
       DRY_RUN=1
       shift
       ;;
+    --zip)
+      shift
+      (( $# > 0 )) || die "--zip 뒤에 ZIP 파일 경로가 필요합니다."
+      INPUT_ZIP=$1
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -127,6 +137,7 @@ while (( $# > 0 )); do
 done
 
 [[ $MODE == local || $MODE == taildrop ]] || { usage >&2; exit 2; }
+[[ $MODE == taildrop || -z $INPUT_ZIP ]] || die "--zip은 taildrop 모드에서만 사용할 수 있습니다."
 [[ $VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "VERSION은 1.8.2와 같은 형식이어야 합니다."
 NOTES=${NOTES:-"MILESTONE Core v${VERSION}"}
 TAG="v${VERSION}"
@@ -191,13 +202,48 @@ validate_branch_and_remote() {
   esac
 }
 
+find_common_release_base() {
+  local tag
+  while IFS= read -r tag; do
+    [[ -n $tag ]] || continue
+    [[ $tag == "$TAG" ]] && continue
+    if git -C "$PROJECT_DIR" merge-base --is-ancestor "$tag" HEAD &&
+       git -C "$PROJECT_DIR" merge-base --is-ancestor "$tag" origin/main; then
+      printf '%s\n' "$tag"
+      return 0
+    fi
+  done < <(git -C "$PROJECT_DIR" tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$')
+  return 1
+}
+
+reconcile_taildrop_with_remote() {
+  [[ $MODE == taildrop ]] || return 1
+
+  local base_tag
+  base_tag=$(find_common_release_base) || \
+    die "Taildrop 프로젝트와 origin/main의 공통 이전 릴리즈 태그를 찾지 못했습니다. 자동 병합하지 않습니다."
+
+  log "원격 main 변경 감지: ${base_tag} 이후 Taildrop 변경을 최신 origin/main 위에 재적용"
+  if ! git -C "$PROJECT_DIR" rebase --onto origin/main "$base_tag" main; then
+    git -C "$PROJECT_DIR" rebase --abort >/dev/null 2>&1 || true
+    die "원격 변경과 Taildrop 변경이 충돌했습니다. 기존 프로젝트는 변경하지 않았습니다."
+  fi
+
+  git -C "$PROJECT_DIR" merge-base --is-ancestor origin/main HEAD || \
+    die "원격 main 재적용 후 ancestry 검증에 실패했습니다."
+}
+
 refresh_remote() {
   log "GitHub 원격 상태 확인"
   gh auth status >/dev/null
   git -C "$PROJECT_DIR" fetch --quiet origin main --tags
 
   if ! git -C "$PROJECT_DIR" merge-base --is-ancestor origin/main HEAD; then
-    die "현재 HEAD가 origin/main을 포함하지 않습니다. 먼저 원격 변경을 정리하세요."
+    if [[ $MODE == taildrop ]]; then
+      reconcile_taildrop_with_remote
+    else
+      die "현재 HEAD가 origin/main을 포함하지 않습니다. 먼저 원격 변경을 정리하세요."
+    fi
   fi
 }
 
@@ -395,8 +441,10 @@ prepare_local_mode() {
 }
 
 prepare_taildrop_mode() {
-  require_command tailscale
-  require_command sudo
+  if [[ -z $INPUT_ZIP ]]; then
+    require_command tailscale
+    require_command sudo
+  fi
 
   PROJECT_DIR=$DEFAULT_PROJECT_DIR
   local dev_dir
@@ -416,12 +464,18 @@ prepare_taildrop_mode() {
   local unpack="$TAILDROP_ROOT/unpack"
   mkdir -p -- "$inbox" "$unpack"
 
-  log "Tailscale Taildrop에서 파일 수신"
-  sudo tailscale file get "$inbox"
-  sudo chown -R -- "$USER:$(id -gn)" "$inbox"
-
-  local zip="$inbox/MILESTONE_Core_${VERSION}.zip"
-  [[ -f $zip ]] || die "Taildrop에서 정확한 파일을 찾지 못했습니다: MILESTONE_Core_${VERSION}.zip"
+  local zip
+  if [[ -n $INPUT_ZIP ]]; then
+    [[ -f $INPUT_ZIP ]] || die "지정한 ZIP 파일이 없습니다: $INPUT_ZIP"
+    zip=$(realpath "$INPUT_ZIP")
+    log "지정 ZIP 사용: $zip"
+  else
+    log "Tailscale Taildrop에서 파일 수신"
+    sudo tailscale file get "$inbox"
+    sudo chown -R -- "$USER:$(id -gn)" "$inbox"
+    zip="$inbox/MILESTONE_Core_${VERSION}.zip"
+    [[ -f $zip ]] || die "Taildrop에서 정확한 파일을 찾지 못했습니다: MILESTONE_Core_${VERSION}.zip"
+  fi
 
   log "ZIP 구조 검증"
   local bad_entry=0 entry

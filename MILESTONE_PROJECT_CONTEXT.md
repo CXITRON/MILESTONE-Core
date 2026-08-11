@@ -234,3 +234,12 @@ milestone-release taildrop X.Y.Z "release note"
 ```
 
 The agent should select the mode according to whether the source was edited directly on the PC or delivered as a Taildrop ZIP.
+
+
+### Taildrop 원격 이력 조정
+
+`milestone-release taildrop`은 ZIP의 HEAD가 최신 `origin/main`을 포함하지 않으면, 양쪽이 공유하는 가장 최신 릴리즈 태그 이후의 Taildrop 커밋만 최신 `origin/main` 위에 재적용합니다. 충돌하거나 안전한 공통 태그를 찾지 못하면 기존 프로젝트를 교체하거나 원격에 push하지 않고 중단합니다. 강제 push는 사용하지 않습니다.
+
+### Already-received ZIP
+
+For recovery or automation, `milestone-release --zip /path/to/MILESTONE_Core_X.Y.Z.zip taildrop X.Y.Z "notes"` runs the same staging/reconciliation/release pipeline without fetching another Taildrop file. Normal user-facing usage remains `milestone-release taildrop ...`.
