@@ -52,6 +52,7 @@ MILESTONE_Core/
 │   ├── test_core_logic.cpp
 │   ├── test_core_diagnostics.cpp
 │   ├── test_diagnostics_contract.sh
+│   ├── test_release_reconcile.sh
 │   └── test_release_manifest.sh
 └── tools/
     ├── make-release.sh
@@ -187,10 +188,10 @@ An archive must be named exactly:
 MILESTONE_Core_X.Y.Z.zip
 ```
 
-Then run from any directory:
+Then run from an existing directory outside the live project root:
 
 ```bash
-milestone-release taildrop X.Y.Z "short release note"
+cd /tmp && milestone-release taildrop X.Y.Z "short release note"
 ```
 
 The tool receives the archive into a staging directory, verifies it, runs tests and the firmware build before replacing the live project, and restores the previous project if a pre-publish failure occurs.
@@ -201,7 +202,7 @@ Use `--dry-run` to validate/test/build without committing, replacing the live pr
 
 ```bash
 milestone-release --dry-run local X.Y.Z "short release note"
-milestone-release --dry-run taildrop X.Y.Z "short release note"
+cd /tmp && milestone-release --dry-run taildrop X.Y.Z "short release note"
 ```
 
 Use `--yes` only when an unattended final publish is explicitly desired.
@@ -230,7 +231,7 @@ milestone-release local X.Y.Z "release note"
 or
 
 ```bash
-milestone-release taildrop X.Y.Z "release note"
+cd /tmp && milestone-release taildrop X.Y.Z "release note"
 ```
 
 The agent should select the mode according to whether the source was edited directly on the PC or delivered as a Taildrop ZIP.
@@ -238,7 +239,7 @@ The agent should select the mode according to whether the source was edited dire
 
 ### Taildrop 원격 이력 조정
 
-`milestone-release taildrop`은 ZIP의 HEAD가 최신 `origin/main`을 포함하지 않으면, 양쪽이 공유하는 가장 최신 릴리즈 태그 이후의 Taildrop 커밋만 최신 `origin/main` 위에 재적용합니다. 충돌하거나 안전한 공통 태그를 찾지 못하면 기존 프로젝트를 교체하거나 원격에 push하지 않고 중단합니다. 강제 push는 사용하지 않습니다.
+`milestone-release taildrop`은 ZIP의 HEAD가 최신 `origin/main`을 포함하지 않으면 공통 릴리즈 태그를 확인한 뒤, 원격의 실제 펌웨어 버전과 일치하는 Taildrop 쪽 최신 커밋을 기준점으로 삼아 그 이후 변경만 최신 `origin/main` 위에 재적용합니다. 이미 원격에 반영된 같은 버전의 준비 커밋을 다시 재생하지 않습니다. 충돌하거나 안전한 버전 기준점을 찾지 못하면 기존 프로젝트를 교체하거나 원격에 push하지 않고 중단합니다. 강제 push는 사용하지 않습니다. 릴리즈 성공 후 설치된 `milestone-release` 명령도 새 프로젝트의 도구로 갱신합니다.
 
 ### Already-received ZIP
 

@@ -26,5 +26,10 @@ require_text CoreDiagnostics.inc 'persistDiagnosticHistory(nextHistory)'
 require_text CoreDiagnostics.inc 'diagnosticHistory = nextHistory;'
 require_text CoreDiagnostics.inc 'runtimeState == RuntimeState::RUNNING_ONLINE'
 require_text CoreDiagnostics.inc 'thermalSafeMode || !stableRuntime'
+require_text tools/milestone-release 'find_taildrop_version_anchor'
+require_text tools/milestone-release 'remote_version=$(source_version_at_ref origin/main)'
+require_text tools/milestone-release 'rebase --onto origin/main "$version_anchor" main'
+require_text tools/milestone-release 'refresh_installed_command'
+require_text tools/milestone-release "'cd /tmp' 후 다시 실행하세요."
 
 printf 'Diagnostics portal/API contract test passed\n'

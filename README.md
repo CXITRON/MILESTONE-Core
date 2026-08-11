@@ -229,10 +229,10 @@ cd /run/media/citron/T7/Documents/Dev/MILESTONE_Core
 milestone-release local 1.8.3 "Short release note"
 ```
 
-Tailscale Taildrop으로 `MILESTONE_Core_1.8.3.zip`을 받은 경우에는 어느 디렉터리에서든 실행할 수 있습니다.
+Tailscale Taildrop으로 `MILESTONE_Core_1.8.3.zip`을 받은 경우에는 교체 대상 프로젝트 디렉터리 밖의 정상적으로 존재하는 디렉터리에서 실행합니다. 기존 프로젝트가 교체될 때 현재 셸 경로가 사라지는 문제를 방지하기 위해 `/tmp`로 이동하는 방식을 권장합니다.
 
 ```bash
-milestone-release taildrop 1.8.3 "Short release note"
+cd /tmp && milestone-release taildrop 1.8.3 "Short release note"
 ```
 
 Taildrop 모드는 ZIP을 라이브 프로젝트에 바로 덮어쓰지 않습니다. 별도 staging 디렉터리에서 구조·버전·Git 상태를 검사하고 테스트와 ESP32 릴리즈 빌드까지 성공한 뒤에만 프로젝트를 교체합니다. GitHub 게시 전 실패하면 기존 프로젝트를 자동 복구합니다. `--dry-run`은 테스트/빌드까지만 수행하고 로컬 프로젝트·Git·GitHub를 변경하지 않습니다. `--yes`를 사용하지 않는 기본 동작은 최종 게시 직전에 한 번 확인합니다.
@@ -542,4 +542,4 @@ release/MILESTONE_Core.json
 
 ### Taildrop 원격 이력 조정
 
-`milestone-release taildrop`은 ZIP의 HEAD가 최신 `origin/main`을 포함하지 않으면, 양쪽이 공유하는 가장 최신 릴리즈 태그 이후의 Taildrop 커밋만 최신 `origin/main` 위에 재적용합니다. 충돌하거나 안전한 공통 태그를 찾지 못하면 기존 프로젝트를 교체하거나 원격에 push하지 않고 중단합니다. 강제 push는 사용하지 않습니다.
+`milestone-release taildrop`은 ZIP의 HEAD가 최신 `origin/main`을 포함하지 않으면 공통 릴리즈 태그를 확인한 뒤, 원격의 실제 펌웨어 버전과 일치하는 Taildrop 쪽 최신 커밋을 기준점으로 삼아 그 이후 변경만 최신 `origin/main` 위에 재적용합니다. 이미 원격에 반영된 같은 버전의 준비 커밋을 다시 재생하지 않습니다. 충돌하거나 안전한 버전 기준점을 찾지 못하면 기존 프로젝트를 교체하거나 원격에 push하지 않고 중단합니다. 강제 push는 사용하지 않습니다. 릴리즈 성공 후 설치된 `milestone-release` 명령도 새 프로젝트의 도구로 갱신합니다.

@@ -37,3 +37,4 @@ trap cleanup EXIT
 "$build_dir/test_core_diagnostics"
 bash "$project_dir/tests/test_release_manifest.sh"
 bash "$project_dir/tests/test_diagnostics_contract.sh"
+bash "$project_dir/tests/test_release_reconcile.sh"

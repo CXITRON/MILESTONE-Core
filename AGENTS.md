@@ -40,10 +40,10 @@ If the agent cannot execute it, tell the user the exact one-line command to run.
 ### Taildrop work
 
 Use this when a completed archive named `MILESTONE_Core_X.Y.Z.zip` was sent to the PC with Tailscale Taildrop.
-This mode may be run from any directory:
+Run this mode from an existing directory outside the live project root so replacing the project cannot invalidate the caller's working directory:
 
 ```bash
-milestone-release taildrop X.Y.Z "short release note"
+cd /tmp && milestone-release taildrop X.Y.Z "short release note"
 ```
 
 Do NOT directly `unzip -o` a received archive over the live repository as the normal workflow.
@@ -140,7 +140,7 @@ Use one of these exact patterns:
 milestone-release local X.Y.Z "release note"
 
 # Archive delivered through Tailscale Taildrop
-milestone-release taildrop X.Y.Z "release note"
+cd /tmp && milestone-release taildrop X.Y.Z "release note"
 ```
 
 For local mode, remind the user that it must be run from the project root.
@@ -149,4 +149,4 @@ Do not make the user reconstruct the release sequence manually when this command
 
 ### Taildrop 원격 이력 조정
 
-`milestone-release taildrop`은 ZIP의 HEAD가 최신 `origin/main`을 포함하지 않으면, 양쪽이 공유하는 가장 최신 릴리즈 태그 이후의 Taildrop 커밋만 최신 `origin/main` 위에 재적용합니다. 충돌하거나 안전한 공통 태그를 찾지 못하면 기존 프로젝트를 교체하거나 원격에 push하지 않고 중단합니다. 강제 push는 사용하지 않습니다.
+`milestone-release taildrop`은 ZIP의 HEAD가 최신 `origin/main`을 포함하지 않으면 공통 릴리즈 태그를 확인한 뒤, 원격의 실제 펌웨어 버전과 일치하는 Taildrop 쪽 최신 커밋을 기준점으로 삼아 그 이후 변경만 최신 `origin/main` 위에 재적용합니다. 이미 원격에 반영된 같은 버전의 준비 커밋을 다시 재생하지 않습니다. 충돌하거나 안전한 버전 기준점을 찾지 못하면 기존 프로젝트를 교체하거나 원격에 push하지 않고 중단합니다. 강제 push는 사용하지 않습니다. 릴리즈 성공 후 설치된 `milestone-release` 명령도 새 프로젝트의 도구로 갱신합니다.
