@@ -47,7 +47,7 @@ bool parseJsonUintField(const String &json, const char *key, uint32_t &value) {
   uint64_t parsed = 0;
   while (position < static_cast<int>(json.length()) && isDigit(json[position])) {
     parsed = parsed * 10ULL + static_cast<uint8_t>(json[position++] - '0');
-    if (parsed > UINT32_MAX) return false;
+    if (parsed > UMilestoneDiagnostics::VALUE_MAX) return false;
   }
   value = static_cast<uint32_t>(parsed);
   return true;
@@ -110,6 +110,24 @@ void restoreNetworkAfterFirmwareOperation() {
   startMdns();
 }
 
+MilestoneDiagnostics::OtaFailure classifyOtaFailure(const String &reason) {
+  String normalized = reason;
+  normalized.toLowerCase();
+  if (normalized.indexOf("metadata") >= 0 || normalized.indexOf("release") >= 0) return MilestoneDiagnostics::OtaFailure::METADATA;
+  if (normalized.indexOf("temperature") >= 0) return MilestoneDiagnostics::OtaFailure::TEMPERATURE;
+  if (normalized.indexOf("ram") >= 0 || normalized.indexOf("memory") >= 0) return MilestoneDiagnostics::OtaFailure::MEMORY;
+  if (normalized.indexOf("partition") >= 0) return MilestoneDiagnostics::OtaFailure::PARTITION;
+  if (normalized.indexOf("sha-256") >= 0 || normalized.indexOf("sha256") >= 0) return MilestoneDiagnostics::OtaFailure::SHA256;
+  if (normalized.indexOf("write") >= 0) return MilestoneDiagnostics::OtaFailure::WRITE;
+  if (normalized.indexOf("finalize") >= 0 || normalized.indexOf("ota end") >= 0) return MilestoneDiagnostics::OtaFailure::FINALIZE;
+  if (normalized.indexOf("rollback") >= 0) return MilestoneDiagnostics::OtaFailure::ROLLBACK;
+  if (normalized.indexOf("state") >= 0 || normalized.indexOf("save") >= 0 || normalized.indexOf("progress") >= 0) return MilestoneDiagnostics::OtaFailure::STATE;
+  if (normalized.indexOf("download") >= 0 || normalized.indexOf("length") >= 0 || normalized.indexOf("size header") >= 0) return MilestoneDiagnostics::OtaFailure::DOWNLOAD;
+  if (normalized.indexOf("http") >= 0 || normalized.indexOf("https") >= 0 || normalized.indexOf("tls") >= 0 || normalized.indexOf("request") >= 0) return MilestoneDiagnostics::OtaFailure::HTTP;
+  if (normalized.indexOf("wi-fi") >= 0 || normalized.indexOf("network") >= 0) return MilestoneDiagnostics::OtaFailure::NETWORK;
+  return MilestoneDiagnostics::OtaFailure::UNKNOWN;
+}
+
 void failFirmwareCheck(const String &reason, bool transient) {
   updateError = reason;
   updateInstallRequested = false;
@@ -117,6 +135,9 @@ void failFirmwareCheck(const String &reason, bool transient) {
   updatePromptVisible = false;
   nextUpdateRetryMs = millis() + (transient ? UPDATE_CHECK_TRANSIENT_RETRY_MS : UPDATE_FAILURE_RETRY_MS);
   if (!putStringVerified("ota_check", "failed")) logLine("OTA check failure metadata save failed");
+  recordDiagnostic(MilestoneDiagnostics::Event::UPDATE_CHECK_FAILED,
+                   static_cast<int16_t>(transient ? MilestoneDiagnostics::UpdateCheckFailure::TRANSIENT
+                                                  : MilestoneDiagnostics::UpdateCheckFailure::FATAL));
   setUpdateState(UpdateState::ERROR_STATE);
   logLine(String("firmware check failed: ") + reason);
 }
@@ -131,6 +152,8 @@ void failFirmwareUpdate(const String &reason) {
   if (!putStringVerified("ota_result", lastOtaResult)) logLine("OTA failure result save failed");
   if (!clearOtaAttemptRecord()) logLine("OTA attempt record clear failed");
   if (!clearRollbackActiveRecord()) logLine("OTA rollback record clear failed");
+  recordDiagnostic(MilestoneDiagnostics::Event::OTA_FAILED,
+                   static_cast<int16_t>(classifyOtaFailure(reason)), 0, true);
   restoreNetworkAfterFirmwareOperation();
   setUpdateState(UpdateState::ERROR_STATE);
   logLine(String("firmware update failed: ") + reason);
@@ -402,6 +425,8 @@ bool installFirmwareUpdate() {
     failFirmwareUpdate("OTA state save failed");
     return false;
   }
+  recordDiagnostic(MilestoneDiagnostics::Event::OTA_START, 0,
+                   latestFirmwareSize > MilestoneDiagnostics::VALUE_MAX ? MilestoneDiagnostics::VALUE_MAX : static_cast<int32_t>(latestFirmwareSize), true);
   setUpdateState(UpdateState::DOWNLOADING);
   drawUpdateScreen();
 
@@ -531,6 +556,8 @@ bool installFirmwareUpdate() {
                                                 "OTA reboot state and boot rollback failed");
     return false;
   }
+  recordDiagnostic(MilestoneDiagnostics::Event::OTA_READY, 0,
+                   latestFirmwareSize > MilestoneDiagnostics::VALUE_MAX ? MilestoneDiagnostics::VALUE_MAX : static_cast<int32_t>(latestFirmwareSize), true);
   setUpdateState(UpdateState::READY_TO_REBOOT);
   drawUpdateScreen();
   processLed();

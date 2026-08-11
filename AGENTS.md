@@ -7,6 +7,8 @@ The source code is always the final authority when documentation and implementat
 ## 1. Project baseline
 
 - Product: MILESTONE Core
+- Current firmware baseline: `1.8.2`
+- Persistent config schema: `8`
 - Hardware: Waveshare ESP32-S3-Zero + SH1107 128×128 OLED
 - Main branch: `main`
 - Repository: `CXITRON/MILESTONE-Core`
@@ -78,8 +80,8 @@ Do not bypass these checks merely to make a release succeed.
 
 ## 4. Versioning
 
-Use patch releases (`1.8.1` → `1.8.2`) for bug fixes, validation hardening, small internal changes, documentation/tooling that accompanies a firmware correction, and other backwards-compatible changes.
-Use minor releases (`1.8.x` → `1.9.0`) for meaningful user-visible capabilities or broad firmware architecture changes.
+Use patch releases (`1.8.1` → `1.8.2`) for bug fixes, validation hardening, contained backwards-compatible observability/diagnostics additions, small internal changes, documentation/tooling that accompanies a firmware correction, and other narrowly scoped compatible changes.
+Use minor releases (`1.8.x` → `1.9.0`) for broad primary-product capabilities, incompatible behavior changes, or substantial firmware architecture changes.
 Do not increment `CONFIG_VERSION` unless the persistent NVS schema actually changes and a migration path is implemented.
 
 A tooling/documentation-only commit that does not change the firmware binary does not require a firmware version bump by itself.
@@ -97,6 +99,7 @@ Treat the following as high-risk and avoid cosmetic refactors without a concrete
 - global OTA download buffer placement
 - BOOT button timing and reset confirmation
 - thermal protection
+- diagnostics hooks placed on those state transitions
 
 Function length or global-variable count alone is not sufficient justification to rewrite these paths.
 Preserve working transaction/state-machine ordering unless the task specifically requires changing it.
@@ -111,9 +114,9 @@ Current host tests are run by:
 ```
 
 `tools/make-release.sh` already runs these tests before the Arduino build.
-When adding new pure validation/calculation logic, prefer placing it in `CoreLogic.h/.cpp` so the firmware and host tests share the same implementation.
+When adding new pure validation/calculation logic, prefer placing it in `CoreLogic.h/.cpp` so the firmware and host tests share the same implementation. Pure diagnostics storage/ring-buffer logic belongs in `CoreDiagnostics.h/.cpp` and must remain host-testable without Arduino dependencies.
 
-Do not rewrite a working parser or state machine at the same time as first introducing its regression test unless the existing implementation itself is the bug being fixed.
+Do not rewrite a working parser or state machine at the same time as first introducing its regression test unless the existing implementation itself is the bug being fixed. Diagnostics should observe existing transition result points; do not reorder Wi-Fi/NTP/OTA/rollback logic merely to make logging cleaner.
 
 ## 7. Commit hygiene
 

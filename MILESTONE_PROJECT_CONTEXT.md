@@ -1,6 +1,6 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v1.8.1
+> Current baseline: MILESTONE Core v1.8.2
 > Hardware: Waveshare ESP32-S3-Zero + SH1107 128×128 OLED
 > Repository: `CXITRON/MILESTONE-Core`
 
@@ -21,7 +21,8 @@ MILESTONE Core is an ESP32-S3 desktop display firmware with:
 - internal temperature display and thermal protection
 - GitHub Release based HTTPS OTA updates
 - post-OTA candidate validation and application-level rollback
-- device diagnostics for memory, network, update, and rollback state
+- device diagnostics for memory, network, update, rollback, and thermal state
+- persistent recent Diagnostics & Health event history with portal copy/clear tools
 
 It is an embedded application composed of several cooperative state machines. Reliability and recoverability are more important than cosmetic architectural purity.
 
@@ -33,6 +34,7 @@ MILESTONE_Core/
 ├── MILESTONE_PROJECT_CONTEXT.md
 ├── MILESTONE_Core.ino
 ├── CoreConfig.inc
+├── CoreDiagnostics.inc
 ├── CoreRollback.inc
 ├── CoreDisplay.inc
 ├── CoreNetwork.inc
@@ -41,11 +43,15 @@ MILESTONE_Core/
 ├── CoreRuntime.inc
 ├── CoreLogic.h
 ├── CoreLogic.cpp
+├── CoreDiagnostics.h
+├── CoreDiagnostics.cpp
 ├── PortalPage.h
 ├── UpdateCertificates.h
 ├── README.md
 ├── tests/
 │   ├── test_core_logic.cpp
+│   ├── test_core_diagnostics.cpp
+│   ├── test_diagnostics_contract.sh
 │   └── test_release_manifest.sh
 └── tools/
     ├── make-release.sh
@@ -55,14 +61,14 @@ MILESTONE_Core/
     └── install-milestone-release.sh
 ```
 
-The `*.inc` runtime files are intentionally included into the sketch as one translation unit. Do not convert the whole firmware into independent `.cpp` modules only for style. `CoreLogic.cpp` is the deliberate exception: it contains hardware-independent logic shared with host-side tests.
+The `*.inc` runtime files are intentionally included into the sketch as one translation unit. Do not convert the whole firmware into independent `.cpp` modules only for style. `CoreLogic.cpp` and `CoreDiagnostics.cpp` are deliberate exceptions: they contain hardware-independent logic shared with host-side tests.
 
 ## 3. Version and configuration schema
 
 Firmware and persistent schema versions are separate concepts.
 
 ```cpp
-FIRMWARE_VERSION = "1.8.1"
+FIRMWARE_VERSION = "1.8.2"
 CONFIG_VERSION = 8
 ```
 
@@ -98,9 +104,24 @@ Application-level rollback cannot recover a candidate that fails before the roll
 
 `CoreRuntime.inc` coordinates the main loop, BOOT-button behavior, screen cycling, temperature protection, and high-level state progression. Preserve cooperative/early-return semantics when modifying state processing.
 
+### Diagnostics & Health
+
+v1.8.2 adds `CoreDiagnostics.inc` plus host-testable `CoreDiagnostics.h/.cpp`. The runtime stores only the latest 16 significant events in a fixed-size circular history under the separate `milestone_diag` Preferences namespace. Each record stores numeric event/detail/value fields, uptime, and an epoch only when system time is valid. The history has a version, checksum, and fixed capacity; invalid/corrupt storage is reset without touching normal settings.
+
+Important write-policy invariants:
+
+- write only significant boot, Wi-Fi, NTP, OTA, rollback, or thermal events
+- suppress the same event/detail for 60 seconds unless the event is explicitly forced
+- never persist every loop, ordinary screen transitions, or RSSI fluctuations
+- keep `CONFIG_VERSION` independent; diagnostics storage is not part of schema 8 migration
+- diagnostics hooks observe existing state-transition outcomes and must not reorder the underlying state machine
+- clearing diagnostics must not clear Wi-Fi/settings/rollback state; factory reset may clear the separate diagnostics namespace as part of a full wipe
+
+The setup portal exposes `/api/diagnostics` and `/api/diagnostics/clear`, renders recent events newest-first, and provides a copyable support summary. Wi-Fi disconnect reason codes are diagnostics only and must not drive connection-state decisions.
+
 ## 5. Hardware-independent logic and tests
 
-v1.8.1 introduced `CoreLogic.h/.cpp` so pure logic can be compiled on the host without the Arduino framework. It currently covers areas such as:
+v1.8.1 introduced `CoreLogic.h/.cpp` so pure logic can be compiled on the host without the Arduino framework. v1.8.2 adds `CoreDiagnostics.h/.cpp` for persistent-history layout, validation, circular ordering, duplicate suppression, and event classification. It currently covers areas such as:
 
 - semantic version parsing/comparison
 - ISO date validation
@@ -108,6 +129,10 @@ v1.8.1 introduced `CoreLogic.h/.cpp` so pure logic can be compiled on the host w
 - cycle-order validation
 - SHA-256 string validation
 - JSON escape decoding shared by manifest parsing
+- diagnostic history checksum/validation and corruption fallback
+- 16-entry circular ordering and pre-NTP timestamp handling
+- diagnostic duplicate-suppression behavior and event classification
+- portal/API endpoint contract for diagnostics view/copy/clear
 
 Run:
 
@@ -181,7 +206,7 @@ milestone-release --dry-run taildrop X.Y.Z "short release note"
 
 Use `--yes` only when an unattended final publish is explicitly desired.
 
-## 8. Areas intentionally not refactored in v1.8.1
+## 8. Areas intentionally not refactored through v1.8.2
 
 The following broad refactors were deliberately rejected because their regression risk exceeded their immediate value:
 

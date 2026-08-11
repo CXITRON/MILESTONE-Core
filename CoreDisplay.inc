@@ -297,6 +297,7 @@ bool refreshChipTemperature() {
   }
   if (success && reading >= 20.0f && reading <= 125.0f) {
     chipTemperatureC = reading;
+    if (isnan(highestChipTemperatureC) || reading > highestChipTemperatureC) highestChipTemperatureC = reading;
     temperatureReadFailureCount = 0;
     temperatureSensorFault = false;
     if (!temperatureSensorHighRange && reading >= TEMPERATURE_HIGH_RANGE_ENTER_C) {

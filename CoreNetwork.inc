@@ -29,8 +29,9 @@ void wifiDisconnectedEvent(WiFiEvent_t, WiFiEventInfo_t info) {
   // Arduino-ESP32 documents Serial as thread-safe for network callbacks. Keep
   // the callback diagnostic-only: never mutate the firmware state machine or
   // call WiFi APIs from this separate FreeRTOS task.
+  lastWifiDisconnectReason = info.wifi_sta_disconnected.reason;
   Serial.printf("[MILESTONE] Wi-Fi STA disconnected reason=%u\n",
-                static_cast<unsigned>(info.wifi_sta_disconnected.reason));
+                static_cast<unsigned>(lastWifiDisconnectReason));
 }
 
 void cancelPortalWifiScan();
@@ -45,7 +46,8 @@ void beginNtpRequest() {
   ntpSyncEvent = false;
   ntpFailed = false;
   ntpRequestActive = true;
-  ntpDeadlineMs = millis() + NTP_TIMEOUT_MS;
+  ntpRequestStartedMs = millis();
+  ntpDeadlineMs = ntpRequestStartedMs + NTP_TIMEOUT_MS;
   configTzTime(TZ_INFO, "time.google.com", "pool.ntp.org", "time.cloudflare.com");
   logLine("NTP request started");
 }
@@ -56,6 +58,10 @@ void markNtpSuccess() {
   ntpFailed = false;
   freshNtpSinceBoot = true;
   config.lastSync = static_cast<uint64_t>(time(nullptr));
+  const uint32_t ntpDurationMs = ntpRequestStartedMs == 0 ? 0 : static_cast<uint32_t>(millis() - ntpRequestStartedMs);
+  ntpRequestStartedMs = 0;
+  recordDiagnostic(MilestoneDiagnostics::Event::NTP_SUCCESS, 0,
+                   ntpDurationMs > MilestoneDiagnostics::VALUE_MAX ? MilestoneDiagnostics::VALUE_MAX : static_cast<int32_t>(ntpDurationMs));
   if (prefs.putULong64("last_sync", config.lastSync) != sizeof(uint64_t)) logLine("NTP timestamp save failed");
   invalidateTimeDisplayCache();
   int days;
@@ -113,7 +119,9 @@ void beginStationConnection(const String &ssid, const String &password, WifiSecu
     beginResult = WiFi.begin(ssid.c_str(), password.c_str());
   }
   wifiNetworkReadySinceMs = 0;
-  wifiDeadlineMs = beginResult == WL_CONNECT_FAILED ? millis() : millis() + WIFI_CONNECT_TIMEOUT_MS;
+  lastWifiDisconnectReason = 0;
+  wifiConnectionStartedMs = millis();
+  wifiDeadlineMs = beginResult == WL_CONNECT_FAILED ? wifiConnectionStartedMs : wifiConnectionStartedMs + WIFI_CONNECT_TIMEOUT_MS;
   if (wifiTestState == WifiTestState::IDLE) setRuntimeState(RuntimeState::CONNECTING);
   logLine(String("Wi-Fi connection started: security=") + wifiSecurityName(security));
 }

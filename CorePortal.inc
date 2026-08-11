@@ -52,6 +52,68 @@ void handleStatus() {
   sendJson(200, json);
 }
 
+void handleDiagnostics() {
+  if (!requireSetupApRequest()) return;
+  String json = "{";
+  json.reserve(4096);
+  json += "\"firmware\":\"" + String(FIRMWARE_VERSION) + "\",";
+  json += "\"storage_ready\":" + String(diagnosticsPrefsReady ? "true" : "false") + ",";
+  json += "\"boot_validated\":" + String(diagnosticBootValidated ? "true" : "false") + ",";
+  json += "\"last_boot\":\"" + jsonEscape(resetReasonName(esp_reset_reason())) + "\",";
+  if (isnan(highestChipTemperatureC)) json += "\"max_temperature_c\":null,";
+  else json += "\"max_temperature_c\":" + String(highestChipTemperatureC, 1) + ",";
+  json += "\"last_ota_result\":\"" + jsonEscape(lastOtaResult) + "\",";
+  json += "\"rollback_last\":\"" + jsonEscape(otaRollbackLastAction) + "\",";
+  json += "\"rollback_reason\":\"" + jsonEscape(otaRollbackLastReason) + "\",";
+  json += "\"history_count\":" + String(diagnosticHistory.count) + ",";
+  uint32_t lastValidatedUptime = 0;
+  for (uint8_t i = 0; i < diagnosticHistory.count; ++i) {
+    MilestoneDiagnostics::Record candidate;
+    if (!MilestoneDiagnostics::newest(diagnosticHistory, i, candidate)) break;
+    if (candidate.event == MilestoneDiagnostics::Event::BOOT_VALIDATED) {
+      lastValidatedUptime = candidate.uptimeSec;
+      break;
+    }
+  }
+  json += "\"last_validated_uptime_sec\":" + String(lastValidatedUptime) + ",";
+
+  MilestoneDiagnostics::Record lastError;
+  if (latestDiagnosticError(lastError)) {
+    json += "\"last_error\":{\"event\":\"";
+    json += MilestoneDiagnostics::eventName(lastError.event);
+    json += "\",\"detail\":\"" + jsonEscape(diagnosticDetailText(lastError)) + "\",";
+    json += "\"time\":\"" + jsonEscape(formatEpoch(lastError.epoch)) + "\",";
+    json += "\"uptime_sec\":" + String(lastError.uptimeSec) + "},";
+  } else {
+    json += "\"last_error\":null,";
+  }
+
+  json += "\"events\":[";
+  for (uint8_t i = 0; i < diagnosticHistory.count; ++i) {
+    MilestoneDiagnostics::Record record;
+    if (!MilestoneDiagnostics::newest(diagnosticHistory, i, record)) break;
+    if (i) json += ',';
+    json += "{\"event\":\"";
+    json += MilestoneDiagnostics::eventName(record.event);
+    json += "\",\"time\":\"" + jsonEscape(formatEpoch(record.epoch)) + "\",";
+    json += "\"uptime_sec\":" + String(record.uptimeSec) + ",";
+    json += "\"detail_code\":" + String(record.detail) + ",";
+    json += "\"value\":" + String(record.value) + ",";
+    json += "\"detail\":\"" + jsonEscape(diagnosticDetailText(record)) + "\",";
+    json += "\"error\":" + String(MilestoneDiagnostics::isError(record.event) ? "true" : "false") + "}";
+  }
+  json += "]}";
+  sendJson(200, json);
+}
+
+void handleDiagnosticsClear() {
+  if (!authorizePortalRequest()) return;
+  if (!clearDiagnosticHistory()) {
+    return sendJson(500, "{\"error\":\"진단 이력을 초기화하지 못했습니다.\"}");
+  }
+  sendJson(200, "{\"ok\":true}");
+}
+
 void handleGetConfig() {
   if (!requireSetupApRequest()) return;
   String json = "{";
@@ -384,6 +446,7 @@ void handleFactoryReset() {
   if (!prefsReady) return sendJson(503, "{\"error\":\"NVS 저장공간을 사용할 수 없어 공장 초기화를 실행할 수 없습니다.\"}");
   if (server.arg("confirm") != "RESET") return sendJson(400, "{\"error\":\"초기화 확인 문자열이 올바르지 않습니다.\"}");
   if (!prefs.clear()) return sendJson(500, "{\"error\":\"설정 저장공간을 초기화하지 못했습니다.\"}");
+  if (!clearDiagnosticHistory()) logLine("diagnostic history clear failed during factory reset");
   sendJson(200, "{\"ok\":true,\"restarting\":true}");
   restartAfterFactoryReset();
 }
@@ -509,6 +572,8 @@ void registerPortalRoutes() {
   server.collectHeaders(headerKeys, 1);
   server.on("/", HTTP_GET, handlePortalRoot);
   server.on("/api/status", HTTP_GET, handleStatus);
+  server.on("/api/diagnostics", HTTP_GET, handleDiagnostics);
+  server.on("/api/diagnostics/clear", HTTP_POST, handleDiagnosticsClear);
   server.on("/api/config", HTTP_GET, handleGetConfig);
   server.on("/api/wifi/scan", HTTP_GET, handleWifiScan);
   server.on("/api/config", HTTP_POST, handlePostConfig);
@@ -582,6 +647,7 @@ void failWifiTest(const String &reason) {
   pendingWifiIdentity = "";
   setRuntimeState(RuntimeState::SETUP_AP);
   restoreConfiguredWifiAfterFailedTest();
+  recordDiagnostic(MilestoneDiagnostics::Event::WIFI_TEST_FAILED);
   logLine(String("Wi-Fi test failed: ") + reason);
 }
 

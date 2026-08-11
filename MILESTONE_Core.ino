@@ -33,6 +33,7 @@
 #include "PortalPage.h"
 #include "UpdateCertificates.h"
 #include "CoreLogic.h"
+#include "CoreDiagnostics.h"
 
 // TLS, HTTP parsing, hashing, display updates, and the Arduino framework all
 // share loopTask during a synchronous OTA transfer. Reserve an explicit stack
@@ -45,10 +46,11 @@ SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 
 namespace Milestone {
 
-constexpr char FIRMWARE_VERSION[] = "1.8.1";
+constexpr char FIRMWARE_VERSION[] = "1.8.2";
 constexpr char AP_SSID[] = "MILESTONE-D1-SETUP";
 constexpr char HOSTNAME[] = "milestone-d1";
 constexpr char PREFS_NS[] = "milestone";
+constexpr char DIAGNOSTICS_PREFS_NS[] = "milestone_diag";
 constexpr char UPDATE_MANIFEST_URL[] = "https://github.com/CXITRON/MILESTONE-Core/releases/latest/download/MILESTONE_Core.json";
 constexpr char UPDATE_RELEASE_BASE_URL[] = "https://github.com/CXITRON/MILESTONE-Core/releases/download/v";
 constexpr char UPDATE_ASSET_NAME[] = "MILESTONE_Core.bin";
@@ -268,7 +270,9 @@ struct Config {
 };
 
 Preferences prefs;
+Preferences diagnosticsPrefs;
 bool prefsReady = false;
+bool diagnosticsPrefsReady = false;
 Config config;
 // This generic 1.5-inch module uses SH1107 column offset 0.  The plain
 // SH1107_128X128 profile applies a 96-pixel offset and wraps the leftmost
@@ -343,6 +347,19 @@ String otaRollbackPreviousVersion;
 String otaRollbackTargetVersion;
 String otaRollbackLastAction;
 String otaRollbackLastReason;
+
+MilestoneDiagnostics::History diagnosticHistory;
+MilestoneDiagnostics::Event lastDiagnosticEvent = MilestoneDiagnostics::Event::NONE;
+int16_t lastDiagnosticDetail = 0;
+uint32_t lastDiagnosticWriteMs = 0;
+bool lastDiagnosticWriteValid = false;
+bool diagnosticBootValidationPending = false;
+bool diagnosticBootValidated = false;
+uint32_t diagnosticBootValidationStartedMs = 0;
+uint32_t wifiConnectionStartedMs = 0;
+volatile uint16_t lastWifiDisconnectReason = 0;
+uint32_t ntpRequestStartedMs = 0;
+float highestChipTemperatureC = NAN;
 
 // Keep the OTA transfer buffer out of loopTask's limited stack. TLS, HTTPClient,
 // SHA-256 and String locals already consume a substantial part of that stack.
@@ -526,6 +543,7 @@ void setRuntimeState(RuntimeState next) {
 const char *resetReasonName(esp_reset_reason_t reason);
 
 #include "CoreConfig.inc"
+#include "CoreDiagnostics.inc"
 #include "CoreRollback.inc"
 #include "CoreDisplay.inc"
 #include "CoreNetwork.inc"

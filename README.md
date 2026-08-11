@@ -44,7 +44,7 @@ Arduino IDE의 `Tools > Manage Libraries…`에서 다음 라이브러리를 설
 6. 출력 끝에 `Hard resetting via RTS pin...`이 나타나면 업로드 완료입니다. 멈춘 것이 아닙니다.
 7. OLED가 바뀌지 않으면 보드의 `RESET` 버튼을 한 번 눌렀다 놓습니다.
 
-1.7.0부터 `MILESTONE_Core.ino`는 공통 선언과 Arduino 진입점만 유지하고, 구현부를 같은 translation unit에 포함되는 `CoreConfig.inc`, `CoreRollback.inc`, `CoreDisplay.inc`, `CoreNetwork.inc`, `CoreUpdate.inc`, `CorePortal.inc`, `CoreRuntime.inc`로 기계적으로 분리합니다. Arduino IDE에서는 이전과 동일하게 `MILESTONE_Core.ino`만 열면 됩니다.
+1.7.0부터 `MILESTONE_Core.ino`는 공통 선언과 Arduino 진입점만 유지하고, 구현부를 같은 translation unit에 포함되는 `CoreConfig.inc`, `CoreDiagnostics.inc`, `CoreRollback.inc`, `CoreDisplay.inc`, `CoreNetwork.inc`, `CoreUpdate.inc`, `CorePortal.inc`, `CoreRuntime.inc`로 기계적으로 분리합니다. Arduino IDE에서는 이전과 동일하게 `MILESTONE_Core.ino`만 열면 됩니다.
 
 1.3.1에서 1.5.0으로 넘어갈 때는 파티션 테이블도 OTA용으로 바뀌어야 하므로 **Arduino IDE의 일반 업로드**를 사용해야 합니다. 앱 BIN 하나만 `0x10000` 주소에 기록하는 방식으로 최초 설치하지 마십시오. 1.5.0이 정상 설치된 뒤부터 Release의 `MILESTONE_Core.bin`만으로 인터넷 업데이트할 수 있습니다.
 
@@ -89,10 +89,10 @@ Arduino IDE의 `Tools > Manage Libraries…`에서 다음 라이브러리를 설
 
 설정 포털의 두 초기화 기능은 서로 다릅니다.
 
-| 기능 | 화면·시간·LED 설정 | 저장된 Wi-Fi | 재부팅 |
-|---|---|---|---|
-| 표시 설정 기본값 복원 | 기본값으로 복원 | 유지 | 하지 않음 |
-| 공장 초기화 | 기본값으로 복원 | 모두 삭제 | 실행 |
+| 기능 | 화면·시간·LED 설정 | 저장된 Wi-Fi | 진단 이력 | 재부팅 |
+|---|---|---|---|---|
+| 표시 설정 기본값 복원 | 기본값으로 복원 | 유지 | 유지 | 하지 않음 |
+| 공장 초기화 | 기본값으로 복원 | 모두 삭제 | 모두 삭제 | 실행 |
 
 표시 설정 기본값 복원은 마지막 시간 동기화 시각과 오프라인용 디데이 계산값도 유지합니다. 공장 초기화는 ESP32 Wi-Fi 드라이버에 남을 수 있는 자격 증명까지 삭제합니다.
 
@@ -118,7 +118,27 @@ Arduino IDE의 `Tools > Manage Libraries…`에서 다음 라이브러리를 설
 
 기존 설정은 현재 스키마 8로 자동 변환됩니다. 1.5.x의 저장된 Personal Wi-Fi, 1.6.0의 Enterprise Wi-Fi, 기존 화면·순환 설정은 유지됩니다. Wi-Fi 목록 저장은 A/B Bank 전환 방식으로 보강되어 목록 재정렬 중 전원 차단에도 직전 완전한 목록을 유지하도록 설계했습니다.
 
-## 7. RGB 상태 LED
+## 7. 진단 및 상태 이력
+
+1.8.2부터 설정 포털에 **진단** 영역이 추가됩니다. 기기는 최근 16개의 중요한 상태 이벤트만 별도 `milestone_diag` NVS namespace에 고정 크기 ring buffer로 저장합니다. 설정 스키마는 계속 8이며, 일반 표시 설정이나 Wi-Fi 목록 migration에는 영향을 주지 않습니다.
+
+기록 대상은 부팅·부팅 정상 확인, Wi-Fi 연결/시간 초과/연결 해제, NTP 성공/실패, 업데이트 확인 실패, OTA 시작/실패/재부팅 준비, 롤백 보호·candidate 부팅·롤백 실행·확정, 온도 경고/감속/안전모드/센서 오류입니다. 같은 이벤트와 detail이 짧은 시간 안에 반복되면 중복 기록을 억제해 Flash write를 줄입니다. 매 loop, RSSI 변화, 일반 화면 전환은 저장하지 않습니다.
+
+Wi-Fi 실패 이력에는 가능한 경우 ESP32 드라이버의 disconnect reason code도 남깁니다. NTP가 아직 성공하지 않은 부팅 초반 이벤트는 절대 시각 대신 uptime을 보존하고, 시간 동기화 이후 이벤트는 KST 시각과 uptime을 함께 확인할 수 있습니다.
+
+포털에서 확인할 수 있는 항목은 다음과 같습니다.
+
+- 현재 부팅의 reset reason과 약 10초 정상 실행 확인 여부
+- 현재 부팅 세션의 최고 칩 온도
+- 최근 OTA 결과와 롤백 결과
+- 가장 최근 오류 이벤트
+- 최신순 최근 16개 진단 이벤트
+- **진단 정보 복사** 버튼으로 상태·이력을 한 번에 클립보드 복사
+- **진단 이력 지우기** 버튼으로 진단 기록만 삭제
+
+진단 이력 지우기는 화면 설정·저장 Wi-Fi·OTA rollback state를 변경하지 않습니다. 반면 **공장 초기화**는 일반 설정과 Wi-Fi뿐 아니라 진단 이력도 함께 삭제합니다.
+
+## 8. RGB 상태 LED
 
 보드에 내장된 GPIO 21의 WS2812 RGB LED는 현재 상태를 계속 표시합니다. 정상 상태에서도 꺼지지 않으며, 설정 페이지에서 일반·야간 밝기와 사용 여부를 조절할 수 있습니다.
 
@@ -142,7 +162,7 @@ Arduino IDE의 `Tools > Manage Libraries…`에서 다음 라이브러리를 설
 | 흰색→청록색→빨간색 | BOOT 버튼 누름 단계 |
 | 빨간색 빠른 호흡 | 공장 초기화 확인 |
 
-## 8. 칩 온도 표시와 과열 보호
+## 9. 칩 온도 표시와 과열 보호
 
 상단 상태 기호 왼쪽에 ESP32-S3 내부 온도를 `42C` 형식으로 표시합니다. 설정 포털의 **상단 상태 기호 옆에 ESP32 칩 온도 표시**를 끄면 평상시 온도만 숨겨지며, 과열 경고와 보호 기능은 계속 작동합니다. 온도 센서가 연속으로 실패하면 토글 상태와 관계없이 `!TC`가 표시됩니다. 이 값은 칩 내부 온도이므로 실내 온도계 값보다 높고 CPU·Wi-Fi 부하와 방열 상태의 영향을 받습니다.
 
@@ -158,7 +178,7 @@ Arduino IDE의 `Tools > Manage Libraries…`에서 다음 라이브러리를 설
 
 평상시에는 오차가 작은 20~100°C 측정 범위를 사용하고 고온 접근 시 50~125°C 범위로 자동 전환합니다. 이 임계값은 ESP32-S3 내부 센서를 이용한 MILESTONE의 보수적인 보호 정책이며, 주변 환경의 허용 온도와 같은 뜻이 아닙니다. 안전 모드는 자체 발열을 줄이고 자동 복구를 시도하지만 전원을 물리적으로 차단할 수는 없습니다. 온도가 내려가지 않거나 계속 상승하면 즉시 전원을 분리하고 전원 공급·배선·밀폐·통풍 상태를 점검하십시오.
 
-## 9. 시리얼 로그 확인
+## 10. 시리얼 로그 확인
 
 Arduino IDE의 시리얼 모니터를 `115200 baud`로 열면 `[MILESTONE]`으로 시작하는 상태 로그를 볼 수 있습니다. Wi-Fi 비밀번호는 로그에 출력하지 않습니다.
 
@@ -170,7 +190,7 @@ picocom -b 115200 /dev/ttyACM0
 
 종료는 `Ctrl+A`, 그다음 `Ctrl+X`입니다.
 
-## 10. GitHub 인터넷 업데이트
+## 11. GitHub 인터넷 업데이트
 
 업데이트 저장소는 다음 공개 저장소로 고정되어 있습니다.
 
@@ -225,10 +245,10 @@ Taildrop 모드는 ZIP을 라이브 프로젝트에 바로 덮어쓰지 않습�
 
 ```bash
 chmod +x tools/make-release.sh
-./tools/make-release.sh 1.8.1 "Harden core logic validation and manifest parsing"
+./tools/make-release.sh 1.8.2 "Add diagnostics and health history"
 ```
 
-기본 설명을 사용하려면 `./tools/make-release.sh 1.8.1`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
+기본 설명을 사용하려면 `./tools/make-release.sh 1.8.2`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
 
 다음 두 파일이 `release/`에 생성됩니다.
 
@@ -248,11 +268,11 @@ release/MILESTONE_Core.json
 일반적인 게시에는 위의 `milestone-release`를 사용합니다. 아래 수동 절차는 자동화 도구를 복구하거나 디버깅해야 할 때만 참고합니다.
 
 1. 저장소의 `Releases`에서 `Draft a new release`를 선택합니다.
-2. 버전과 동일한 태그를 만듭니다. 예: `v1.8.1`
-3. Release 제목을 `MILESTONE Core v1.8.1`으로 지정합니다.
+2. 버전과 동일한 태그를 만듭니다. 예: `v1.8.2`
+3. Release 제목을 `MILESTONE Core v1.8.2`으로 지정합니다.
 4. `release/MILESTONE_Core.bin`과 `release/MILESTONE_Core.json`을 첨부합니다.
 5. Pre-release가 아닌 최신 정식 Release로 게시합니다.
-6. 이전 버전이 설치된 기기에서 1.8.1 OTA 업데이트와 기존 롤백 보호 동작을 검증합니다.
+6. 이전 버전이 설치된 기기에서 1.8.2 OTA 업데이트와 기존 롤백 보호·진단 이력 동작을 검증합니다.
 
 두 파일의 이름은 모든 Release에서 정확히 같아야 합니다. 초안이나 Pre-release는 `latest` 업데이트 대상으로 사용하지 않습니다.
 
@@ -292,7 +312,23 @@ release/MILESTONE_Core.json
 - OLED·RGB LED·설정 포털의 업데이트 상태와 진행률 표시
 - 일시적 업데이트 확인 실패 10분·설치/구조적 실패 6시간 재시도와 Wi-Fi 절전 자동 복귀
 - 5페이지 기기 세부정보 화면과 설정 포털의 실시간 시스템 상태
+- 별도 NVS namespace에 최근 16개 핵심 부팅·네트워크·NTP·OTA·롤백·온도 이벤트를 보존하는 Diagnostics & Health 이력
+- 설정 포털의 진단 상태·최근 오류·최고 온도 표시, 진단 텍스트 복사와 이력 전용 초기화
 - 비차단 3초 부팅 로고와 우상단 NTP `T`·업데이트 `U` 상태 아이콘
+
+## v1.8.2 업데이트 안내
+
+- 최근 16개의 중요 부팅·Wi-Fi·NTP·OTA·롤백·온도 이벤트를 고정 크기 ring buffer로 보존하는 Diagnostics & Health 계층 추가
+- 진단 이력을 일반 설정과 분리된 `milestone_diag` NVS namespace에 저장하고 checksum·버전·크기 검증으로 손상된 이력은 안전하게 초기화
+- 동일 이벤트/detail의 짧은 반복은 60초 동안 억제하고 매 loop·RSSI 변화·화면 전환은 기록하지 않아 Flash write 횟수 제한
+- Wi-Fi 연결 성공 시 연결 소요시간·RSSI를 저장하고, 연결 실패/해제 시 가능한 경우 ESP32 드라이버 disconnect reason code를 함께 기록
+- NTP 성공 시 동기화 소요시간을 기록하고, NTP 전 부팅 이벤트는 epoch 0 + uptime으로 안전하게 표현
+- OTA 시작·실패·재부팅 준비와 rollback arm·candidate boot·rollback 실행·확정을 기존 상태 전이 결과 지점에서 기록
+- 현재 부팅 세션의 최고 칩 온도와 온도 경고·CPU 감속·안전모드·센서 오류·복구 이벤트 기록
+- 설정 포털에 `/api/diagnostics`와 별도 Diagnostics 영역을 추가하고 최근 오류/이력 표시, **진단 정보 복사**, **진단 이력 지우기** 제공
+- 공장 초기화는 별도 진단 namespace도 삭제하지만 **표시 설정 기본값 복원**은 진단 이력을 유지
+- `CoreDiagnostics.h/.cpp` 호스트 테스트와 포털/API 계약 테스트를 `tools/test-core.sh`에 추가
+- 설정 스키마는 8 그대로 유지하고 Wi-Fi/NTP 판단 순서, OTA 다운로드 transaction, rollback 알고리즘, `loadConfig()` migration 구조는 변경하지 않음
 
 ## v1.8.1 업데이트 안내
 
@@ -493,4 +529,4 @@ release/MILESTONE_Core.json
 - 기존 설정 스키마, 저장된 Wi-Fi, 여섯 가지 화면을 그대로 유지
 - 기기 세부정보 화면은 OTA 검증용 1.5.1에서 추가 예정
 
-정식 버전: `1.8.1`
+정식 버전: `1.8.2`

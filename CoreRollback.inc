@@ -101,6 +101,7 @@ bool armRollbackRecord() {
   if (!putRollbackByte("rb_state", RollbackRecord::ARMED)) return false;
   otaRollbackArmed = true;
   otaRollbackBootAttempts = 0;
+  recordDiagnostic(MilestoneDiagnostics::Event::ROLLBACK_ARMED, 0, 0, true);
   logLine(String("rollback protection armed for ") + target + " -> " + previous);
   return true;
 }
@@ -122,6 +123,7 @@ bool adoptLegacyRollbackRecord(const String &targetVersion) {
     clearRollbackActiveRecord();
     return false;
   }
+  recordDiagnostic(MilestoneDiagnostics::Event::ROLLBACK_ARMED, 0, 0, true);
   logLine(String("rollback source adopted from previous OTA slot: ") +
           previousVersion + " [" + previous->label + "]");
   return true;
@@ -143,6 +145,8 @@ bool rollbackToPreviousFirmware(const String &reason) {
     otaRollbackLastReason = "previous OTA partition unavailable";
     putStringVerified("rb_last", otaRollbackLastAction);
     putStringVerified("rb_reason", otaRollbackLastReason);
+    recordDiagnostic(MilestoneDiagnostics::Event::ROLLBACK_TRIGGERED,
+                     static_cast<int16_t>(MilestoneDiagnostics::RollbackAction::FAILED), 0, true);
     logLine("rollback failed: previous OTA partition unavailable");
     return false;
   }
@@ -154,6 +158,9 @@ bool rollbackToPreviousFirmware(const String &reason) {
     otaRollbackLastReason = String("boot partition error ") + String(static_cast<int>(result));
     putStringVerified("rb_last", otaRollbackLastAction);
     putStringVerified("rb_reason", otaRollbackLastReason);
+    recordDiagnostic(MilestoneDiagnostics::Event::ROLLBACK_TRIGGERED,
+                     static_cast<int16_t>(MilestoneDiagnostics::RollbackAction::FAILED),
+                     static_cast<int32_t>(result), true);
     logLine(String("rollback boot selection failed: ") + String(static_cast<int>(result)));
     return false;
   }
@@ -168,6 +175,8 @@ bool rollbackToPreviousFirmware(const String &reason) {
   removePreferenceVerified("ota_stage");
   removePreferenceVerified("ota_target");
   clearRollbackActiveRecord();
+  recordDiagnostic(MilestoneDiagnostics::Event::ROLLBACK_TRIGGERED,
+                   static_cast<int16_t>(MilestoneDiagnostics::RollbackAction::APPLICATION), 0, true);
   logLine(String("ROLLBACK: ") + FIRMWARE_VERSION + " -> " + previousVersion +
           " [" + previous->label + "] reason=" + reason);
   delay(250);
@@ -192,6 +201,7 @@ void initializeRollbackProtection(const String &previousOtaStage, const String &
       logLine("rollback protection unavailable: previous OTA slot could not be adopted");
       otaBootConfirmationPending = true;
       otaBootConfirmationStartedMs = millis();
+      recordDiagnostic(MilestoneDiagnostics::Event::BOOT_CANDIDATE, 0, 0, true);
       lastOtaResult = "validating";
       putStringVerified("ota_result", lastOtaResult);
       return;
@@ -209,6 +219,7 @@ void initializeRollbackProtection(const String &previousOtaStage, const String &
     otaRollbackArmed = false;
     otaBootConfirmationPending = true;
     otaBootConfirmationStartedMs = millis() - OTA_BOOT_CONFIRM_MS;
+    recordDiagnostic(MilestoneDiagnostics::Event::BOOT_CANDIDATE, 0, 0, true);
     lastOtaResult = "validating";
     putStringVerified("ota_result", lastOtaResult);
     logLine("resuming interrupted OTA confirmation");
@@ -246,6 +257,7 @@ void initializeRollbackProtection(const String &previousOtaStage, const String &
     otaRollbackBootAttempts = 1;
     otaBootConfirmationPending = true;
     otaBootConfirmationStartedMs = millis();
+    recordDiagnostic(MilestoneDiagnostics::Event::BOOT_CANDIDATE, 0, 0, true);
     lastOtaResult = "validating";
     putStringVerified("ota_result", lastOtaResult);
     logLine(String("OTA candidate protected: ") + FIRMWARE_VERSION +
@@ -270,6 +282,8 @@ void initializeRollbackProtection(const String &previousOtaStage, const String &
       putStringVerified("rb_reason", otaRollbackLastReason);
       putStringVerified("ota_result", "rolled-back");
       lastOtaResult = "rolled-back";
+      recordDiagnostic(MilestoneDiagnostics::Event::ROLLBACK_TRIGGERED,
+                       static_cast<int16_t>(MilestoneDiagnostics::RollbackAction::BOOTLOADER), 0, true);
       logLine(String("bootloader rollback detected: ") + recordedTarget + " -> " + FIRMWARE_VERSION);
     } else {
       logLine(String("clearing stale rollback record for target ") + recordedTarget);
@@ -309,5 +323,6 @@ void processRollbackConfirmation() {
   if (!removePreferenceVerified("ota_target")) logLine("OTA confirmation target clear failed");
   otaRollbackLastAction = "confirmed";
   otaRollbackLastReason = "";
+  recordDiagnostic(MilestoneDiagnostics::Event::ROLLBACK_CONFIRMED, 0, 0, true);
   logLine(String("OTA boot confirmed after stability hold: ") + FIRMWARE_VERSION);
 }

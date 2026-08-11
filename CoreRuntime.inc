@@ -81,11 +81,14 @@ void processNetwork() {
 
   if (wifiTestState == WifiTestState::CONNECTING) {
     if (stationNetworkStable(now)) {
+      noteWifiConnected(now);
       wifiNetworkReadySinceMs = 0;
       wifiTestState = WifiTestState::TIME_SYNCING;
       beginNtpRequest();
       setRuntimeState(RuntimeState::TIME_SYNCING);
     } else if (deadlineReached(now, wifiDeadlineMs)) {
+      recordDiagnostic(MilestoneDiagnostics::Event::WIFI_CONNECT_TIMEOUT,
+                       static_cast<int16_t>(lastWifiDisconnectReason));
       failWifiTest("Wi-Fi 연결 시간 초과. SSID와 Wi-Fi 자격 증명을 확인하세요.");
     }
     return;
@@ -93,11 +96,16 @@ void processNetwork() {
 
   if (wifiTestState == WifiTestState::TIME_SYNCING) {
     if (!stationNetworkReady()) {
+      ntpRequestStartedMs = 0;
+      recordDiagnostic(MilestoneDiagnostics::Event::WIFI_DISCONNECTED,
+                       static_cast<int16_t>(lastWifiDisconnectReason));
       failWifiTest("시간 확인 중 Wi-Fi 연결이 끊겼습니다.");
     } else if (ntpSyncEvent && timeIsValid()) {
       ntpSyncEvent = false;
       finishWifiTestSuccess();
     } else if (deadlineReached(now, ntpDeadlineMs)) {
+      ntpRequestStartedMs = 0;
+      recordDiagnostic(MilestoneDiagnostics::Event::NTP_TIMEOUT);
       failWifiTest("인터넷 시간 확인에 실패했습니다. 인터넷 연결을 확인하세요.");
     }
     return;
@@ -105,6 +113,7 @@ void processNetwork() {
 
   if (runtimeState == RuntimeState::CONNECTING) {
     if (stationNetworkStable(now)) {
+      noteWifiConnected(now);
       wifiNetworkReadySinceMs = 0;
       if (savedWifiScanActive) {
         WiFi.scanDelete();
@@ -127,6 +136,7 @@ void processNetwork() {
         initialStationAttempt = false;
         setRuntimeState(RuntimeState::RUNNING_OFFLINE);
         scheduleRetry(true);
+        recordDiagnostic(MilestoneDiagnostics::Event::WIFI_CONNECT_TIMEOUT);
         logLine("no reachable saved Wi-Fi network found; offline mode");
       }
     } else if (deadlineReached(now, wifiDeadlineMs)) {
@@ -134,6 +144,8 @@ void processNetwork() {
       initialStationAttempt = false;
       setRuntimeState(RuntimeState::RUNNING_OFFLINE);
       scheduleRetry(true);
+      recordDiagnostic(MilestoneDiagnostics::Event::WIFI_CONNECT_TIMEOUT,
+                       static_cast<int16_t>(lastWifiDisconnectReason));
       logLine("Wi-Fi connection timed out; offline mode");
     }
     return;
@@ -142,6 +154,9 @@ void processNetwork() {
   if (runtimeState == RuntimeState::TIME_SYNCING) {
     if (!stationNetworkReady()) {
       ntpRequestActive = false;
+      ntpRequestStartedMs = 0;
+      recordDiagnostic(MilestoneDiagnostics::Event::WIFI_DISCONNECTED,
+                       static_cast<int16_t>(lastWifiDisconnectReason));
       internetVerified = false;
       ntpFailed = false;
       setRuntimeState(RuntimeState::RUNNING_OFFLINE);
@@ -151,6 +166,8 @@ void processNetwork() {
       finishNormalNtpSuccess();
     } else if (deadlineReached(now, ntpDeadlineMs)) {
       ntpRequestActive = false;
+      ntpRequestStartedMs = 0;
+      recordDiagnostic(MilestoneDiagnostics::Event::NTP_TIMEOUT);
       internetVerified = false;
       ntpFailed = true;
       setRuntimeState(RuntimeState::RUNNING_OFFLINE);
@@ -170,6 +187,8 @@ void processNetwork() {
   }
 
   if (runtimeState == RuntimeState::RUNNING_ONLINE && !stationNetworkReady()) {
+    recordDiagnostic(MilestoneDiagnostics::Event::WIFI_DISCONNECTED,
+                       static_cast<int16_t>(lastWifiDisconnectReason));
     internetVerified = false;
     ntpFailed = false;
     setRuntimeState(RuntimeState::RUNNING_OFFLINE);
@@ -373,6 +392,8 @@ void enterThermalSafeMode(bool sensorFault = false) {
   WiFi.mode(WIFI_OFF);
   setRuntimeState(RuntimeState::RUNNING_OFFLINE);
   wakeDisplay();
+  const int32_t thermalValue = isnan(chipTemperatureC) ? 0 : static_cast<int32_t>(chipTemperatureC * 10.0f);
+  recordDiagnostic(MilestoneDiagnostics::Event::THERMAL_PROTECTION, sensorFault ? 1 : 0, thermalValue, true);
   if (sensorFault) {
     if (thermalThrottled) logLine("temperature sensor fault sustained; Wi-Fi off and CPU limited to 80 MHz");
     else logLine("temperature sensor fault sustained; Wi-Fi off (CPU frequency change failed)");
@@ -392,8 +413,11 @@ void leaveThermalSafeMode() {
     frequencyRestored = setCpuFrequencyMhz(normalCpuFrequencyMhz);
   }
   thermalThrottled = !frequencyRestored;
-  if (frequencyRestored) logLine("chip temperature recovered; normal operation resumed");
-  else logLine("chip temperature recovered; CPU frequency restore will be retried");
+  if (frequencyRestored) {
+    const int32_t thermalValue = isnan(chipTemperatureC) ? 0 : static_cast<int32_t>(chipTemperatureC * 10.0f);
+    recordDiagnostic(MilestoneDiagnostics::Event::THERMAL_RECOVERED, 0, thermalValue, true);
+    logLine("chip temperature recovered; normal operation resumed");
+  } else logLine("chip temperature recovered; CPU frequency restore will be retried");
   if (config.savedNetworkCount > 0) startSavedWifiSequence(false);
   else {
     setRuntimeState(RuntimeState::UNPROVISIONED);
@@ -414,21 +438,30 @@ void processThermalProtection() {
       if (thermalThrottled) logLine("temperature sensor fault; CPU limited to 80 MHz");
       else logLine("temperature sensor fault; CPU frequency change failed");
     }
-    if (temperatureFaultStartedMs == 0) temperatureFaultStartedMs = now;
-    else if (!thermalSafeMode && elapsed(now, temperatureFaultStartedMs, TEMPERATURE_FAULT_SAFE_HOLD_MS)) {
+    if (temperatureFaultStartedMs == 0) {
+      temperatureFaultStartedMs = now;
+      recordDiagnostic(MilestoneDiagnostics::Event::TEMPERATURE_SENSOR_FAULT);
+    } else if (!thermalSafeMode && elapsed(now, temperatureFaultStartedMs, TEMPERATURE_FAULT_SAFE_HOLD_MS)) {
       enterThermalSafeMode(true);
     }
     return;
   }
   temperatureFaultStartedMs = 0;
   if (isnan(chipTemperatureC)) return;
+  const bool wasThermalWarning = thermalWarning;
   thermalWarning = thermalWarning ? chipTemperatureC >= THERMAL_WARNING_CLEAR_C
                                   : chipTemperatureC >= THERMAL_WARNING_C;
+  if (!wasThermalWarning && thermalWarning) {
+    recordDiagnostic(MilestoneDiagnostics::Event::THERMAL_WARNING, 0,
+                     static_cast<int32_t>(chipTemperatureC * 10.0f));
+  }
 
   if (!thermalThrottled && chipTemperatureC >= THERMAL_THROTTLE_C) {
     thermalThrottled = setCpuFrequencyMhz(THERMAL_THROTTLE_CPU_MHZ);
     thermalRecoveryStartedMs = 0;
     if (thermalThrottled) {
+      recordDiagnostic(MilestoneDiagnostics::Event::THERMAL_THROTTLE, 0,
+                       static_cast<int32_t>(chipTemperatureC * 10.0f));
       logLine(String("high chip temperature; CPU limited to 80 MHz: ") + String(chipTemperatureC, 1) + "C");
     } else {
       logLine(String("high chip temperature; CPU frequency change failed: ") + String(chipTemperatureC, 1) + "C");
@@ -546,6 +579,7 @@ void performPhysicalFactoryReset() {
     resetConfirmation = false;
     return;
   }
+  if (!clearDiagnosticHistory()) logLine("physical factory reset diagnostic clear failed");
   restartAfterFactoryReset();
 }
 
@@ -674,6 +708,13 @@ void setupFirmware() {
   if (!prefsReady) {
     logLine("NVS STORAGE ERROR: Preferences namespace could not be opened");
   }
+  diagnosticsPrefsReady = diagnosticsPrefs.begin(DIAGNOSTICS_PREFS_NS, false);
+  if (!diagnosticsPrefsReady) logLine("diagnostics NVS namespace could not be opened");
+  initializeDiagnosticStorage();
+  recordDiagnostic(MilestoneDiagnostics::Event::BOOT, static_cast<int16_t>(esp_reset_reason()), 0, true);
+  diagnosticBootValidated = false;
+  diagnosticBootValidationPending = true;
+  diagnosticBootValidationStartedMs = millis();
   lastOtaResult = prefsReady ? prefs.getString("ota_result", "") : "";
   const String previousOtaStage = prefsReady ? prefs.getString("ota_stage", "") : "";
   const String previousOtaTarget = prefsReady ? prefs.getString("ota_target", "") : "";
@@ -711,6 +752,7 @@ void loopFirmware() {
   processViewStateSave();
   processNetwork();
   processFirmwareUpdate();
+  processDiagnostics();
   processCycle();
   processDisplay();
   processLed();

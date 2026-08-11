@@ -3,7 +3,7 @@ set -euo pipefail
 
 if (( $# < 1 || $# > 2 )); then
   echo "사용법: $0 VERSION [NOTES]" >&2
-  echo "예: $0 1.8.1 'Harden core logic validation and manifest parsing'" >&2
+  echo "예: $0 1.8.2 'Add diagnostics and health history'" >&2
   exit 2
 fi
 
@@ -18,7 +18,7 @@ release_dir="$project_dir/release"
 source "$script_dir/release-json.sh"
 
 if [[ ! $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "오류: VERSION은 1.8.1과 같은 형식이어야 합니다." >&2
+  echo "오류: VERSION은 1.8.2와 같은 형식이어야 합니다." >&2
   exit 2
 fi
 
