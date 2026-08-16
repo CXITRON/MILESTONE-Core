@@ -125,6 +125,14 @@ String diagnosticDetailText(const MilestoneDiagnostics::Record &record) {
       return String(record.value / 10.0f, 1) + " C";
     case Event::TEMPERATURE_SENSOR_FAULT:
       return "chip temperature sensor fault";
+    case Event::MEDIA_FAILED:
+      if (record.detail == static_cast<int16_t>(MilestoneDiagnostics::MediaFailure::STORAGE)) {
+        return "custom media storage";
+      }
+      if (record.detail == static_cast<int16_t>(MilestoneDiagnostics::MediaFailure::VALIDATION)) {
+        return "custom media validation";
+      }
+      return "custom media playback";
     default:
       return "";
   }

@@ -115,6 +115,7 @@ const char *eventName(Event event) {
     case Event::THERMAL_PROTECTION: return "thermal_protection";
     case Event::THERMAL_RECOVERED: return "thermal_recovered";
     case Event::TEMPERATURE_SENSOR_FAULT: return "temperature_sensor_fault";
+    case Event::MEDIA_FAILED: return "media_failed";
     default: return "unknown";
   }
 }
@@ -132,6 +133,7 @@ bool isError(Event event) {
     case Event::THERMAL_THROTTLE:
     case Event::THERMAL_PROTECTION:
     case Event::TEMPERATURE_SENSOR_FAULT:
+    case Event::MEDIA_FAILED:
       return true;
     default:
       return false;

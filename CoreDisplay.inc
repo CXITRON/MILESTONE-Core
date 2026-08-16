@@ -1021,7 +1021,14 @@ void drawMainScreen() {
     case View::MESSAGE_CLOCK: drawMessageClock(ox, oy); break;
     case View::DASHBOARD: drawDashboard(ox, oy); break;
     case View::DEVICE_INFO: drawDeviceInfo(ox, oy); break;
+    case View::CUSTOM_MEDIA:
+      if (!copyCurrentMediaFrameToDisplayBuffer()) {
+        display.setFont(u8g2_font_7x14B_tf);
+        drawCenteredStr("NO MEDIA", 54);
+        display.setFont(u8g2_font_6x10_tf);
+        drawCenteredStr("OPEN SETUP TO ADD", 82);
+      }
+      break;
   }
   display.sendBuffer();
 }
-

@@ -35,6 +35,17 @@ trap cleanup EXIT
   -o "$build_dir/test_core_diagnostics"
 
 "$build_dir/test_core_diagnostics"
+
+"$cxx" \
+  -std=c++11 \
+  -Wall -Wextra -Wpedantic -Werror \
+  -I"$project_dir" \
+  "$project_dir/CoreMedia.cpp" \
+  "$project_dir/tests/test_core_media.cpp" \
+  -o "$build_dir/test_core_media"
+
+"$build_dir/test_core_media"
 bash "$project_dir/tests/test_release_manifest.sh"
 bash "$project_dir/tests/test_diagnostics_contract.sh"
+bash "$project_dir/tests/test_media_contract.sh"
 bash "$project_dir/tests/test_release_reconcile.sh"

@@ -114,6 +114,279 @@ void handleDiagnosticsClear() {
   sendJson(200, "{\"ok\":true}");
 }
 
+bool parseUintArg(const char *name, uint32_t &value);
+bool parseBoolArg(const char *name, bool &value);
+
+void resetMediaUploadState(bool removeTemporary) {
+  if (mediaUploadFile) mediaUploadFile.close();
+  if (removeTemporary && mediaStorageReady && LittleFS.exists(MEDIA_UPLOAD_TEMP)) {
+    LittleFS.remove(MEDIA_UPLOAD_TEMP);
+  }
+  mediaUploadActive = false;
+  mediaUploadComplete = false;
+  mediaUploadFailed = false;
+  mediaUploadExpectedSize = 0;
+  mediaUploadWritten = 0;
+  mediaUploadDisplaySeconds = 8;
+  mediaUploadName = "";
+  mediaUploadError = "";
+}
+
+void refreshMediaViewAfterCatalogChange() {
+  closeMediaPlayback();
+  if (currentView != View::CUSTOM_MEDIA && config.mode == TopMode::CUSTOM_MEDIA && mediaHasEnabledItems()) {
+    currentView = View::CUSTOM_MEDIA;
+  }
+  if (currentView == View::CUSTOM_MEDIA) {
+    if (mediaHasEnabledItems()) selectNextMediaItem();
+    else currentView = View::DASHBOARD;
+  }
+  lastCycleMs = millis();
+  wakeDisplay();
+}
+
+bool authorizeMediaMutation() {
+  if (!authorizePortalRequest()) return false;
+  if (firmwareUpdateBusy() || mediaTransferBusy()) {
+    sendJson(409, "{\"error\":\"다른 저장 작업이 진행 중입니다.\"}");
+    return false;
+  }
+  if (thermalWarning || temperatureSensorFault || thermalSafeMode) {
+    sendJson(409, "{\"error\":\"온도 보호 상태에서는 미디어를 변경할 수 없습니다.\"}");
+    return false;
+  }
+  return true;
+}
+
+void handleMediaStatus() {
+  if (!requireSetupApRequest()) return;
+  const size_t total = mediaStorageReady ? LittleFS.totalBytes() : 0;
+  const size_t used = mediaStorageReady ? LittleFS.usedBytes() : 0;
+  String json = "{";
+  json.reserve(1024);
+  json += "\"ready\":" + String(mediaStorageReady ? "true" : "false") + ",";
+  json += "\"psram\":" + String(psramFound() ? "true" : "false") + ",";
+  json += "\"total_bytes\":" + String(total) + ",";
+  json += "\"filesystem_used_bytes\":" + String(used) + ",";
+  json += "\"media_limit_bytes\":" + String(mediaStorageLimit()) + ",";
+  json += "\"media_used_bytes\":" + String(mediaCatalogBytesUsed(mediaCatalog)) + ",";
+  json += "\"item_count\":" + String(mediaCatalog.count) + ",";
+  json += "\"max_items\":" + String(MEDIA_MAX_ITEMS) + ",";
+  json += "\"upload_busy\":" + String(mediaUploadActive ? "true" : "false") + "}";
+  sendJson(200, json);
+}
+
+void handleMediaList() {
+  if (!requireSetupApRequest()) return;
+  String json = "{\"items\":[";
+  json.reserve(512 + static_cast<size_t>(mediaCatalog.count) * 160U);
+  for (uint8_t i = 0; i < mediaCatalog.count; ++i) {
+    if (i) json += ',';
+    const MediaEntry &entry = mediaCatalog.entries[i];
+    json += "{\"id\":" + String(entry.id) + ",";
+    json += "\"name\":\"" + jsonEscape(String(entry.name)) + "\",";
+    json += "\"size\":" + String(entry.fileSize) + ",";
+    json += "\"frames\":" + String(entry.frameCount) + ",";
+    json += "\"duration_ms\":" + String(entry.durationMs) + ",";
+    json += "\"display_seconds\":" + String(entry.displaySeconds) + ",";
+    json += "\"animated\":" + String((entry.flags & MEDIA_ENTRY_ANIMATED) ? "true" : "false") + ",";
+    json += "\"loop\":" + String((entry.flags & MEDIA_ENTRY_LOOP) ? "true" : "false") + ",";
+    json += "\"enabled\":" + String((entry.flags & MEDIA_ENTRY_ENABLED) ? "true" : "false") + "}";
+  }
+  json += "]}";
+  sendJson(200, json);
+}
+
+bool prepareMediaUploadRequest() {
+  if (!requestFromSetupAp() || !validToken()) {
+    mediaUploadError = "업로드 세션이 유효하지 않습니다.";
+    return false;
+  }
+  if (!mediaStorageReady) {
+    mediaUploadError = "미디어 저장소를 사용할 수 없습니다.";
+    return false;
+  }
+  if (firmwareUpdateBusy() || mediaUploadActive) {
+    mediaUploadError = "다른 저장 작업이 진행 중입니다.";
+    return false;
+  }
+  if (thermalWarning || temperatureSensorFault || thermalSafeMode) {
+    mediaUploadError = "온도 보호 상태에서는 미디어를 저장할 수 없습니다.";
+    return false;
+  }
+  uint32_t expected = 0;
+  uint32_t displaySeconds = 0;
+  if (!parseUintArg("size", expected) || !parseUintArg("display", displaySeconds) ||
+      expected < MilestoneMedia::HEADER_BYTES || expected > MilestoneMedia::MAX_FILE_BYTES ||
+      displaySeconds < 3 || displaySeconds > 60) {
+    mediaUploadError = "업로드 크기 또는 표시시간이 잘못되었습니다.";
+    return false;
+  }
+  const String name = server.arg("name");
+  if (name.length() == 0 || name.length() >= MEDIA_NAME_BYTES || utf8Codepoints(name) > 12) {
+    mediaUploadError = "미디어 이름은 UTF-8 48바이트, 12자 이하여야 합니다.";
+    return false;
+  }
+  if (mediaCatalog.count >= MEDIA_MAX_ITEMS ||
+      mediaCatalogBytesUsed(mediaCatalog) + expected > mediaStorageLimit()) {
+    mediaUploadError = "미디어 저장 한도 또는 항목 수를 초과합니다.";
+    return false;
+  }
+  const size_t physicalFree = LittleFS.totalBytes() - LittleFS.usedBytes();
+  if (physicalFree < expected + 4096U) {
+    mediaUploadError = "안전한 임시 업로드 공간이 부족합니다.";
+    return false;
+  }
+  LittleFS.remove(MEDIA_UPLOAD_TEMP);
+  mediaUploadFile = LittleFS.open(MEDIA_UPLOAD_TEMP, "w");
+  if (!mediaUploadFile) {
+    mediaUploadError = "임시 업로드 파일을 만들지 못했습니다.";
+    return false;
+  }
+  mediaUploadExpectedSize = expected;
+  mediaUploadDisplaySeconds = static_cast<uint8_t>(displaySeconds);
+  mediaUploadName = name;
+  mediaUploadWritten = 0;
+  mediaUploadFailed = false;
+  mediaUploadComplete = false;
+  mediaUploadActive = true;
+  return true;
+}
+
+void handleMediaUploadData() {
+  HTTPUpload &upload = server.upload();
+  if (upload.status == UPLOAD_FILE_START) {
+    resetMediaUploadState(true);
+    if (!prepareMediaUploadRequest()) mediaUploadFailed = true;
+    return;
+  }
+  if (upload.status == UPLOAD_FILE_WRITE) {
+    if (!mediaUploadActive || mediaUploadFailed) return;
+    if (mediaUploadWritten + upload.currentSize > mediaUploadExpectedSize ||
+        mediaUploadFile.write(upload.buf, upload.currentSize) != upload.currentSize) {
+      mediaUploadFailed = true;
+      mediaUploadError = "미디어 파일 저장 중 오류가 발생했습니다.";
+      return;
+    }
+    mediaUploadWritten += upload.currentSize;
+    return;
+  }
+  if (upload.status == UPLOAD_FILE_END) {
+    if (mediaUploadFile) {
+      mediaUploadFile.flush();
+      mediaUploadFile.close();
+    }
+    if (!mediaUploadActive || mediaUploadFailed || mediaUploadWritten != mediaUploadExpectedSize ||
+        upload.totalSize != mediaUploadExpectedSize) {
+      mediaUploadFailed = true;
+      if (mediaUploadError.length() == 0) mediaUploadError = "업로드 길이가 예상 크기와 다릅니다.";
+    } else {
+      mediaUploadComplete = true;
+    }
+    mediaUploadActive = false;
+    return;
+  }
+  if (upload.status == UPLOAD_FILE_ABORTED) {
+    mediaUploadFailed = true;
+    mediaUploadError = "미디어 업로드가 중단되었습니다.";
+    if (mediaUploadFile) mediaUploadFile.close();
+    mediaUploadActive = false;
+  }
+}
+
+void handleMediaUploadComplete() {
+  if (!authorizePortalRequest()) {
+    resetMediaUploadState(true);
+    return;
+  }
+  if (!mediaUploadComplete || mediaUploadFailed) {
+    const String error = mediaUploadError.length() ? mediaUploadError : "미디어 업로드를 완료하지 못했습니다.";
+    resetMediaUploadState(true);
+    return sendJson(400, String("{\"error\":\"") + jsonEscape(error) + "\"}");
+  }
+  if (thermalWarning || temperatureSensorFault || thermalSafeMode || firmwareUpdateBusy()) {
+    resetMediaUploadState(true);
+    return sendJson(409, "{\"error\":\"안전 상태가 바뀌어 업로드를 확정하지 않았습니다.\"}");
+  }
+  MilestoneMedia::Header header;
+  String error;
+  const String name = mediaUploadName;
+  const uint8_t displaySeconds = mediaUploadDisplaySeconds;
+  if (!addUploadedMedia(name, displaySeconds, header, error)) {
+    resetMediaUploadState(true);
+    return sendJson(400, String("{\"error\":\"") + jsonEscape(error) + "\"}");
+  }
+  resetMediaUploadState(false);
+  refreshMediaViewAfterCatalogChange();
+  sendJson(201, String("{\"ok\":true,\"frames\":") + String(header.frameCount) +
+                    ",\"duration_ms\":" + String(header.durationMs) + "}");
+}
+
+void handleMediaUpdate() {
+  if (!authorizeMediaMutation()) return;
+  uint32_t id = 0;
+  uint32_t displaySeconds = 0;
+  bool enabled = false;
+  const String name = server.arg("name");
+  if (!parseUintArg("id", id) || !parseUintArg("display", displaySeconds) ||
+      !parseBoolArg("enabled", enabled) || name.length() == 0 ||
+      name.length() >= MEDIA_NAME_BYTES || utf8Codepoints(name) > 12 ||
+      displaySeconds < 3 || displaySeconds > 60) {
+    return sendJson(400, "{\"error\":\"미디어 설정 값이 잘못되었습니다.\"}");
+  }
+  if (!updateMediaEntry(id, name, static_cast<uint8_t>(displaySeconds), enabled)) {
+    return sendJson(500, "{\"error\":\"미디어 설정을 저장하지 못했습니다.\"}");
+  }
+  refreshMediaViewAfterCatalogChange();
+  sendJson(200, "{\"ok\":true}");
+}
+
+void handleMediaOrder() {
+  if (!authorizeMediaMutation()) return;
+  uint32_t id = 0;
+  const String direction = server.arg("direction");
+  if (!parseUintArg("id", id) || (direction != "up" && direction != "down")) {
+    return sendJson(400, "{\"error\":\"미디어 순서 요청이 잘못되었습니다.\"}");
+  }
+  if (!moveMediaEntry(id, direction == "up" ? -1 : 1)) {
+    return sendJson(500, "{\"error\":\"미디어 순서를 저장하지 못했습니다.\"}");
+  }
+  refreshMediaViewAfterCatalogChange();
+  sendJson(200, "{\"ok\":true}");
+}
+
+void handleMediaDelete() {
+  if (!authorizeMediaMutation()) return;
+  uint32_t id = 0;
+  if (!parseUintArg("id", id)) return sendJson(400, "{\"error\":\"미디어 ID가 잘못되었습니다.\"}");
+  if (!deleteMediaEntry(id)) return sendJson(500, "{\"error\":\"미디어를 삭제하지 못했습니다.\"}");
+  refreshMediaViewAfterCatalogChange();
+  sendJson(200, "{\"ok\":true}");
+}
+
+void handleMediaClear() {
+  if (!authorizeMediaMutation()) return;
+  if (server.arg("confirm") != "MEDIA") return sendJson(400, "{\"error\":\"전체 삭제 확인 문자열이 올바르지 않습니다.\"}");
+  if (!clearAllMediaFiles()) return sendJson(500, "{\"error\":\"일부 미디어 파일을 삭제하지 못했습니다.\"}");
+  refreshMediaViewAfterCatalogChange();
+  sendJson(200, "{\"ok\":true}");
+}
+
+void handleMediaRepair() {
+  if (!authorizeMediaMutation()) return;
+  if (server.arg("confirm") != "REPAIR") {
+    return sendJson(400, "{\"error\":\"저장소 복구 확인 문자열이 올바르지 않습니다.\"}");
+  }
+  if (!repairMediaStorage()) {
+    recordDiagnostic(MilestoneDiagnostics::Event::MEDIA_FAILED,
+                     static_cast<int16_t>(MilestoneDiagnostics::MediaFailure::STORAGE), 0, false);
+    return sendJson(500, "{\"error\":\"미디어 저장소를 복구하지 못했습니다.\"}");
+  }
+  resetMediaUploadState(false);
+  refreshMediaViewAfterCatalogChange();
+  sendJson(200, "{\"ok\":true}");
+}
+
 void handleGetConfig() {
   if (!requireSetupApRequest()) return;
   String json = "{";
@@ -289,8 +562,8 @@ void handlePostConfig() {
   if (utf8Codepoints(next.title) > 24 || next.title.length() > 96 || next.title.length() == 0) return sendJson(400, "{\"error\":\"목표 이름은 1~24자여야 합니다.\"}");
   if (utf8Codepoints(next.message) > 60 || next.message.length() > 240) return sendJson(400, "{\"error\":\"문구는 60자 이하여야 합니다.\"}");
   if (!parseDate(next.target, year, month, day)) return sendJson(400, "{\"error\":\"목표 날짜 형식이 잘못되었습니다.\"}");
-  if (mode > 7) return sendJson(400, "{\"error\":\"표시 모드가 잘못되었습니다.\"}");
-  if (cycleMask < 1 || cycleMask > 127) return sendJson(400, "{\"error\":\"순환 화면을 하나 이상 선택하세요.\"}");
+  if (mode > 8) return sendJson(400, "{\"error\":\"표시 모드가 잘못되었습니다.\"}");
+  if (cycleMask < 1 || cycleMask > 255) return sendJson(400, "{\"error\":\"순환 화면을 하나 이상 선택하세요.\"}");
   if (!(cycleInterval == 0 || (cycleInterval >= 3 && cycleInterval <= 60))) return sendJson(400, "{\"error\":\"자동 전환은 0초 또는 3~60초여야 합니다.\"}");
   if (scrollSpeed < 5 || scrollSpeed > 80 || brightness < 1 || brightness > 255 ||
       nightLevel < 1 || nightLevel > 255 || ledBrightness < 1 || ledBrightness > 64 ||
@@ -299,7 +572,7 @@ void handlePostConfig() {
     return sendJson(400, "{\"error\":\"밝기·시간·스크롤 설정 범위를 확인하세요.\"}");
   }
   uint8_t parsedOrder[VIEW_COUNT];
-  if (!parseCycleOrderCount(server.arg("cycle_order"), parsedOrder, VIEW_COUNT)) return sendJson(400, "{\"error\":\"순환 순서는 0~6을 중복 없이 입력하세요.\"}");
+  if (!parseCycleOrderCount(server.arg("cycle_order"), parsedOrder, VIEW_COUNT)) return sendJson(400, "{\"error\":\"순환 순서는 0~7을 중복 없이 입력하세요.\"}");
   if (!allowedValue(ntpPeriod, ALLOWED_NTP_PERIODS) ||
       !allowedValue(ddayPeriod, ALLOWED_DDAY_PERIODS) ||
       !allowedValue(retryPeriod, ALLOWED_RETRY_PERIODS)) {
@@ -344,6 +617,12 @@ void handlePostConfig() {
     selectFirstEnabledCycleView();
   } else {
     currentView = topModeView(config.mode);
+  }
+  if (currentView == View::CUSTOM_MEDIA) {
+    if (mediaHasEnabledItems()) selectNextMediaItem();
+    else currentView = View::DASHBOARD;
+  } else {
+    closeMediaPlayback();
   }
   if (currentView == View::DEVICE_INFO) deviceInfoStartedMs = millis();
   lastTemperatureReadMs = 0;
@@ -445,6 +724,7 @@ void handleFactoryReset() {
   if (!authorizePortalRequest()) return;
   if (!prefsReady) return sendJson(503, "{\"error\":\"NVS 저장공간을 사용할 수 없어 공장 초기화를 실행할 수 없습니다.\"}");
   if (server.arg("confirm") != "RESET") return sendJson(400, "{\"error\":\"초기화 확인 문자열이 올바르지 않습니다.\"}");
+  if (!clearAllMediaFiles()) return sendJson(500, "{\"error\":\"커스텀 미디어를 초기화하지 못했습니다.\"}");
   if (!prefs.clear()) return sendJson(500, "{\"error\":\"설정 저장공간을 초기화하지 못했습니다.\"}");
   if (!clearDiagnosticHistory()) logLine("diagnostic history clear failed during factory reset");
   sendJson(200, "{\"ok\":true,\"restarting\":true}");
@@ -510,6 +790,9 @@ void handleDeleteSavedWifi() {
 
 void handleUpdateCheck() {
   if (!authorizePortalRequest()) return;
+  if (mediaTransferBusy()) {
+    return sendJson(409, "{\"error\":\"미디어 업로드가 진행 중입니다. 완료 후 다시 시도하세요.\"}");
+  }
   if (firmwareUpdateBusy() || updateState == UpdateState::CURRENT) {
     return sendJson(409, "{\"error\":\"업데이트 작업이 이미 진행 중입니다.\"}");
   }
@@ -532,6 +815,9 @@ void handleUpdateCheck() {
 
 void handleUpdateInstall() {
   if (!authorizePortalRequest()) return;
+  if (mediaTransferBusy()) {
+    return sendJson(409, "{\"error\":\"미디어 업로드가 진행 중입니다. 완료 후 다시 시도하세요.\"}");
+  }
   if (updateInstallRequested || firmwareTransferActive()) {
     return sendJson(409, "{\"error\":\"업데이트 설치가 이미 진행 중입니다.\"}");
   }
@@ -574,6 +860,14 @@ void registerPortalRoutes() {
   server.on("/api/status", HTTP_GET, handleStatus);
   server.on("/api/diagnostics", HTTP_GET, handleDiagnostics);
   server.on("/api/diagnostics/clear", HTTP_POST, handleDiagnosticsClear);
+  server.on("/api/media/status", HTTP_GET, handleMediaStatus);
+  server.on("/api/media/list", HTTP_GET, handleMediaList);
+  server.on("/api/media/upload", HTTP_POST, handleMediaUploadComplete, handleMediaUploadData);
+  server.on("/api/media/update", HTTP_POST, handleMediaUpdate);
+  server.on("/api/media/order", HTTP_POST, handleMediaOrder);
+  server.on("/api/media/delete", HTTP_POST, handleMediaDelete);
+  server.on("/api/media/clear", HTTP_POST, handleMediaClear);
+  server.on("/api/media/repair", HTTP_POST, handleMediaRepair);
   server.on("/api/config", HTTP_GET, handleGetConfig);
   server.on("/api/wifi/scan", HTTP_GET, handleWifiScan);
   server.on("/api/config", HTTP_POST, handlePostConfig);
@@ -650,4 +944,3 @@ void failWifiTest(const String &reason) {
   recordDiagnostic(MilestoneDiagnostics::Event::WIFI_TEST_FAILED);
   logLine(String("Wi-Fi test failed: ") + reason);
 }
-

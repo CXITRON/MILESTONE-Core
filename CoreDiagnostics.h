@@ -41,6 +41,14 @@ enum class Event : uint16_t {
   THERMAL_PROTECTION = 62,
   THERMAL_RECOVERED = 63,
   TEMPERATURE_SENSOR_FAULT = 64,
+
+  MEDIA_FAILED = 70,
+};
+
+enum class MediaFailure : int16_t {
+  STORAGE = 1,
+  VALIDATION = 2,
+  PLAYBACK = 3,
 };
 
 enum class UpdateCheckFailure : int16_t {

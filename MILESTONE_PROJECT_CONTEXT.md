@@ -1,6 +1,6 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v1.8.3
+> Current baseline: MILESTONE Core v1.9.0
 > Hardware: Waveshare ESP32-S3-Zero + SH1107 128×128 OLED
 > Repository: `CXITRON/MILESTONE-Core`
 
@@ -23,6 +23,7 @@ MILESTONE Core is an ESP32-S3 desktop display firmware with:
 - post-OTA candidate validation and application-level rollback
 - device diagnostics for memory, network, update, rollback, and thermal state
 - persistent recent Diagnostics & Health event history with portal copy/clear tools
+- browser-converted 128×128 monochrome photos, GIFs, and short local videos
 
 It is an embedded application composed of several cooperative state machines. Reliability and recoverability are more important than cosmetic architectural purity.
 
@@ -35,6 +36,7 @@ MILESTONE_Core/
 ├── MILESTONE_Core.ino
 ├── CoreConfig.inc
 ├── CoreDiagnostics.inc
+├── CoreMedia.inc
 ├── CoreRollback.inc
 ├── CoreDisplay.inc
 ├── CoreNetwork.inc
@@ -45,13 +47,17 @@ MILESTONE_Core/
 ├── CoreLogic.cpp
 ├── CoreDiagnostics.h
 ├── CoreDiagnostics.cpp
+├── CoreMedia.h
+├── CoreMedia.cpp
 ├── PortalPage.h
 ├── UpdateCertificates.h
 ├── README.md
 ├── tests/
 │   ├── test_core_logic.cpp
 │   ├── test_core_diagnostics.cpp
+│   ├── test_core_media.cpp
 │   ├── test_diagnostics_contract.sh
+│   ├── test_media_contract.sh
 │   ├── test_release_reconcile.sh
 │   └── test_release_manifest.sh
 └── tools/
@@ -62,18 +68,20 @@ MILESTONE_Core/
     └── install-milestone-release.sh
 ```
 
-The `*.inc` runtime files are intentionally included into the sketch as one translation unit. Do not convert the whole firmware into independent `.cpp` modules only for style. `CoreLogic.cpp` and `CoreDiagnostics.cpp` are deliberate exceptions: they contain hardware-independent logic shared with host-side tests.
+The `*.inc` runtime files are intentionally included into the sketch as one translation unit. Do not convert the whole firmware into independent `.cpp` modules only for style. `CoreLogic.cpp`, `CoreDiagnostics.cpp`, and `CoreMedia.cpp` are deliberate exceptions: they contain hardware-independent logic shared with host-side tests.
 
 ## 3. Version and configuration schema
 
 Firmware and persistent schema versions are separate concepts.
 
 ```cpp
-FIRMWARE_VERSION = "1.8.3"
-CONFIG_VERSION = 8
+FIRMWARE_VERSION = "1.9.0"
+CONFIG_VERSION = 9
 ```
 
 Increment `CONFIG_VERSION` only when persistent NVS layout/meaning changes and implement a migration path. A firmware version change by itself must not force a schema reset.
+
+Schema 9 appends `CUSTOM_MEDIA` as View 7 and TopMode 8 without renumbering the existing values. The v8→v9 migration appends View 7 to the saved order but leaves cycle-mask bit 7 off, preserving the user's previous visible cycle until explicitly enabled.
 
 ## 4. Runtime architecture
 
@@ -111,18 +119,26 @@ v1.8.2 adds `CoreDiagnostics.inc` plus host-testable `CoreDiagnostics.h/.cpp`. T
 
 Important write-policy invariants:
 
-- write only significant boot, Wi-Fi, NTP, OTA, rollback, or thermal events
+- write only significant boot, Wi-Fi, NTP, OTA, rollback, thermal, or isolated media-failure events
 - suppress the same event/detail for 60 seconds unless the event is explicitly forced
 - never persist every loop, ordinary screen transitions, or RSSI fluctuations
-- keep `CONFIG_VERSION` independent; diagnostics storage is not part of schema 8 migration
+- keep `CONFIG_VERSION` independent; diagnostics storage is not part of schema 9 migration
 - diagnostics hooks observe existing state-transition outcomes and must not reorder the underlying state machine
 - clearing diagnostics must not clear Wi-Fi/settings/rollback state; factory reset may clear the separate diagnostics namespace as part of a full wipe
 
 The setup portal exposes `/api/diagnostics` and `/api/diagnostics/clear`, renders recent events newest-first, and provides a copyable support summary. Wi-Fi disconnect reason codes are diagnostics only and must not drive connection-state decisions.
 
+### Custom media
+
+v1.9.0 adds `CoreMedia.inc` and host-testable `CoreMedia.h/.cpp`. JPEG/PNG/WebP, GIF, and browser-supported local video are decoded in the setup browser, converted to 128×128 one-bit page-major frames, and uploaded as checksummed `MSM1` files. The ESP32 never stores or decodes the original codec.
+
+Media uses LittleFS with a runtime limit of `min(160 KiB, totalBytes - 16 KiB)`, at most 64 items, generated internal filenames, a streamed temporary upload, full size/CRC/frame validation, and A/B generation indexes. `LittleFS.begin(false)` is mandatory after initialization: a later mount failure disables only media and must never silently format user data. Explicit `REPAIR` and factory reset may format/delete media. OTA and media upload are mutually exclusive flash writers.
+
+The first MSM1 frame is a 2,048-byte raw U8g2 page buffer. Later frames use raw data or bounded XOR+RLE deltas. Runtime playback reads one frame at a time, prefers PSRAM, skips corrupt items, and yields to boot, portal, reset, OTA, and thermal safety screens. Media files survive OTA and rollback; v1.8.x ignores the filesystem.
+
 ## 5. Hardware-independent logic and tests
 
-v1.8.1 introduced `CoreLogic.h/.cpp` so pure logic can be compiled on the host without the Arduino framework. v1.8.2 adds `CoreDiagnostics.h/.cpp` for persistent-history layout, validation, circular ordering, duplicate suppression, and event classification. It currently covers areas such as:
+v1.8.1 introduced `CoreLogic.h/.cpp` so pure logic can be compiled on the host without the Arduino framework. v1.8.2 adds `CoreDiagnostics.h/.cpp`, and v1.9.0 adds `CoreMedia.h/.cpp` for the checksummed media container and bounded frame decoder. Tests cover areas such as:
 
 - semantic version parsing/comparison
 - ISO date validation
@@ -134,6 +150,8 @@ v1.8.1 introduced `CoreLogic.h/.cpp` so pure logic can be compiled on the host w
 - 16-entry circular ordering and pre-NTP timestamp handling
 - diagnostic duplicate-suppression behavior and event classification
 - portal/API endpoint contract for diagnostics view/copy/clear
+- MSM1 header/CRC/duration validation and raw/XOR-RLE reconstruction
+- custom media portal routes, schema migration, factory-reset, and OTA exclusion contracts
 
 Run:
 
@@ -207,7 +225,7 @@ cd /tmp && milestone-release --dry-run taildrop X.Y.Z "short release note"
 
 Use `--yes` only when an unattended final publish is explicitly desired.
 
-## 8. Areas intentionally not refactored through v1.8.3
+## 8. Areas intentionally not refactored through v1.9.0
 
 The following broad refactors were deliberately rejected because their regression risk exceeded their immediate value:
 

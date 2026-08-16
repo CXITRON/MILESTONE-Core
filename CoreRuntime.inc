@@ -238,6 +238,10 @@ void processFirmwareUpdate() {
 
   processRollbackConfirmation();
 
+  // LittleFS upload and OTA both perform long flash writes. Never start a new
+  // firmware operation while the setup portal is receiving custom media.
+  if (mediaTransferBusy()) return;
+
   if (updateState == UpdateState::CURRENT && updateCurrentVisibleMs != 0 &&
       elapsed(now, updateCurrentVisibleMs, UPDATE_CURRENT_HOLD_MS)) {
     setUpdateState(UpdateState::IDLE);
@@ -505,6 +509,7 @@ void processThermalProtection() {
 }
 
 bool viewEnabled(View view) {
+  if (view == View::CUSTOM_MEDIA && !mediaHasEnabledItems()) return false;
   return (config.cycleMask & (1U << static_cast<uint8_t>(view))) != 0;
 }
 
@@ -523,6 +528,7 @@ void selectFirstEnabledCycleView() {
 }
 
 void advanceView(bool persist) {
+  const View previousView = currentView;
   if (config.mode == TopMode::SELECTED_CYCLE) {
     for (uint8_t step = 1; step <= VIEW_COUNT; ++step) {
       uint8_t index = (currentCycleIndex + step) % VIEW_COUNT;
@@ -536,6 +542,8 @@ void advanceView(bool persist) {
   } else {
     currentView = static_cast<View>((static_cast<uint8_t>(currentView) + 1) % VIEW_COUNT);
   }
+  if (previousView == View::CUSTOM_MEDIA && currentView != View::CUSTOM_MEDIA) closeMediaPlayback();
+  if (currentView == View::CUSTOM_MEDIA && previousView != View::CUSTOM_MEDIA) selectNextMediaItem();
   if (currentView == View::DEVICE_INFO) deviceInfoStartedMs = millis();
   if (persist) {
     config.lastView = currentView;
@@ -550,8 +558,17 @@ void advanceView(bool persist) {
 void processCycle() {
   if (thermalSafeMode || bootSplashActive() || portalActive || resetConfirmation || buttonRawPressed ||
       buttonStablePressed || displaySleeping || firmwareUpdateBusy() || updatePromptVisible) return;
+  if (config.mode == TopMode::CUSTOM_MEDIA && currentView == View::CUSTOM_MEDIA) {
+    if (elapsed(millis(), lastCycleMs, static_cast<uint32_t>(currentMediaDisplaySeconds()) * 1000UL)) {
+      selectNextMediaItem();
+      lastCycleMs = millis();
+    }
+    return;
+  }
   if (config.mode != TopMode::SELECTED_CYCLE || config.cycleIntervalSec == 0) return;
-  if (elapsed(millis(), lastCycleMs, static_cast<uint32_t>(config.cycleIntervalSec) * 1000UL)) {
+  const uint8_t interval = currentView == View::CUSTOM_MEDIA
+                             ? currentMediaDisplaySeconds() : config.cycleIntervalSec;
+  if (elapsed(millis(), lastCycleMs, static_cast<uint32_t>(interval) * 1000UL)) {
     advanceView(false);
   }
 }
@@ -566,6 +583,7 @@ void performPhysicalFactoryReset() {
     display.sendBuffer();
   }
   logLine("physical factory reset confirmed");
+  if (!clearAllMediaFiles()) logLine("physical factory reset media clear incomplete");
   if (!prefs.clear()) {
     logLine("physical factory reset failed: NVS clear error");
     if (oledReady) {
@@ -657,6 +675,17 @@ void processDisplay() {
     }
     return;
   }
+  if (mediaDisplayOwnsFrame()) {
+    if (elapsed(now, lastDisplayMs, DISPLAY_REFRESH_MS)) updateContrast();
+    if (renderMediaFrameIfNeeded(now)) {
+      lastDisplayMs = now;
+    } else if ((mediaPlaybackFailed || !mediaHasEnabledItems()) &&
+               elapsed(now, lastDisplayMs, 1000UL)) {
+      drawMediaUnavailable();
+      lastDisplayMs = now;
+    }
+    return;
+  }
   const uint32_t refreshMs = buttonStablePressed ? BUTTON_DISPLAY_REFRESH_MS : DISPLAY_REFRESH_MS;
   if (!elapsed(now, lastDisplayMs, refreshMs)) return;
   lastDisplayMs = now;
@@ -670,6 +699,10 @@ void initializeView() {
   currentCycleIndex = config.cycleIndex % VIEW_COUNT;
   if (config.mode == TopMode::SELECTED_CYCLE) {
     selectFirstEnabledCycleView();
+  }
+  if (currentView == View::CUSTOM_MEDIA) {
+    if (mediaHasEnabledItems()) selectNextMediaItem();
+    else currentView = View::DASHBOARD;
   }
   if (currentView == View::DEVICE_INFO) deviceInfoStartedMs = millis();
   lastCycleMs = millis();
@@ -729,12 +762,14 @@ void setupFirmware() {
       if (!clearRollbackActiveRecord()) logLine("interrupted rollback record clear failed");
     }
   }
-  bool provisioned = loadConfig() && config.savedNetworkCount > 0;
+  const bool configLoaded = loadConfig();
+  bool provisioned = configLoaded && config.savedNetworkCount > 0;
   lastUpdateCheckEpoch = prefsReady ? prefs.getULong64("ota_last_ok", 0) : 0;
   latestFirmwareVersion = prefsReady ? prefs.getString("ota_latest", "") : "";
   oledReady = initDisplay();
   if (oledReady) bootSplashStartedMs = millis();
   if (!oledReady) setRuntimeState(RuntimeState::ERROR_DISPLAY);
+  initializeMediaStorage();
   initializeView();
   lastInteractionMs = millis();
 

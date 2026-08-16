@@ -7,8 +7,8 @@ The source code is always the final authority when documentation and implementat
 ## 1. Project baseline
 
 - Product: MILESTONE Core
-- Current firmware baseline: `1.8.3`
-- Persistent config schema: `8`
+- Current firmware baseline: `1.9.0`
+- Persistent config schema: `9`
 - Hardware: Waveshare ESP32-S3-Zero + SH1107 128×128 OLED
 - Main branch: `main`
 - Repository: `CXITRON/MILESTONE-Core`
@@ -100,9 +100,12 @@ Treat the following as high-risk and avoid cosmetic refactors without a concrete
 - BOOT button timing and reset confirmation
 - thermal protection
 - diagnostics hooks placed on those state transitions
+- `CoreMedia.inc` LittleFS mount/format policy and A/B media index commits
 
 Function length or global-variable count alone is not sufficient justification to rewrite these paths.
 Preserve working transaction/state-machine ordering unless the task specifically requires changing it.
+
+Custom media is optional. A mount, allocation, validation, or playback failure must disable or skip media without blocking boot validation, time display, Wi-Fi, diagnostics, rollback, or OTA. Never change `LittleFS.begin(false)` into automatic format-on-failure; formatting is allowed only during first initialization or an explicit user-confirmed repair.
 
 ## 6. Testing policy
 
@@ -114,7 +117,7 @@ Current host tests are run by:
 ```
 
 `tools/make-release.sh` already runs these tests before the Arduino build.
-When adding new pure validation/calculation logic, prefer placing it in `CoreLogic.h/.cpp` so the firmware and host tests share the same implementation. Pure diagnostics storage/ring-buffer logic belongs in `CoreDiagnostics.h/.cpp` and must remain host-testable without Arduino dependencies.
+When adding new pure validation/calculation logic, prefer placing it in `CoreLogic.h/.cpp` so the firmware and host tests share the same implementation. Pure diagnostics storage/ring-buffer logic belongs in `CoreDiagnostics.h/.cpp`, and MSM1 parsing/CRC/frame reconstruction belongs in `CoreMedia.h/.cpp`; both must remain host-testable without Arduino dependencies.
 
 Do not rewrite a working parser or state machine at the same time as first introducing its regression test unless the existing implementation itself is the bug being fixed. Diagnostics should observe existing transition result points; do not reorder Wi-Fi/NTP/OTA/rollback logic merely to make logging cleaner.
 

@@ -113,6 +113,7 @@ void testDuplicateSuppression() {
 void testEventClassification() {
   EXPECT_TRUE(MilestoneDiagnostics::isError(MilestoneDiagnostics::Event::OTA_FAILED));
   EXPECT_TRUE(MilestoneDiagnostics::isError(MilestoneDiagnostics::Event::NTP_TIMEOUT));
+  EXPECT_TRUE(MilestoneDiagnostics::isError(MilestoneDiagnostics::Event::MEDIA_FAILED));
   EXPECT_FALSE(MilestoneDiagnostics::isError(MilestoneDiagnostics::Event::NTP_SUCCESS));
   EXPECT_FALSE(MilestoneDiagnostics::isError(MilestoneDiagnostics::Event::BOOT_VALIDATED));
 }

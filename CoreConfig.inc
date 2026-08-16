@@ -257,6 +257,7 @@ bool loadConfig() {
   const bool migrateToV6 = version < 6;
   const bool migrateToV7 = version < 7;
   const bool migrateToV8 = version < 8;
+  const bool migrateToV9 = version < 9;
   config.version = CONFIG_VERSION;
   if (migrateToV4) {
     String legacySsid = prefs.getString("wifi_ssid", "");
@@ -302,8 +303,8 @@ bool loadConfig() {
   }
   uint8_t storedMode = prefs.getUChar("mode", 0);
   if (migrateV1 && storedMode == 4) storedMode = static_cast<uint8_t>(TopMode::SELECTED_CYCLE);
-  config.mode = static_cast<TopMode>(clampInt(storedMode, 0, 7));
-  const uint8_t maximumStoredView = migrateV1 ? 3 : (migrateToV6 ? 5 : 6);
+  config.mode = static_cast<TopMode>(clampInt(storedMode, 0, migrateToV9 ? 7 : 8));
+  const uint8_t maximumStoredView = migrateV1 ? 3 : (migrateToV6 ? 5 : (migrateToV9 ? 6 : 7));
   config.lastView = static_cast<View>(clampInt(prefs.getUChar("last_view", 0), 0, maximumStoredView));
   config.title = prefs.getString("title", config.title);
   config.target = prefs.getString("target", config.target);
@@ -339,7 +340,7 @@ bool loadConfig() {
   config.nightEndMin = clampInt(prefs.getUShort("night_end", 420), 0, 1439);
   config.burninShift = prefs.getBool("burnin", true);
   config.screenOffMin = clampInt(prefs.getUShort("screen_off", 0), 0, 1440);
-  const uint8_t storedCycleLimit = migrateToV6 ? 0x3F : 0x7F;
+  const uint8_t storedCycleLimit = migrateToV6 ? 0x3F : (migrateToV9 ? 0x7F : 0xFF);
   config.cycleMask = prefs.getUChar("cycle_mask", migrateV1 ? 0x0F : storedCycleLimit) & storedCycleLimit;
   if (config.cycleMask == 0) config.cycleMask = 1;
   if (migrateV1) {
@@ -352,15 +353,23 @@ bool loadConfig() {
     config.cycleOrder[4] = 4;
     config.cycleOrder[5] = 5;
     config.cycleOrder[6] = 6;
+    config.cycleOrder[7] = 7;
   } else if (migrateToV6) {
     uint8_t parsedLegacy[6];
     if (parseCycleOrderCount(prefs.getString("cycle_ord", "0,1,2,3,4,5"), parsedLegacy, 6)) {
       memcpy(config.cycleOrder, parsedLegacy, sizeof(parsedLegacy));
     }
     config.cycleOrder[6] = 6;
+    config.cycleOrder[7] = 7;
+  } else if (migrateToV9) {
+    uint8_t parsedLegacy[7];
+    if (parseCycleOrderCount(prefs.getString("cycle_ord", "0,1,2,3,4,5,6"), parsedLegacy, 7)) {
+      memcpy(config.cycleOrder, parsedLegacy, sizeof(parsedLegacy));
+    }
+    config.cycleOrder[7] = 7;
   } else {
     uint8_t parsed[VIEW_COUNT];
-    if (parseCycleOrderCount(prefs.getString("cycle_ord", "0,1,2,3,4,5,6"), parsed, VIEW_COUNT)) {
+    if (parseCycleOrderCount(prefs.getString("cycle_ord", "0,1,2,3,4,5,6,7"), parsed, VIEW_COUNT)) {
       memcpy(config.cycleOrder, parsed, sizeof(parsed));
     }
   }
@@ -371,7 +380,7 @@ bool loadConfig() {
   config.lastDday = prefs.getInt("last_dday", 0);
   int y, m, d;
   if (!parseDate(config.target, y, m, d)) config.target = "2026-11-19";
-  if (migrateToV3 || migrateToV4 || migrateToV5 || migrateToV6 || migrateToV7 || migrateToV8) {
+  if (migrateToV3 || migrateToV4 || migrateToV5 || migrateToV6 || migrateToV7 || migrateToV8 || migrateToV9) {
     if (saveGeneralConfig()) {
       logLine(String("configuration migrated from schema ") + String(version) + " to " + String(CONFIG_VERSION));
     } else {
@@ -380,4 +389,3 @@ bool loadConfig() {
   }
   return true;
 }
-

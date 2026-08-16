@@ -5,6 +5,7 @@
 #include <WebServer.h>
 #include <DNSServer.h>
 #include <Preferences.h>
+#include <LittleFS.h>
 #include <ESPmDNS.h>
 #include <Adafruit_NeoPixel.h>
 #include <HTTPClient.h>
@@ -13,6 +14,7 @@
 #include <mbedtls/sha256.h>
 #include <esp_timer.h>
 #include <esp_err.h>
+#include <esp_heap_caps.h>
 #include <time.h>
 #include "driver/temperature_sensor.h"
 #include "esp_ota_ops.h"
@@ -34,6 +36,7 @@
 #include "UpdateCertificates.h"
 #include "CoreLogic.h"
 #include "CoreDiagnostics.h"
+#include "CoreMedia.h"
 
 // TLS, HTTP parsing, hashing, display updates, and the Arduino framework all
 // share loopTask during a synchronous OTA transfer. Reserve an explicit stack
@@ -46,7 +49,7 @@ SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 
 namespace Milestone {
 
-constexpr char FIRMWARE_VERSION[] = "1.8.3";
+constexpr char FIRMWARE_VERSION[] = "1.9.0";
 constexpr char AP_SSID[] = "MILESTONE-D1-SETUP";
 constexpr char HOSTNAME[] = "milestone-d1";
 constexpr char PREFS_NS[] = "milestone";
@@ -54,8 +57,8 @@ constexpr char DIAGNOSTICS_PREFS_NS[] = "milestone_diag";
 constexpr char UPDATE_MANIFEST_URL[] = "https://github.com/CXITRON/MILESTONE-Core/releases/latest/download/MILESTONE_Core.json";
 constexpr char UPDATE_RELEASE_BASE_URL[] = "https://github.com/CXITRON/MILESTONE-Core/releases/download/v";
 constexpr char UPDATE_ASSET_NAME[] = "MILESTONE_Core.bin";
-constexpr uint16_t CONFIG_VERSION = 8;
-constexpr uint8_t VIEW_COUNT = 7;
+constexpr uint16_t CONFIG_VERSION = 9;
+constexpr uint8_t VIEW_COUNT = 8;
 constexpr uint8_t MAX_SAVED_NETWORKS = 8;
 constexpr uint8_t NO_WIFI_INDEX = 0xFF;
 
@@ -138,7 +141,8 @@ enum class View : uint8_t {
   CLOCK_ONLY = 3,
   MESSAGE_CLOCK = 4,
   DASHBOARD = 5,
-  DEVICE_INFO = 6
+  DEVICE_INFO = 6,
+  CUSTOM_MEDIA = 7
 };
 
 enum class TopMode : uint8_t {
@@ -149,7 +153,8 @@ enum class TopMode : uint8_t {
   MESSAGE_CLOCK = 4,
   DASHBOARD = 5,
   SELECTED_CYCLE = 6,
-  DEVICE_INFO = 7
+  DEVICE_INFO = 7,
+  CUSTOM_MEDIA = 8
 };
 
 enum class RuntimeState : uint8_t {
@@ -262,7 +267,7 @@ struct Config {
   bool burninShift = true;
   uint16_t screenOffMin = 0;
   uint8_t cycleMask = 0x7F;
-  uint8_t cycleOrder[VIEW_COUNT] = {0, 1, 2, 3, 4, 5, 6};
+  uint8_t cycleOrder[VIEW_COUNT] = {0, 1, 2, 3, 4, 5, 6, 7};
   uint8_t cycleIntervalSec = 8;
   uint8_t cycleIndex = 0;
   uint64_t lastSync = 0;
@@ -513,9 +518,9 @@ bool firmwareUpdateBusy() {
 }
 
 View topModeView(TopMode mode) {
-  return mode == TopMode::DEVICE_INFO
-           ? View::DEVICE_INFO
-           : static_cast<View>(static_cast<uint8_t>(mode));
+  if (mode == TopMode::DEVICE_INFO) return View::DEVICE_INFO;
+  if (mode == TopMode::CUSTOM_MEDIA) return View::CUSTOM_MEDIA;
+  return static_cast<View>(static_cast<uint8_t>(mode));
 }
 
 bool timeIsValid() {
@@ -538,8 +543,13 @@ void setRuntimeState(RuntimeState next) {
 // CoreDisplay.inc. Arduino's automatic prototype generation does not cross
 // this mechanically split .inc boundary reliably, so declare it explicitly.
 const char *resetReasonName(esp_reset_reason_t reason);
+void drawCenteredStr(const char *text, int baseline, int8_t offsetX);
+bool bootSplashActive();
+void recordDiagnostic(MilestoneDiagnostics::Event event, int16_t detail,
+                      int32_t value, bool force);
 
 #include "CoreConfig.inc"
+#include "CoreMedia.inc"
 #include "CoreDiagnostics.inc"
 #include "CoreRollback.inc"
 #include "CoreDisplay.inc"
