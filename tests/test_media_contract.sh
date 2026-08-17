@@ -19,7 +19,7 @@ reject() {
   fi
 }
 
-require 'FIRMWARE_VERSION\[\] = "1\.10\.1"' MILESTONE_Core.ino 'firmware version is not 1.10.1'
+require 'FIRMWARE_VERSION\[\] = "1\.10\.2"' MILESTONE_Core.ino 'firmware version is not 1.10.2'
 require 'CONFIG_VERSION = 9' MILESTONE_Core.ino 'config schema is not 9'
 require 'CUSTOM_MEDIA = 7' MILESTONE_Core.ino 'custom media view must preserve IDs 0-6'
 require 'CUSTOM_MEDIA = 8' MILESTONE_Core.ino 'custom media top mode must preserve IDs 0-7'
@@ -38,7 +38,7 @@ require 'MEDIA_STREAM_MAX_FPS = 24' CoreMedia.inc '24 fps source ceiling missing
 require 'MEDIA_STREAM_MAX_RENDER_FPS = 15' CoreMedia.inc '400 kHz OLED streaming safety cap missing'
 require 'mediaStreamRenderFps = fps > MEDIA_STREAM_MAX_RENDER_FPS' CoreMedia.inc 'stream renderer must clamp physical OLED FPS'
 require 'render_fps' CorePortal.inc 'stream status must expose physical render FPS'
-require 'mediaStreamActive \|\| mediaStreamUploadActive.*portalStartedMs = now' CoreRuntime.inc 'active stream must keep setup portal alive'
+require 'if \(streamPinsPortal\)' CoreRuntime.inc 'active stream must keep setup portal alive'
 require 'mediaStreamQueue' CoreMedia.inc 'live stream PSRAM queue missing'
 require 'return mediaUploadActive \|\| mediaStreamActive \|\| mediaStreamUploadActive;' CoreMedia.inc 'live stream must block concurrent media mutations'
 require 'enqueueMediaStreamFrames' CoreMedia.inc 'live stream queue ingress missing'
@@ -120,4 +120,11 @@ if command -v node >/dev/null 2>&1; then
     "$project_dir/PortalPage.h" | node --check -
 fi
 
+
+# v1.10.2: a live stream pins the setup AP and cannot inherit an already armed close.
+require 'const bool streamPinsPortal = mediaStreamActive \|\| mediaStreamUploadActive' CoreRuntime.inc 'live stream portal pin missing'
+require '!streamPinsPortal && portalClosingAfterSuccess' CoreRuntime.inc 'post-success portal close is not suppressed during streaming'
+require '!streamPinsPortal && !portalClosingAfterSuccess' CoreRuntime.inc 'AP timeout is not suppressed during streaming'
+require 'portalClosingAfterSuccess = false;' CorePortal.inc 'stream start does not cancel a pending portal close'
+require 'mediaStreamActive && mediaStreamReceivedFrames > 0' CoreRuntime.inc 'stream takes OLED ownership before first frame arrives'
 echo "Custom media portal/API contract test passed"

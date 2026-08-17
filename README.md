@@ -248,13 +248,13 @@ PC의 현재 프로젝트를 직접 수정한 경우에는 **MILESTONE_Core 프�
 
 ```bash
 cd /run/media/citron/T7/Documents/Dev/MILESTONE_Core
-milestone-release local 1.10.1 "Keep setup AP responsive during streaming"
+milestone-release local 1.10.2 "Pin setup AP during streaming"
 ```
 
-Tailscale Taildrop으로 `MILESTONE_Core_1.10.1.zip`을 받은 경우에는 교체 대상 프로젝트 디렉터리 밖의 정상적으로 존재하는 디렉터리에서 실행합니다. 기존 프로젝트가 교체될 때 현재 셸 경로가 사라지는 문제를 방지하기 위해 `/tmp`로 이동하는 방식을 권장합니다.
+Tailscale Taildrop으로 `MILESTONE_Core_1.10.2.zip`을 받은 경우에는 교체 대상 프로젝트 디렉터리 밖의 정상적으로 존재하는 디렉터리에서 실행합니다. 기존 프로젝트가 교체될 때 현재 셸 경로가 사라지는 문제를 방지하기 위해 `/tmp`로 이동하는 방식을 권장합니다.
 
 ```bash
-cd /tmp && milestone-release taildrop 1.10.1 "Keep setup AP responsive during streaming"
+cd /tmp && milestone-release taildrop 1.10.2 "Pin setup AP during streaming"
 ```
 
 Taildrop 모드는 ZIP을 라이브 프로젝트에 바로 덮어쓰지 않습니다. 별도 staging 디렉터리에서 구조·버전·Git 상태를 검사하고 테스트와 ESP32 릴리즈 빌드까지 성공한 뒤에만 프로젝트를 교체합니다. GitHub 게시 전 실패하면 기존 프로젝트를 자동 복구합니다. `--dry-run`은 테스트/빌드까지만 수행하고 로컬 프로젝트·Git·GitHub를 변경하지 않습니다. `--yes`를 사용하지 않는 기본 동작은 최종 게시 직전에 한 번 확인합니다.
@@ -267,10 +267,10 @@ Taildrop 모드는 ZIP을 라이브 프로젝트에 바로 덮어쓰지 않습�
 
 ```bash
 chmod +x tools/make-release.sh
-./tools/make-release.sh 1.10.1 "Keep setup AP responsive during streaming"
+./tools/make-release.sh 1.10.2 "Pin setup AP during streaming"
 ```
 
-기본 설명을 사용하려면 `./tools/make-release.sh 1.10.1`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
+기본 설명을 사용하려면 `./tools/make-release.sh 1.10.2`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
 
 다음 두 파일이 `release/`에 생성됩니다.
 
@@ -290,11 +290,11 @@ release/MILESTONE_Core.json
 일반적인 게시에는 위의 `milestone-release`를 사용합니다. 아래 수동 절차는 자동화 도구를 복구하거나 디버깅해야 할 때만 참고합니다.
 
 1. 저장소의 `Releases`에서 `Draft a new release`를 선택합니다.
-2. 버전과 동일한 태그를 만듭니다. 예: `v1.10.1`
-3. Release 제목을 `MILESTONE Core v1.10.1`로 지정합니다.
+2. 버전과 동일한 태그를 만듭니다. 예: `v1.10.2`
+3. Release 제목을 `MILESTONE Core v1.10.2`로 지정합니다.
 4. `release/MILESTONE_Core.bin`과 `release/MILESTONE_Core.json`을 첨부합니다.
 5. Pre-release가 아닌 최신 정식 Release로 게시합니다.
-6. 1.9.9가 설치된 기기에서 1.10.1 OTA 업데이트와 기존 설정·Wi-Fi·롤백 보호·진단 이력·커스텀 미디어·실시간 스트리밍 동작을 검증합니다.
+6. 1.9.9가 설치된 기기에서 1.10.2 OTA 업데이트와 기존 설정·Wi-Fi·롤백 보호·진단 이력·커스텀 미디어·실시간 스트리밍 동작을 검증합니다.
 
 두 파일의 이름은 모든 Release에서 정확히 같아야 합니다. 초안이나 Pre-release는 `latest` 업데이트 대상으로 사용하지 않습니다.
 
@@ -669,3 +669,13 @@ release/MILESTONE_Core.json
 ### Taildrop 원격 이력 조정
 
 `milestone-release taildrop`은 ZIP의 HEAD가 최신 `origin/main`을 포함하지 않으면 공통 릴리즈 태그를 확인한 뒤, 원격의 실제 펌웨어 버전과 일치하는 Taildrop 쪽 최신 커밋을 기준점으로 삼아 그 이후 변경만 최신 `origin/main` 위에 재적용합니다. 이미 원격에 반영된 같은 버전의 준비 커밋을 다시 재생하지 않습니다. 충돌하거나 안전한 버전 기준점을 찾지 못하면 기존 프로젝트를 교체하거나 원격에 push하지 않고 중단합니다. 강제 push는 사용하지 않습니다. 릴리즈 성공 후 설치된 `milestone-release` 명령도 새 프로젝트의 도구로 갱신합니다.
+
+
+## v1.10.2 업데이트 안내
+
+- 실시간 스트리밍 시작 시 설정 AP를 명시적으로 유지하도록 수정
+- Wi-Fi 시험 성공 후 예약된 포털 종료가 스트리밍 세션을 끊지 않도록 수정
+- 스트리밍 중 일반 설정 AP 타임아웃 억제
+- 첫 스트림 프레임이 실제 수신되기 전까지 OLED의 MILESTONE SETUP 화면 유지
+
+정식 버전: `1.10.2`

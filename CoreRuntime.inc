@@ -68,16 +68,23 @@ void processNetwork() {
   if (portalActive) {
     dnsServer.processNextRequest();
     server.handleClient();
-    // A live stream is an active portal session. Keep the setup AP timeout
-    // from expiring during long playback even when individual browser requests
-    // are delayed by video decoding or OLED refresh work.
-    if (mediaStreamActive || mediaStreamUploadActive) portalStartedMs = now;
-    if (portalClosingAfterSuccess && elapsed(now, portalSuccessMs, PORTAL_SUCCESS_HOLD_MS)) {
+    // A live stream owns the setup AP session. While streaming, cancel any
+    // previously armed post-Wi-Fi-success close and suppress every normal AP
+    // timeout path. The browser that is feeding frames must not lose the AP.
+    const bool streamPinsPortal = mediaStreamActive || mediaStreamUploadActive;
+    if (streamPinsPortal) {
+      portalStartedMs = now;
+      portalClosingAfterSuccess = false;
+    }
+    if (!streamPinsPortal && portalClosingAfterSuccess &&
+        elapsed(now, portalSuccessMs, PORTAL_SUCCESS_HOLD_MS)) {
       stopPortal();
       return;
     }
-    if (!portalClosingAfterSuccess && wifiTestState != WifiTestState::CONNECTING &&
-        wifiTestState != WifiTestState::TIME_SYNCING && elapsed(now, portalStartedMs, AP_TIMEOUT_MS)) {
+    if (!streamPinsPortal && !portalClosingAfterSuccess &&
+        wifiTestState != WifiTestState::CONNECTING &&
+        wifiTestState != WifiTestState::TIME_SYNCING &&
+        elapsed(now, portalStartedMs, AP_TIMEOUT_MS)) {
       stopPortal();
       return;
     }
@@ -680,7 +687,11 @@ void processDisplay() {
     }
     return;
   }
-  if (mediaStreamActive && !thermalSafeMode && !bootSplashActive() &&
+  // Do not hand OLED ownership to the stream until at least one frame has
+  // actually reached the device. This keeps the SETUP screen visible while
+  // the browser is starting/decoding the source instead of freezing a stale
+  // pre-stream framebuffer.
+  if (mediaStreamActive && mediaStreamReceivedFrames > 0 && !thermalSafeMode && !bootSplashActive() &&
       !firmwareTransferActive() && updateState != UpdateState::ERROR_STATE &&
       !(updateState == UpdateState::AVAILABLE && updatePromptVisible) && !resetConfirmation) {
     if (elapsed(now, lastDisplayMs, DISPLAY_REFRESH_MS)) updateContrast();

@@ -1,6 +1,6 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v1.10.1
+> Current baseline: MILESTONE Core v1.10.2
 > Hardware: Waveshare ESP32-S3-Zero + SH1107 128×128 OLED
 > Repository: `CXITRON/MILESTONE-Core`
 
@@ -75,7 +75,7 @@ The `*.inc` runtime files are intentionally included into the sketch as one tran
 Firmware and persistent schema versions are separate concepts.
 
 ```cpp
-FIRMWARE_VERSION = "1.10.1"
+FIRMWARE_VERSION = "1.10.2"
 CONFIG_VERSION = 9
 ```
 
@@ -153,6 +153,8 @@ v1.9.9 removes the browser-side 300-frame and 40-second conversion ceilings. The
 v1.10.0 adds live media streaming without changing the stored MSM1 format. While the setup portal remains open, a phone or PC browser can decode a local video or a browser-readable direct media URL, convert each frame to the same 128x128 one-bit U8g2 page layout, and push bounded batches to a 12-frame runtime queue. The stream is never written to LittleFS, so the 1024-frame and 160 KiB stored-media limits do not apply. YouTube page/iframe URLs are intentionally rejected because the browser cannot directly sample pixels from the cross-origin embedded player.
 
 v1.10.1 hardens setup-AP coexistence during streaming. The original v1.10.0 portal defaulted to 20 fps even though a 2048-byte full-frame SH1107 transfer over the verified 400 kHz I2C bus consumes most of a 50 ms frame interval, which can starve WebServer/DNS servicing. v1.10.1 defaults the portal to 10 fps, accepts source timing up to 24 fps but caps physical OLED refresh at 15 fps, exposes the actual render rate in stream status, extends the stale window to 5 seconds, and treats an active stream as portal activity so AP timeout cannot close the setup portal during long playback.
+
+v1.10.2 fixes setup-mode exit semantics at stream start. A live stream now explicitly pins the setup AP, cancels any pending post-Wi-Fi-test portal close, and suppresses both close-after-success and ordinary AP timeout paths until streaming ends. The OLED also remains on the setup screen until the first stream frame is actually received, rather than allowing the stream state to take display ownership before usable media exists.
 
 Media uses LittleFS with a runtime limit of `min(160 KiB, totalBytes - 16 KiB)`, at most 64 items, generated internal filenames, a streamed temporary upload, full size/CRC/frame validation, and A/B generation indexes. `LittleFS.begin(false)` is mandatory after initialization: a later mount failure disables only media and must never silently format user data. Explicit `REPAIR` and factory reset may format/delete media. OTA and media upload are mutually exclusive flash writers.
 
@@ -247,7 +249,7 @@ cd /tmp && milestone-release --dry-run taildrop X.Y.Z "short release note"
 
 Use `--yes` only when an unattended final publish is explicitly desired.
 
-## 8. Areas intentionally not refactored through v1.10.1
+## 8. Areas intentionally not refactored through v1.10.2
 
 The following broad refactors were deliberately rejected because their regression risk exceeded their immediate value:
 

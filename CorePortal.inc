@@ -234,6 +234,9 @@ void handleMediaStreamStart() {
   if (!startMediaStream(static_cast<uint16_t>(fps))) {
     return sendJson(503, "{\"error\":\"스트리밍 프레임 버퍼를 확보하지 못했습니다. PSRAM 상태를 확인하세요.\"}");
   }
+  // Starting a stream is an explicit request to keep using the setup portal.
+  // Cancel a close that may have been armed by a successful Wi-Fi test.
+  portalClosingAfterSuccess = false;
   portalStartedMs = millis();
   wakeDisplay();
   sendJson(200, mediaStreamStatusJson());
