@@ -358,10 +358,15 @@ void handleMediaOrder() {
 void handleMediaDelete() {
   if (!authorizeMediaMutation()) return;
   uint32_t id = 0;
-  if (!parseUintArg("id", id)) return sendJson(400, "{\"error\":\"미디어 ID가 잘못되었습니다.\"}");
-  if (!deleteMediaEntry(id)) return sendJson(500, "{\"error\":\"미디어를 삭제하지 못했습니다.\"}");
+  if (!parseUintArg("id", id)) return sendJson(400, "{\"error\":\"미디어 ID가 잘못되었습니다.\",\"stage\":\"parse-id\"}");
+  String detail;
+  if (!deleteMediaEntry(id, detail)) {
+    return sendJson(500, String("{\"error\":\"미디어를 삭제하지 못했습니다.\",\"id\":") +
+                         String(id) + ",\"stage\":\"" + jsonEscape(detail) + "\"}");
+  }
   refreshMediaViewAfterCatalogChange();
-  sendJson(200, "{\"ok\":true}");
+  sendJson(200, String("{\"ok\":true,\"id\":") + String(id) +
+                    ",\"stage\":\"" + jsonEscape(detail) + "\"}");
 }
 
 void handleMediaClear() {

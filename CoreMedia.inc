@@ -617,35 +617,67 @@ bool moveMediaEntry(uint32_t id, int direction) {
   return true;
 }
 
-bool deleteMediaEntry(uint32_t id) {
+bool deleteMediaEntry(uint32_t id, String &detail) {
   const int index = findMediaEntry(id);
-  if (index < 0) return false;
+  if (index < 0) {
+    detail = "catalog:not-found";
+    return false;
+  }
 
-  // LittleFS deletion must not race an open playback handle. Close playback
-  // before changing the catalog or removing any media file. This also avoids
-  // keeping a stale catalog index when an earlier entry is removed.
+  // Release playback before touching the file or its catalog entry.
   closeMediaPlayback();
 
-  const MediaCatalog previousCatalog = mediaCatalog;
-  mediaCatalogScratch = mediaCatalog;
-  for (uint8_t i = static_cast<uint8_t>(index); i + 1U < mediaCatalogScratch.count; ++i) {
-    mediaCatalogScratch.entries[i] = mediaCatalogScratch.entries[i + 1U];
+  MediaCatalog candidate = mediaCatalog;
+  for (uint8_t i = static_cast<uint8_t>(index); i + 1U < candidate.count; ++i) {
+    candidate.entries[i] = candidate.entries[i + 1U];
   }
-  --mediaCatalogScratch.count;
-  mediaCatalogScratch.entries[mediaCatalogScratch.count] = MediaEntry();
-  if (!commitMediaCatalog(mediaCatalogScratch)) return false;
+  --candidate.count;
+  candidate.entries[candidate.count] = MediaEntry();
 
   const String path = mediaPath(id);
-  if (!LittleFS.exists(path) || LittleFS.remove(path)) return true;
+  const bool fileExisted = LittleFS.exists(path);
 
-  // The index update already succeeded. If physical removal fails, restore the
-  // previous catalog so the UI and filesystem do not silently diverge.
-  logLine(String("custom media delete failed: id=") + String(id));
-  mediaCatalogScratch = previousCatalog;
-  if (!commitMediaCatalog(mediaCatalogScratch)) {
-    logLine(String("custom media delete rollback failed: id=") + String(id));
+  // Normal path: persist the smaller catalog first. This preserves the old
+  // catalog if the index write itself fails.
+  if (commitMediaCatalog(candidate)) {
+    if (!fileExisted) {
+      detail = "catalog-committed:file-already-missing";
+      return true;
+    }
+    if (LittleFS.remove(path)) {
+      detail = "catalog-committed:file-removed";
+      return true;
+    }
+
+    // The item is already deleted from the authoritative catalog. Do not roll
+    // it back merely because best-effort orphan cleanup failed; that made the
+    // UI appear undeletable. A later repair/reboot can reclaim the orphan.
+    detail = "catalog-committed:file-cleanup-pending";
+    logLine(String("custom media delete cleanup pending: id=") + String(id));
+    return true;
   }
-  return false;
+
+  // Recovery path for a tight/fragmented LittleFS: deleting the large media
+  // file may be the only way to make room for the next small catalog index.
+  if (!fileExisted || !LittleFS.remove(path)) {
+    detail = fileExisted ? "catalog-write-failed:file-remove-failed"
+                         : "catalog-write-failed:file-missing";
+    return false;
+  }
+
+  if (commitMediaCatalog(candidate)) {
+    detail = "file-freed:catalog-retry-committed";
+    return true;
+  }
+
+  // The file is gone but the catalog could not be persisted even after space
+  // was freed. Hide the stale entry for this boot; boot-time validation will
+  // quarantine the missing file on the next start and retry catalog repair.
+  mediaCatalog = candidate;
+  mediaCatalogScratch = candidate;
+  detail = "file-removed:catalog-persist-pending";
+  logLine(String("custom media delete catalog persist pending: id=") + String(id));
+  return true;
 }
 
 bool mediaTransferBusy() {

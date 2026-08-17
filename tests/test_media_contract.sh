@@ -19,7 +19,7 @@ reject() {
   fi
 }
 
-require 'FIRMWARE_VERSION\[\] = "1\.9\.6"' MILESTONE_Core.ino 'firmware version is not 1.9.6'
+require 'FIRMWARE_VERSION\[\] = "1\.9\.7"' MILESTONE_Core.ino 'firmware version is not 1.9.7'
 require 'CONFIG_VERSION = 9' MILESTONE_Core.ino 'config schema is not 9'
 require 'CUSTOM_MEDIA = 7' MILESTONE_Core.ino 'custom media view must preserve IDs 0-6'
 require 'CUSTOM_MEDIA = 8' MILESTONE_Core.ino 'custom media top mode must preserve IDs 0-7'
@@ -29,18 +29,21 @@ require 'config\.cycleOrder\[7\] = 7' CoreConfig.inc 'v8 cycle order migration m
 for route in status list upload update order delete clear repair; do
   require "server\.on\(\"/api/media/${route}\"" CorePortal.inc "missing media API route: $route"
 done
-require 'bool deleteMediaEntry\(uint32_t id\)' CoreMedia.inc 'missing single media delete implementation'
+require 'bool deleteMediaEntry\(uint32_t id, String &detail\)' CoreMedia.inc 'missing detailed single media delete implementation'
 python3 - <<'PY_DELETE_ORDER'
 from pathlib import Path
 s = Path('CoreMedia.inc').read_text()
-start = s.index('bool deleteMediaEntry(uint32_t id)')
+start = s.index('bool deleteMediaEntry(uint32_t id, String &detail)')
 end = s.index('\nbool mediaTransferBusy()', start)
 body = s[start:end]
-assert body.index('closeMediaPlayback();') < body.index('commitMediaCatalog(mediaCatalogScratch)'), 'single media delete must close playback before catalog mutation'
-assert body.index('closeMediaPlayback();') < body.index('LittleFS.remove(path)'), 'single media delete must close playback before file removal'
-assert 'mediaCatalogScratch = previousCatalog;' in body and 'custom media delete rollback failed' in body, 'single media delete must restore catalog on filesystem removal failure'
+assert body.index('closeMediaPlayback();') < body.index('commitMediaCatalog(candidate)'), 'single media delete must close playback before catalog mutation'
+assert 'file-freed:catalog-retry-committed' in body, 'delete must retry catalog commit after freeing media file'
+assert 'catalog-committed:file-cleanup-pending' in body, 'catalog deletion must survive best-effort orphan cleanup failure'
+assert 'mediaCatalog = candidate;' in body, 'live catalog must hide stale entry when persistence retry still fails'
 PY_DELETE_ORDER
-require '미디어를 삭제했습니다' PortalPage.h 'single media delete success feedback missing'
+require 'media_action_status' PortalPage.h 'visible media action status missing'
+require '목록 재확인 중' PortalPage.h 'delete response verification feedback missing'
+require '성공 응답 후에도 ID' PortalPage.h 'delete must verify item disappearance after success response'
 require 'MEDIA_UPLOAD_TEMP' CoreMedia.inc 'transactional upload temp file is missing'
 require 'MEDIA_INDEX_A' CoreMedia.inc 'A media index is missing'
 require 'MEDIA_INDEX_B' CoreMedia.inc 'B media index is missing'

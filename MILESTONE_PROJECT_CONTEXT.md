@@ -1,6 +1,6 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v1.9.6
+> Current baseline: MILESTONE Core v1.9.7
 > Hardware: Waveshare ESP32-S3-Zero + SH1107 128×128 OLED
 > Repository: `CXITRON/MILESTONE-Core`
 
@@ -75,7 +75,7 @@ The `*.inc` runtime files are intentionally included into the sketch as one tran
 Firmware and persistent schema versions are separate concepts.
 
 ```cpp
-FIRMWARE_VERSION = "1.9.6"
+FIRMWARE_VERSION = "1.9.7"
 CONFIG_VERSION = 9
 ```
 
@@ -142,7 +142,9 @@ v1.9.4 handles an observed WebKit sequence in which the native picker returns `c
 
 v1.9.5 reflects the confirmed iCloud-provider failure mode observed on iPhone/iPad: videos that cannot play in the Photos picker can return `cancel` with `files=0`, while the same items succeed when cellular data or internet access lets Photos fetch the original. An empty cancel now ends the chooser wait immediately with a clear `파일 전달 실패` state and guidance to enable mobile data/internet or pre-download/play the video. The 180-second watchdog remains only for cases where no terminal picker event is delivered. The client trace now carries an explicit phase across chooser, file-read, conversion, and device-upload stages.
 
-v1.9.6 fixes single-item media deletion. Playback is now closed before the catalog or LittleFS file is mutated, preventing an open playback handle or shifted catalog index from interfering with deletion. If the catalog update succeeds but the physical LittleFS removal fails, the previous catalog is committed back so the UI and filesystem do not silently diverge. The portal also shows explicit deleting/success/failure feedback.
+v1.9.6 attempted to harden single-item deletion by closing playback before catalog/file mutation and by rolling the catalog back when physical file removal failed. Its feedback was rendered in the upper conversion-info area, however, so it was not visible where deletion is performed and the rollback strategy could make a successfully removed catalog entry reappear.
+
+v1.9.7 hardens single-item media deletion and makes its result visible next to the media list. The portal now reports the HTTP result and verifies that the deleted ID actually disappears after reloading the catalog. The device retries catalog persistence after freeing the target file when the first index write fails, and it no longer resurrects a catalog item solely because best-effort orphan cleanup fails.
 
 Media uses LittleFS with a runtime limit of `min(160 KiB, totalBytes - 16 KiB)`, at most 64 items, generated internal filenames, a streamed temporary upload, full size/CRC/frame validation, and A/B generation indexes. `LittleFS.begin(false)` is mandatory after initialization: a later mount failure disables only media and must never silently format user data. Explicit `REPAIR` and factory reset may format/delete media. OTA and media upload are mutually exclusive flash writers.
 
@@ -237,7 +239,7 @@ cd /tmp && milestone-release --dry-run taildrop X.Y.Z "short release note"
 
 Use `--yes` only when an unattended final publish is explicitly desired.
 
-## 8. Areas intentionally not refactored through v1.9.6
+## 8. Areas intentionally not refactored through v1.9.7
 
 The following broad refactors were deliberately rejected because their regression risk exceeded their immediate value:
 

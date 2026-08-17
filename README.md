@@ -248,13 +248,13 @@ PC의 현재 프로젝트를 직접 수정한 경우에는 **MILESTONE_Core 프�
 
 ```bash
 cd /run/media/citron/T7/Documents/Dev/MILESTONE_Core
-milestone-release local 1.9.6 "Fix custom media deletion"
+milestone-release local 1.9.7 "Harden and diagnose media deletion"
 ```
 
-Tailscale Taildrop으로 `MILESTONE_Core_1.9.6.zip`을 받은 경우에는 교체 대상 프로젝트 디렉터리 밖의 정상적으로 존재하는 디렉터리에서 실행합니다. 기존 프로젝트가 교체될 때 현재 셸 경로가 사라지는 문제를 방지하기 위해 `/tmp`로 이동하는 방식을 권장합니다.
+Tailscale Taildrop으로 `MILESTONE_Core_1.9.7.zip`을 받은 경우에는 교체 대상 프로젝트 디렉터리 밖의 정상적으로 존재하는 디렉터리에서 실행합니다. 기존 프로젝트가 교체될 때 현재 셸 경로가 사라지는 문제를 방지하기 위해 `/tmp`로 이동하는 방식을 권장합니다.
 
 ```bash
-cd /tmp && milestone-release taildrop 1.9.6 "Fix custom media deletion"
+cd /tmp && milestone-release taildrop 1.9.7 "Harden and diagnose media deletion"
 ```
 
 Taildrop 모드는 ZIP을 라이브 프로젝트에 바로 덮어쓰지 않습니다. 별도 staging 디렉터리에서 구조·버전·Git 상태를 검사하고 테스트와 ESP32 릴리즈 빌드까지 성공한 뒤에만 프로젝트를 교체합니다. GitHub 게시 전 실패하면 기존 프로젝트를 자동 복구합니다. `--dry-run`은 테스트/빌드까지만 수행하고 로컬 프로젝트·Git·GitHub를 변경하지 않습니다. `--yes`를 사용하지 않는 기본 동작은 최종 게시 직전에 한 번 확인합니다.
@@ -267,10 +267,10 @@ Taildrop 모드는 ZIP을 라이브 프로젝트에 바로 덮어쓰지 않습�
 
 ```bash
 chmod +x tools/make-release.sh
-./tools/make-release.sh 1.9.6 "Fix custom media deletion"
+./tools/make-release.sh 1.9.7 "Harden and diagnose media deletion"
 ```
 
-기본 설명을 사용하려면 `./tools/make-release.sh 1.9.6`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
+기본 설명을 사용하려면 `./tools/make-release.sh 1.9.7`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
 
 다음 두 파일이 `release/`에 생성됩니다.
 
@@ -290,11 +290,11 @@ release/MILESTONE_Core.json
 일반적인 게시에는 위의 `milestone-release`를 사용합니다. 아래 수동 절차는 자동화 도구를 복구하거나 디버깅해야 할 때만 참고합니다.
 
 1. 저장소의 `Releases`에서 `Draft a new release`를 선택합니다.
-2. 버전과 동일한 태그를 만듭니다. 예: `v1.9.6`
-3. Release 제목을 `MILESTONE Core v1.9.6`로 지정합니다.
+2. 버전과 동일한 태그를 만듭니다. 예: `v1.9.7`
+3. Release 제목을 `MILESTONE Core v1.9.7`로 지정합니다.
 4. `release/MILESTONE_Core.bin`과 `release/MILESTONE_Core.json`을 첨부합니다.
 5. Pre-release가 아닌 최신 정식 Release로 게시합니다.
-6. 1.9.5가 설치된 기기에서 1.9.6 OTA 업데이트와 기존 설정·Wi-Fi·롤백 보호·진단 이력·커스텀 미디어 동작을 검증합니다.
+6. 1.9.6이 설치된 기기에서 1.9.7 OTA 업데이트와 기존 설정·Wi-Fi·롤백 보호·진단 이력·커스텀 미디어 동작을 검증합니다.
 
 두 파일의 이름은 모든 Release에서 정확히 같아야 합니다. 초안이나 Pre-release는 `latest` 업데이트 대상으로 사용하지 않습니다.
 
@@ -382,12 +382,6 @@ release/MILESTONE_Core.json
 - 화면에 `files=0 · cancel` 응답과 후속 감시 경과시간을 별도로 표시
 
 
-## v1.9.6 업데이트 안내
-
-- 개별 미디어 삭제 전에 재생 파일 핸들을 닫아 LittleFS 삭제와의 충돌 가능성을 제거했습니다.
-- 카탈로그 갱신 후 실제 파일 삭제가 실패하면 이전 카탈로그를 복구해 목록과 저장소가 불일치하지 않도록 했습니다.
-- 개별 삭제 중·성공·실패 상태를 설정 포털에 명확히 표시합니다.
-
 ## v1.9.5 업데이트 안내
 
 - iPhone/iPad에서 iCloud 원본을 가져오지 못한 영상이 사진 선택 화면에서 재생 실패·`!` 표시와 함께 `cancel · files=0`으로 끝나는 실제 원인을 UX에 반영
@@ -396,6 +390,21 @@ release/MILESTONE_Core.json
 - 정상적인 무이벤트 지연에 대해서만 기존 180초 watchdog을 유지
 - 선택 → 파일 전달 → 파일 읽기 확인 → 변환 → 기기 업로드의 현재 단계를 진단 영역에 계속 표시
 - 핸드폰에서 사진 앱 동영상을 선택하기 전에 iCloud 원본과 데이터 연결 조건을 확인할 수 있는 안내 문구 추가
+
+## v1.9.6 업데이트 안내
+
+- 개별 미디어 삭제 전에 재생 파일 핸들을 닫아 LittleFS 삭제와의 충돌 가능성을 제거
+- 카탈로그 갱신 후 실제 파일 삭제가 실패하면 이전 카탈로그를 복구하도록 시도
+- 삭제 중·성공·실패 메시지를 기존 미디어 정보 영역에 출력하도록 추가
+
+## v1.9.7 업데이트 안내
+
+- 삭제 결과 전용 상태 영역을 **미디어 목록 바로 위**에 추가해 현재 화면에서 요청·성공·실패를 즉시 확인
+- 삭제 API가 `id`와 내부 처리 `stage`를 응답하고, 브라우저가 HTTP 상태와 stage를 그대로 표시
+- HTTP 200만 믿지 않고 삭제 후 목록을 다시 받아 같은 ID가 실제로 사라졌는지 검증
+- 카탈로그 인덱스 기록이 먼저 실패하면 대상 미디어 파일을 제거해 공간을 확보한 뒤 카탈로그 기록을 재시도
+- 카탈로그 삭제가 이미 성공한 뒤 물리 파일 정리만 실패한 경우 항목을 다시 살리지 않고 cleanup pending으로 기록
+- 성공·HTTP 500 실패 경로를 실제로 실행하는 브라우저 상태머신 회귀 테스트 추가
 
 ## v1.8.3 업데이트 안내
 
@@ -618,7 +627,7 @@ release/MILESTONE_Core.json
 - 기존 설정 스키마, 저장된 Wi-Fi, 여섯 가지 화면을 그대로 유지
 - 기기 세부정보 화면은 OTA 검증용 1.5.1에서 추가 예정
 
-정식 버전: `1.9.6`
+정식 버전: `1.9.7`
 
 
 ### Taildrop 원격 이력 조정

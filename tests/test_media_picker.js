@@ -27,6 +27,7 @@ class MockElement {
     this.selectedIndex = 0;
     this._value = '';
     this.attributes = new Map();
+    this.dataset = {};
   }
   get value() { return this._value; }
   set value(value) {
@@ -73,6 +74,8 @@ let nextTimer = 1;
 const timers = new Map();
 const documentListeners = new Map();
 const windowListeners = new Map();
+let mediaItems = [];
+let deleteMode = 'success';
 const context = vm.createContext({
   console,
   Blob,
@@ -91,6 +94,7 @@ const context = vm.createContext({
     getElementById: get,
     querySelectorAll() { return []; },
     createElement(tag) { return new MockElement(tag); },
+    createTextNode(text) { const e=new MockElement('text'); e.textContent=String(text); return e; },
     addEventListener(type, handler) { documentListeners.set(type, handler); },
     execCommand() { return true; },
     body: {appendChild() {}}
@@ -102,18 +106,27 @@ const context = vm.createContext({
   Image: class extends MockElement { async decode() {} },
   ImageData: class {},
   URL: {createObjectURL() { return 'blob:test'; }, revokeObjectURL() {}},
-  fetch: async url => ({
-    ok: true,
-    status: 200,
-    statusText: 'OK',
-    async text() {
-      if (String(url).includes('/api/config')) return JSON.stringify({saved_networks: []});
-      if (String(url).includes('/api/media/status')) return JSON.stringify({ready: false, media_limit_bytes: 0, media_used_bytes: 0});
-      if (String(url).includes('/api/media/list')) return JSON.stringify({items: []});
-      if (String(url).includes('/api/diagnostics')) return JSON.stringify({events: []});
-      return '{}';
+  fetch: async url => {
+    const textUrl=String(url);
+    if(textUrl.includes('/api/media/delete')){
+      const id=Number(new URLSearchParams(textUrl.split('?')[1]||'').get('id'));
+      if(deleteMode==='failure')return {ok:false,status:500,statusText:'ERR',async text(){return JSON.stringify({error:'미디어를 삭제하지 못했습니다.',stage:'catalog-write-failed:file-remove-failed'})}};
+      mediaItems=mediaItems.filter(item=>Number(item.id)!==id);
+      return {ok:true,status:200,statusText:'OK',async text(){return JSON.stringify({ok:true,id,stage:'catalog-committed:file-removed'})}};
     }
-  }),
+    return {
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      async text() {
+        if (textUrl.includes('/api/config')) return JSON.stringify({saved_networks: []});
+        if (textUrl.includes('/api/media/status')) return JSON.stringify({ready: true, media_limit_bytes: 200000, media_used_bytes: mediaItems.reduce((n,x)=>n+x.size,0), item_count:mediaItems.length,max_items:64,psram:true});
+        if (textUrl.includes('/api/media/list')) return JSON.stringify({items: mediaItems});
+        if (textUrl.includes('/api/diagnostics')) return JSON.stringify({events: []});
+        return '{}';
+      }
+    };
+  },
   setInterval(fn, ms) { const id = nextTimer++; timers.set(id, {fn, ms}); return id; },
   clearInterval(id) { timers.delete(id); },
   setTimeout(fn, ms) {
@@ -123,7 +136,7 @@ const context = vm.createContext({
     return id;
   },
   clearTimeout(id) { timers.delete(id); },
-  confirm() { return false; },
+  confirm() { return true; },
   prompt() { return ''; }
 });
 
@@ -172,7 +185,25 @@ const settle = () => new Promise(resolve => setImmediate(resolve));
   run("beginMediaPick($('media_video_file'),'사진 앱에서 동영상 선택'); convertMedia()");
   assert.match(get('media_info').textContent, /파일 선택 중/);
 
-  console.log('Media picker state-machine test passed');
+
+  mediaItems=[{id:1234567890,name:'삭제시험',size:4096,frames:1,duration_ms:1000,display_seconds:8,animated:false,loop:false,enabled:true}];
+  await run("deleteMedia(1234567890,'삭제시험')");
+  await settle();
+  assert.strictEqual(mediaItems.length,0);
+  assert.match(get('media_action_status').textContent,/삭제 완료/);
+  assert.match(get('media_action_status').textContent,/catalog-committed:file-removed/);
+
+  mediaItems=[{id:777,name:'실패시험',size:4096,frames:1,duration_ms:1000,display_seconds:8,animated:false,loop:false,enabled:true}];
+  deleteMode='failure';
+  await run("deleteMedia(777,'실패시험')");
+  await settle();
+  assert.strictEqual(mediaItems.length,1);
+  assert.match(get('media_action_status').textContent,/삭제 실패/);
+  assert.match(get('media_action_status').textContent,/HTTP 500/);
+  assert.match(get('media_action_status').textContent,/catalog-write-failed:file-remove-failed/);
+  deleteMode='success';
+
+  console.log('Media picker and delete state-machine test passed');
 })().catch(error => {
   console.error(error);
   process.exitCode = 1;
