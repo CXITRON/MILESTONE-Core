@@ -148,6 +148,16 @@ const settle = () => new Promise(resolve => setImmediate(resolve));
   assert.match(get('media_trace').textContent, /file-event-duplicate/);
 
   run("beginMediaPick($('media_video_file'),'사진 앱에서 동영상 선택')");
+  video.dispatch('cancel');
+  assert.strictEqual(run('mediaPick.active'), true);
+  assert.match(get('media_trace').textContent, /post-cancel-watch/);
+  assert.match(get('media_info').textContent, /후속 파일 전달 감시 중/);
+  video.files = [new File([new Uint8Array([9])], 'after-cancel.mp4', {type: 'video/mp4'})];
+  run('pollMediaPick()');
+  await settle();
+  assert.strictEqual(run('selectedMediaFile.name'), 'after-cancel.mp4');
+
+  run("beginMediaPick($('media_video_file'),'사진 앱에서 동영상 선택')");
   video.files = [new File([new Uint8Array([4, 5])], 'eventless.mp4', {type: 'video/mp4'})];
   run('pollMediaPick()');
   await settle();

@@ -158,6 +158,8 @@ v1.9.2에서는 Safari가 동영상 선택 후 파일을 반환하지 않는 경
 
 v1.9.3에서는 파일 선택을 하나의 성공/실패로 취급하지 않고 선택기 실행, 운영체제·파일 제공자의 원본 준비, 브라우저 `File` 전달, 데이터 접근 확인, 영상 메타데이터 분석, 프레임 변환 단계로 구분해 표시합니다. 사진 앱용 동영상 선택과 형식 제한이 없는 파일 앱 선택을 별도로 제공하며, `input`·`change` 이벤트와 입력 폴링을 함께 사용합니다. 파일 전달이 늦으면 경과 시간을 계속 표시하고 180초 동안 전달되지 않으면 선택/제공자 단계의 실패로 판정합니다. **파일 선택 진단 보기**에서는 브라우저 정보와 실제 발생한 이벤트를 복사할 수 있습니다.
 
+v1.9.4에서는 실제 영상 선택 뒤 WebKit이 `cancel`과 `files=0`을 반환한 진단 결과를 반영했습니다. 이 이벤트는 사용자가 취소 버튼을 눌렀다는 의미로만 해석할 수 없으므로 즉시 대기를 종료하지 않고, 지연된 파일 제공자 전달을 180초까지 계속 감시합니다. 또한 네이티브 선택기를 여는 첫 클릭에서 비어 있는 파일 입력값을 다시 초기화하지 않아 WebKit 활성화 도중 입력 상태를 건드리지 않습니다.
+
 ## 8. RGB 상태 LED
 
 보드에 내장된 GPIO 21의 WS2812 RGB LED는 현재 상태를 계속 표시합니다. 정상 상태에서도 꺼지지 않으며, 설정 페이지에서 일반·야간 밝기와 사용 여부를 조절할 수 있습니다.
@@ -246,13 +248,13 @@ PC의 현재 프로젝트를 직접 수정한 경우에는 **MILESTONE_Core 프�
 
 ```bash
 cd /run/media/citron/T7/Documents/Dev/MILESTONE_Core
-milestone-release local 1.9.3 "Diagnose and harden video file import"
+milestone-release local 1.9.4 "Handle delayed video picker handoff"
 ```
 
-Tailscale Taildrop으로 `MILESTONE_Core_1.9.3.zip`을 받은 경우에는 교체 대상 프로젝트 디렉터리 밖의 정상적으로 존재하는 디렉터리에서 실행합니다. 기존 프로젝트가 교체될 때 현재 셸 경로가 사라지는 문제를 방지하기 위해 `/tmp`로 이동하는 방식을 권장합니다.
+Tailscale Taildrop으로 `MILESTONE_Core_1.9.4.zip`을 받은 경우에는 교체 대상 프로젝트 디렉터리 밖의 정상적으로 존재하는 디렉터리에서 실행합니다. 기존 프로젝트가 교체될 때 현재 셸 경로가 사라지는 문제를 방지하기 위해 `/tmp`로 이동하는 방식을 권장합니다.
 
 ```bash
-cd /tmp && milestone-release taildrop 1.9.3 "Diagnose and harden video file import"
+cd /tmp && milestone-release taildrop 1.9.4 "Handle delayed video picker handoff"
 ```
 
 Taildrop 모드는 ZIP을 라이브 프로젝트에 바로 덮어쓰지 않습니다. 별도 staging 디렉터리에서 구조·버전·Git 상태를 검사하고 테스트와 ESP32 릴리즈 빌드까지 성공한 뒤에만 프로젝트를 교체합니다. GitHub 게시 전 실패하면 기존 프로젝트를 자동 복구합니다. `--dry-run`은 테스트/빌드까지만 수행하고 로컬 프로젝트·Git·GitHub를 변경하지 않습니다. `--yes`를 사용하지 않는 기본 동작은 최종 게시 직전에 한 번 확인합니다.
@@ -265,10 +267,10 @@ Taildrop 모드는 ZIP을 라이브 프로젝트에 바로 덮어쓰지 않습�
 
 ```bash
 chmod +x tools/make-release.sh
-./tools/make-release.sh 1.9.3 "Diagnose and harden video file import"
+./tools/make-release.sh 1.9.4 "Handle delayed video picker handoff"
 ```
 
-기본 설명을 사용하려면 `./tools/make-release.sh 1.9.3`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
+기본 설명을 사용하려면 `./tools/make-release.sh 1.9.4`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
 
 다음 두 파일이 `release/`에 생성됩니다.
 
@@ -288,11 +290,11 @@ release/MILESTONE_Core.json
 일반적인 게시에는 위의 `milestone-release`를 사용합니다. 아래 수동 절차는 자동화 도구를 복구하거나 디버깅해야 할 때만 참고합니다.
 
 1. 저장소의 `Releases`에서 `Draft a new release`를 선택합니다.
-2. 버전과 동일한 태그를 만듭니다. 예: `v1.9.3`
-3. Release 제목을 `MILESTONE Core v1.9.3`로 지정합니다.
+2. 버전과 동일한 태그를 만듭니다. 예: `v1.9.4`
+3. Release 제목을 `MILESTONE Core v1.9.4`로 지정합니다.
 4. `release/MILESTONE_Core.bin`과 `release/MILESTONE_Core.json`을 첨부합니다.
 5. Pre-release가 아닌 최신 정식 Release로 게시합니다.
-6. 1.9.2가 설치된 기기에서 1.9.3 OTA 업데이트와 기존 설정·Wi-Fi·롤백 보호·진단 이력·커스텀 미디어 동작을 검증합니다.
+6. 1.9.3이 설치된 기기에서 1.9.4 OTA 업데이트와 기존 설정·Wi-Fi·롤백 보호·진단 이력·커스텀 미디어 동작을 검증합니다.
 
 두 파일의 이름은 모든 Release에서 정확히 같아야 합니다. 초안이나 Pre-release는 `latest` 업데이트 대상으로 사용하지 않습니다.
 
@@ -371,6 +373,13 @@ release/MILESTONE_Core.json
 - 영상 메타데이터 분석 시간, 현재 변환 프레임, 전체 프레임, 변환 경과시간을 계속 표시
 - 사용자 에이전트와 선택 이벤트 이력을 담은 복사 가능한 파일 선택 진단 추가
 - `input` 단독·`change` 중복·이벤트 누락·전달 timeout 상태를 실행하는 파일 선택 상태 머신 테스트 추가
+
+## v1.9.4 업데이트 안내
+
+- 영상 선택 뒤 발생한 WebKit `cancel · files=0`을 사용자 취소로 즉시 확정하지 않고 180초 후속 전달 감시 유지
+- `cancel` 이후 늦게 `File`이 생성되는 상태 전이를 회귀 테스트에 추가
+- 네이티브 선택기를 여는 첫 클릭에서 빈 파일 입력값을 재설정하지 않아 WebKit 활성화 중 상태 변경 방지
+- 화면에 `files=0 · cancel` 응답과 후속 감시 경과시간을 별도로 표시
 
 ## v1.8.3 업데이트 안내
 
@@ -593,7 +602,7 @@ release/MILESTONE_Core.json
 - 기존 설정 스키마, 저장된 Wi-Fi, 여섯 가지 화면을 그대로 유지
 - 기기 세부정보 화면은 OTA 검증용 1.5.1에서 추가 예정
 
-정식 버전: `1.9.3`
+정식 버전: `1.9.4`
 
 
 ### Taildrop 원격 이력 조정

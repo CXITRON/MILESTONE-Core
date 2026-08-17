@@ -19,7 +19,7 @@ reject() {
   fi
 }
 
-require 'FIRMWARE_VERSION\[\] = "1\.9\.3"' MILESTONE_Core.ino 'firmware version is not 1.9.3'
+require 'FIRMWARE_VERSION\[\] = "1\.9\.4"' MILESTONE_Core.ino 'firmware version is not 1.9.4'
 require 'CONFIG_VERSION = 9' MILESTONE_Core.ino 'config schema is not 9'
 require 'CUSTOM_MEDIA = 7' MILESTONE_Core.ino 'custom media view must preserve IDs 0-6'
 require 'CUSTOM_MEDIA = 8' MILESTONE_Core.ino 'custom media top mode must preserve IDs 0-7'
@@ -51,6 +51,7 @@ require "addEventListener\('input',handleMediaInput\)" PortalPage.h 'file input 
 require "addEventListener\('change',handleMediaInput\)" PortalPage.h 'file change event handling is missing'
 require 'function pollMediaPick\(' PortalPage.h 'file handoff event-loss fallback is missing'
 require '180초 동안 영상 파일이 브라우저에 전달되지 않았습니다' PortalPage.h 'file-provider timeout diagnosis is missing'
+require 'post-cancel-watch' PortalPage.h 'empty cancel must retain the delayed handoff watchdog'
 require 'function probeMediaFile\(' PortalPage.h 'selected File readability probe is missing'
 require 'function handleMediaDrop\(' PortalPage.h 'drag-and-drop file handling is missing'
 require 'function openVideoFile\(' PortalPage.h 'bounded video initialization is missing'
