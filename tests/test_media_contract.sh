@@ -11,7 +11,7 @@ require() {
   fi
 }
 
-require 'FIRMWARE_VERSION\[\] = "1\.9\.0"' MILESTONE_Core.ino 'firmware version is not 1.9.0'
+require 'FIRMWARE_VERSION\[\] = "1\.9\.1"' MILESTONE_Core.ino 'firmware version is not 1.9.1'
 require 'CONFIG_VERSION = 9' MILESTONE_Core.ino 'config schema is not 9'
 require 'CUSTOM_MEDIA = 7' MILESTONE_Core.ino 'custom media view must preserve IDs 0-6'
 require 'CUSTOM_MEDIA = 8' MILESTONE_Core.ino 'custom media top mode must preserve IDs 0-7'
@@ -31,7 +31,13 @@ require 'mediaTransferBusy\(\)' CorePortal.inc 'portal update API must respect m
 
 require 'id="media_preview"' PortalPage.h 'OLED media preview is missing'
 require 'decodeGif\(' PortalPage.h 'browser GIF decoder is missing'
-require 'video/' PortalPage.h 'browser video conversion is missing'
+require 'id="media_image_file"' PortalPage.h 'separate image/GIF chooser is missing'
+require 'id="media_video_file"' PortalPage.h 'separate video chooser is missing'
+require '\.mp4,\.m4v,\.mov' PortalPage.h 'mobile video file extensions are missing'
+require 'function mediaKind\(' PortalPage.h 'MIME/extension media detection is missing'
+require 'function selectMediaFile\(' PortalPage.h 'selected-file state handling is missing'
+require 'function openVideoFile\(' PortalPage.h 'bounded video initialization is missing'
+require 'function waitForVideo\(' PortalPage.h 'video load timeout handling is missing'
 require 'buildMsm\(' PortalPage.h 'MSM1 browser encoder is missing'
 require 'x\+\(y>>3\)\*128' PortalPage.h 'U8g2 page-major packing contract is missing'
 

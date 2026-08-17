@@ -1,6 +1,6 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v1.9.0
+> Current baseline: MILESTONE Core v1.9.1
 > Hardware: Waveshare ESP32-S3-Zero + SH1107 128×128 OLED
 > Repository: `CXITRON/MILESTONE-Core`
 
@@ -75,7 +75,7 @@ The `*.inc` runtime files are intentionally included into the sketch as one tran
 Firmware and persistent schema versions are separate concepts.
 
 ```cpp
-FIRMWARE_VERSION = "1.9.0"
+FIRMWARE_VERSION = "1.9.1"
 CONFIG_VERSION = 9
 ```
 
@@ -131,6 +131,8 @@ The setup portal exposes `/api/diagnostics` and `/api/diagnostics/clear`, render
 ### Custom media
 
 v1.9.0 adds `CoreMedia.inc` and host-testable `CoreMedia.h/.cpp`. JPEG/PNG/WebP, GIF, and browser-supported local video are decoded in the setup browser, converted to 128×128 one-bit page-major frames, and uploaded as checksummed `MSM1` files. The ESP32 never stores or decodes the original codec.
+
+v1.9.1 hardens the browser-side video path without changing the MSM1 format or LittleFS transaction. Image/GIF and video choosers are separated, MP4/M4V/MOV extension fallback covers missing provider MIME types, and bounded metadata/frame waits prevent an iOS/WebKit load from hanging indefinitely.
 
 Media uses LittleFS with a runtime limit of `min(160 KiB, totalBytes - 16 KiB)`, at most 64 items, generated internal filenames, a streamed temporary upload, full size/CRC/frame validation, and A/B generation indexes. `LittleFS.begin(false)` is mandatory after initialization: a later mount failure disables only media and must never silently format user data. Explicit `REPAIR` and factory reset may format/delete media. OTA and media upload are mutually exclusive flash writers.
 
@@ -225,7 +227,7 @@ cd /tmp && milestone-release --dry-run taildrop X.Y.Z "short release note"
 
 Use `--yes` only when an unattended final publish is explicitly desired.
 
-## 8. Areas intentionally not refactored through v1.9.0
+## 8. Areas intentionally not refactored through v1.9.1
 
 The following broad refactors were deliberately rejected because their regression risk exceeded their immediate value:
 

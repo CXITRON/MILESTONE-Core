@@ -152,6 +152,8 @@ v1.9.0부터 설정 포털의 **커스텀 미디어** 카드에서 사진, GIF, 
 
 업로드는 임시 파일 수신, 크기·CRC32·프레임 검증, 최종 rename, A/B 목록 확정 순서로 처리합니다. 저장소 마운트 실패나 손상 미디어는 시간·Wi-Fi·OTA·부팅 검증을 막지 않습니다. 자동 포맷은 하지 않으며, 모든 미디어 삭제를 감수할 수 있을 때만 `REPAIR` 확인이 필요한 **저장소 복구**를 사용합니다. OTA와 미디어 업로드는 동시에 시작되지 않습니다.
 
+v1.9.1에서는 모바일 브라우저의 사진/GIF 선택과 동영상 선택을 분리했습니다. 동영상 제공자가 MIME 형식을 비워 전달해도 MP4·M4V·MOV 확장자로 판정하며, iOS/WebKit에서 영상 정보나 프레임 준비가 끝나지 않을 때는 무기한 멈추지 않고 구체적인 오류를 표시합니다. 실제 디코딩 가능 여부는 브라우저와 원본 코덱에 따라 달라질 수 있으며, 호환성이 가장 높은 형식은 H.264 비디오가 포함된 MP4입니다.
+
 ## 8. RGB 상태 LED
 
 보드에 내장된 GPIO 21의 WS2812 RGB LED는 현재 상태를 계속 표시합니다. 정상 상태에서도 꺼지지 않으며, 설정 페이지에서 일반·야간 밝기와 사용 여부를 조절할 수 있습니다.
@@ -240,13 +242,13 @@ PC의 현재 프로젝트를 직접 수정한 경우에는 **MILESTONE_Core 프�
 
 ```bash
 cd /run/media/citron/T7/Documents/Dev/MILESTONE_Core
-milestone-release local 1.9.0 "Custom media gallery and playback"
+milestone-release local 1.9.1 "Harden mobile video import"
 ```
 
-Tailscale Taildrop으로 `MILESTONE_Core_1.9.0.zip`을 받은 경우에는 교체 대상 프로젝트 디렉터리 밖의 정상적으로 존재하는 디렉터리에서 실행합니다. 기존 프로젝트가 교체될 때 현재 셸 경로가 사라지는 문제를 방지하기 위해 `/tmp`로 이동하는 방식을 권장합니다.
+Tailscale Taildrop으로 `MILESTONE_Core_1.9.1.zip`을 받은 경우에는 교체 대상 프로젝트 디렉터리 밖의 정상적으로 존재하는 디렉터리에서 실행합니다. 기존 프로젝트가 교체될 때 현재 셸 경로가 사라지는 문제를 방지하기 위해 `/tmp`로 이동하는 방식을 권장합니다.
 
 ```bash
-cd /tmp && milestone-release taildrop 1.9.0 "Custom media gallery and playback"
+cd /tmp && milestone-release taildrop 1.9.1 "Harden mobile video import"
 ```
 
 Taildrop 모드는 ZIP을 라이브 프로젝트에 바로 덮어쓰지 않습니다. 별도 staging 디렉터리에서 구조·버전·Git 상태를 검사하고 테스트와 ESP32 릴리즈 빌드까지 성공한 뒤에만 프로젝트를 교체합니다. GitHub 게시 전 실패하면 기존 프로젝트를 자동 복구합니다. `--dry-run`은 테스트/빌드까지만 수행하고 로컬 프로젝트·Git·GitHub를 변경하지 않습니다. `--yes`를 사용하지 않는 기본 동작은 최종 게시 직전에 한 번 확인합니다.
@@ -259,10 +261,10 @@ Taildrop 모드는 ZIP을 라이브 프로젝트에 바로 덮어쓰지 않습�
 
 ```bash
 chmod +x tools/make-release.sh
-./tools/make-release.sh 1.9.0 "Custom media gallery and playback"
+./tools/make-release.sh 1.9.1 "Harden mobile video import"
 ```
 
-기본 설명을 사용하려면 `./tools/make-release.sh 1.9.0`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
+기본 설명을 사용하려면 `./tools/make-release.sh 1.9.1`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
 
 다음 두 파일이 `release/`에 생성됩니다.
 
@@ -282,11 +284,11 @@ release/MILESTONE_Core.json
 일반적인 게시에는 위의 `milestone-release`를 사용합니다. 아래 수동 절차는 자동화 도구를 복구하거나 디버깅해야 할 때만 참고합니다.
 
 1. 저장소의 `Releases`에서 `Draft a new release`를 선택합니다.
-2. 버전과 동일한 태그를 만듭니다. 예: `v1.9.0`
-3. Release 제목을 `MILESTONE Core v1.9.0`으로 지정합니다.
+2. 버전과 동일한 태그를 만듭니다. 예: `v1.9.1`
+3. Release 제목을 `MILESTONE Core v1.9.1`로 지정합니다.
 4. `release/MILESTONE_Core.bin`과 `release/MILESTONE_Core.json`을 첨부합니다.
 5. Pre-release가 아닌 최신 정식 Release로 게시합니다.
-6. 1.8.3이 설치된 기기에서 1.9.0 OTA 업데이트와 기존 설정·Wi-Fi·롤백 보호·진단 이력 동작을 검증합니다.
+6. 1.9.0이 설치된 기기에서 1.9.1 OTA 업데이트와 기존 설정·Wi-Fi·롤백 보호·진단 이력·커스텀 미디어 동작을 검증합니다.
 
 두 파일의 이름은 모든 Release에서 정확히 같아야 합니다. 초안이나 Pre-release는 `latest` 업데이트 대상으로 사용하지 않습니다.
 
@@ -340,6 +342,13 @@ release/MILESTONE_Core.json
 - 실제 LittleFS 크기 기반 최대 160KiB·64개 제한, 임시 파일 검증 후 rename, A/B 세대 인덱스, 명시적 저장소 복구 제공
 - View 7과 TopMode 8을 추가하되 기존 ID를 유지하고, 스키마 8→9 마이그레이션에서 기존 순환 순서·mask·Wi-Fi·일반 설정 보존
 - 미디어 업로드와 OTA를 상호 배제하고 손상·마운트·PSRAM 실패가 핵심 부팅·시간·네트워크·업데이트 기능을 막지 않도록 격리
+
+## v1.9.1 업데이트 안내
+
+- 사진/GIF와 동영상 파일 선택기를 분리해 iOS·모바일 파일 선택 호환성 개선
+- MIME 정보가 없거나 불완전한 MP4·M4V·MOV 파일을 확장자로 안전하게 판정
+- 동영상 메타데이터·프레임 로딩에 시간 제한과 단계별 상태 표시를 추가해 무한 대기 방지
+- 변환 실패 시 선택 파일과 오류 원인을 유지해 재시도 가능
 - `CoreMedia.h/.cpp` 호스트 테스트와 포털/API/마이그레이션 계약 테스트 추가
 
 ## v1.8.3 업데이트 안내
@@ -563,7 +572,7 @@ release/MILESTONE_Core.json
 - 기존 설정 스키마, 저장된 Wi-Fi, 여섯 가지 화면을 그대로 유지
 - 기기 세부정보 화면은 OTA 검증용 1.5.1에서 추가 예정
 
-정식 버전: `1.9.0`
+정식 버전: `1.9.1`
 
 
 ### Taildrop 원격 이력 조정
