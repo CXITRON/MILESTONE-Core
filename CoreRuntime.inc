@@ -764,6 +764,12 @@ void setupFirmware() {
   if (!prefsReady) {
     logLine("NVS STORAGE ERROR: Preferences namespace could not be opened");
   }
+  if (prefsReady && prefs.getBool("stream_open", false)) {
+    logLine(String("previous reset interrupted live stream: reset=") +
+            resetReasonName(esp_reset_reason()) +
+            " (" + String(static_cast<int>(esp_reset_reason())) + ")");
+    prefs.putBool("stream_open", false);
+  }
   diagnosticsPrefsReady = diagnosticsPrefs.begin(DIAGNOSTICS_PREFS_NS, false);
   if (!diagnosticsPrefsReady) logLine("diagnostics NVS namespace could not be opened");
   initializeDiagnosticStorage();

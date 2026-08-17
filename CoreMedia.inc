@@ -34,6 +34,10 @@ constexpr uint16_t MEDIA_STREAM_MAX_FPS = 24;
 // while streaming so the setup AP remains responsive.
 constexpr uint16_t MEDIA_STREAM_MAX_RENDER_FPS = 15;
 constexpr uint32_t MEDIA_STREAM_STALE_MS = 5000UL;
+constexpr uint32_t MEDIA_STREAM_RESOURCE_CHECK_MS = 500UL;
+constexpr uint32_t MEDIA_STREAM_MIN_FREE_HEAP = 48U * 1024U;
+constexpr uint32_t MEDIA_STREAM_MIN_LARGEST_HEAP_BLOCK = 16U * 1024U;
+constexpr uint32_t MEDIA_STREAM_MIN_STACK_FREE = 2048U;
 
 struct MediaEntry {
   uint32_t id = 0;
@@ -102,6 +106,13 @@ uint8_t mediaStreamUploadFrameCount = 0;
 size_t mediaStreamUploadExpectedBytes = 0;
 size_t mediaStreamUploadWrittenBytes = 0;
 uint32_t mediaStreamUploadBatchSeq = 0;
+uint32_t mediaStreamLastResourceCheckMs = 0;
+uint32_t mediaStreamMinFreeHeap = 0xFFFFFFFFUL;
+uint32_t mediaStreamMinLargestHeapBlock = 0xFFFFFFFFUL;
+uint32_t mediaStreamMinStackFree = 0xFFFFFFFFUL;
+const char *mediaStreamLastStopReason = "idle";
+String mediaStreamStatusBuffer;
+String mediaStreamAckBuffer;
 
 String mediaPath(uint32_t id) {
   char path[32];
@@ -740,6 +751,13 @@ bool allocateMediaStreamBuffers() {
           static_cast<size_t>(MEDIA_STREAM_MAX_BATCH_FRAMES) * MilestoneMedia::FRAME_BYTES));
     }
   }
+  if (mediaStreamQueue && mediaStreamUploadBuffer) {
+    // Reuse these String capacities for the whole stream session. Rebuilding
+    // status JSON in a fresh String for every frame batch caused avoidable
+    // internal-heap churn on the synchronous WebServer path.
+    if (mediaStreamStatusBuffer.capacity() < 384) mediaStreamStatusBuffer.reserve(384);
+    if (mediaStreamAckBuffer.capacity() < 96) mediaStreamAckBuffer.reserve(96);
+  }
   return mediaStreamQueue && mediaStreamUploadBuffer;
 }
 
@@ -755,6 +773,7 @@ void resetMediaStreamUploadState() {
 }
 
 void stopMediaStream() {
+  const bool wasActive = mediaStreamActive;
   mediaStreamActive = false;
   resetMediaStreamUploadState();
   mediaStreamSessionId = 0;
@@ -764,6 +783,7 @@ void stopMediaStream() {
   mediaStreamQueueHead = 0;
   mediaStreamQueueTail = 0;
   mediaStreamQueueCount = 0;
+  if (wasActive && prefsReady) prefs.putBool("stream_open", false);
 }
 
 bool startMediaStream(uint16_t fps) {
@@ -783,7 +803,13 @@ bool startMediaStream(uint16_t fps) {
   mediaStreamDisplayedFrames = 0;
   mediaStreamDroppedFrames = 0;
   mediaStreamUnderruns = 0;
+  mediaStreamLastResourceCheckMs = mediaStreamLastPushMs;
+  mediaStreamMinFreeHeap = ESP.getFreeHeap();
+  mediaStreamMinLargestHeapBlock = ESP.getMaxAllocHeap();
+  mediaStreamMinStackFree = uxTaskGetStackHighWaterMark(nullptr);
+  mediaStreamLastStopReason = "active";
   mediaStreamActive = true;
+  if (prefsReady) prefs.putBool("stream_open", true);
   logLine(String("media stream started: source_fps=") + String(mediaStreamFps) +
           ", render_fps=" + String(mediaStreamRenderFps) +
           ", heap=" + String(ESP.getFreeHeap()) +
@@ -815,8 +841,40 @@ bool enqueueMediaStreamFrames(const uint8_t *frames, uint8_t frameCount) {
 
 void processMediaStreamState(uint32_t now) {
   if (!mediaStreamActive) return;
-  if (!portalActive || thermalWarning || temperatureSensorFault || thermalSafeMode ||
-      firmwareUpdateBusy() || elapsed(now, mediaStreamLastPushMs, MEDIA_STREAM_STALE_MS)) {
+  if (!portalActive) {
+    mediaStreamLastStopReason = "portal-closed";
+    stopMediaStream();
+    return;
+  }
+  if (thermalWarning || temperatureSensorFault || thermalSafeMode || firmwareUpdateBusy()) {
+    mediaStreamLastStopReason = "safety-state";
+    stopMediaStream();
+    return;
+  }
+  if (elapsed(now, mediaStreamLastPushMs, MEDIA_STREAM_STALE_MS)) {
+    mediaStreamLastStopReason = "source-stale";
+    stopMediaStream();
+    return;
+  }
+
+  if (!elapsed(now, mediaStreamLastResourceCheckMs, MEDIA_STREAM_RESOURCE_CHECK_MS)) return;
+  mediaStreamLastResourceCheckMs = now;
+  const uint32_t freeHeap = ESP.getFreeHeap();
+  const uint32_t largestHeapBlock = ESP.getMaxAllocHeap();
+  const uint32_t stackFree = uxTaskGetStackHighWaterMark(nullptr);
+  if (freeHeap < mediaStreamMinFreeHeap) mediaStreamMinFreeHeap = freeHeap;
+  if (largestHeapBlock < mediaStreamMinLargestHeapBlock) mediaStreamMinLargestHeapBlock = largestHeapBlock;
+  if (stackFree < mediaStreamMinStackFree) mediaStreamMinStackFree = stackFree;
+
+  if (freeHeap < MEDIA_STREAM_MIN_FREE_HEAP ||
+      largestHeapBlock < MEDIA_STREAM_MIN_LARGEST_HEAP_BLOCK ||
+      stackFree < MEDIA_STREAM_MIN_STACK_FREE) {
+    logLine(String("media stream stopped before resource exhaustion: heap=") + String(freeHeap) +
+            ", largest=" + String(largestHeapBlock) +
+            ", stack=" + String(stackFree) +
+            ", received=" + String(mediaStreamReceivedFrames) +
+            ", displayed=" + String(mediaStreamDisplayedFrames));
+    mediaStreamLastStopReason = "resource-low";
     stopMediaStream();
   }
 }

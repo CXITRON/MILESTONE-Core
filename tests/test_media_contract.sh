@@ -19,7 +19,7 @@ reject() {
   fi
 }
 
-require 'FIRMWARE_VERSION\[\] = "1\.10\.2"' MILESTONE_Core.ino 'firmware version is not 1.10.2'
+require 'FIRMWARE_VERSION\[\] = "1\.10\.3"' MILESTONE_Core.ino 'firmware version is not 1.10.3'
 require 'CONFIG_VERSION = 9' MILESTONE_Core.ino 'config schema is not 9'
 require 'CUSTOM_MEDIA = 7' MILESTONE_Core.ino 'custom media view must preserve IDs 0-6'
 require 'CUSTOM_MEDIA = 8' MILESTONE_Core.ino 'custom media top mode must preserve IDs 0-7'
@@ -120,6 +120,17 @@ if command -v node >/dev/null 2>&1; then
     "$project_dir/PortalPage.h" | node --check -
 fi
 
+
+
+# v1.10.3: live-stream hot path must avoid repeated full-status allocations and guard resources.
+require 'batchTarget=streamState\.fps>=10\?4:2' PortalPage.h '10 fps stream must use four-frame batches to reduce HTTP churn'
+require 'mediaStreamPushAckJson' CorePortal.inc 'stream push must use a minimal ACK response'
+require 'MEDIA_STREAM_MIN_FREE_HEAP' CoreMedia.inc 'stream heap guard missing'
+require 'MEDIA_STREAM_MIN_LARGEST_HEAP_BLOCK' CoreMedia.inc 'stream contiguous-heap guard missing'
+require 'MEDIA_STREAM_MIN_STACK_FREE' CoreMedia.inc 'stream stack guard missing'
+require 'media stream stopped before resource exhaustion' CoreMedia.inc 'stream must fail closed before resource exhaustion'
+require 'prefs\.putBool\("stream_open", true\)' CoreMedia.inc 'stream crash marker must be armed at stream start'
+require 'previous reset interrupted live stream' CoreRuntime.inc 'interrupted stream reset must be diagnosed on next boot'
 
 # v1.10.2: a live stream pins the setup AP and cannot inherit an already armed close.
 require 'const bool streamPinsPortal = mediaStreamActive \|\| mediaStreamUploadActive' CoreRuntime.inc 'live stream portal pin missing'

@@ -197,21 +197,35 @@ void handleMediaList() {
   sendJson(200, json);
 }
 
-String mediaStreamStatusJson() {
-  String json = "{";
-  json.reserve(384);
-  json += "\"active\":" + String(mediaStreamActive ? "true" : "false") + ",";
-  json += "\"session\":" + String(mediaStreamSessionId) + ",";
-  json += "\"fps\":" + String(mediaStreamFps) + ",";
-  json += "\"render_fps\":" + String(mediaStreamRenderFps) + ",";
-  json += "\"queue\":" + String(mediaStreamQueueCount) + ",";
-  json += "\"queue_capacity\":" + String(MEDIA_STREAM_QUEUE_FRAMES) + ",";
-  json += "\"batch_max\":" + String(MEDIA_STREAM_MAX_BATCH_FRAMES) + ",";
-  json += "\"received\":" + String(mediaStreamReceivedFrames) + ",";
-  json += "\"displayed\":" + String(mediaStreamDisplayedFrames) + ",";
-  json += "\"dropped\":" + String(mediaStreamDroppedFrames) + ",";
-  json += "\"underruns\":" + String(mediaStreamUnderruns) + "}";
-  return json;
+const String &mediaStreamStatusJson() {
+  mediaStreamStatusBuffer = "{";
+  mediaStreamStatusBuffer += "\"active\":" + String(mediaStreamActive ? "true" : "false") + ",";
+  mediaStreamStatusBuffer += "\"session\":" + String(mediaStreamSessionId) + ",";
+  mediaStreamStatusBuffer += "\"fps\":" + String(mediaStreamFps) + ",";
+  mediaStreamStatusBuffer += "\"render_fps\":" + String(mediaStreamRenderFps) + ",";
+  mediaStreamStatusBuffer += "\"queue\":" + String(mediaStreamQueueCount) + ",";
+  mediaStreamStatusBuffer += "\"queue_capacity\":" + String(MEDIA_STREAM_QUEUE_FRAMES) + ",";
+  mediaStreamStatusBuffer += "\"batch_max\":" + String(MEDIA_STREAM_MAX_BATCH_FRAMES) + ",";
+  mediaStreamStatusBuffer += "\"received\":" + String(mediaStreamReceivedFrames) + ",";
+  mediaStreamStatusBuffer += "\"displayed\":" + String(mediaStreamDisplayedFrames) + ",";
+  mediaStreamStatusBuffer += "\"dropped\":" + String(mediaStreamDroppedFrames) + ",";
+  mediaStreamStatusBuffer += "\"underruns\":" + String(mediaStreamUnderruns) + ",";
+  mediaStreamStatusBuffer += "\"heap_min\":" + String(mediaStreamMinFreeHeap == 0xFFFFFFFFUL ? 0 : mediaStreamMinFreeHeap) + ",";
+  mediaStreamStatusBuffer += "\"largest_heap_min\":" + String(mediaStreamMinLargestHeapBlock == 0xFFFFFFFFUL ? 0 : mediaStreamMinLargestHeapBlock) + ",";
+  mediaStreamStatusBuffer += "\"stack_min\":" + String(mediaStreamMinStackFree == 0xFFFFFFFFUL ? 0 : mediaStreamMinStackFree) + ",";
+  mediaStreamStatusBuffer += "\"stop_reason\":\"" + String(mediaStreamLastStopReason) + "\"}";
+  return mediaStreamStatusBuffer;
+}
+
+const String &mediaStreamPushAckJson() {
+  mediaStreamAckBuffer = "{\"ok\":true,\"queue\":";
+  mediaStreamAckBuffer.concat(static_cast<unsigned int>(mediaStreamQueueCount));
+  mediaStreamAckBuffer += ",\"queue_capacity\":";
+  mediaStreamAckBuffer.concat(static_cast<unsigned int>(MEDIA_STREAM_QUEUE_FRAMES));
+  mediaStreamAckBuffer += ",\"render_fps\":";
+  mediaStreamAckBuffer.concat(static_cast<unsigned int>(mediaStreamRenderFps));
+  mediaStreamAckBuffer += "}";
+  return mediaStreamAckBuffer;
 }
 
 void handleMediaStreamStatus() {
@@ -248,7 +262,8 @@ bool prepareMediaStreamUpload() {
     return false;
   }
   if (!mediaStreamActive || !allocateMediaStreamBuffers()) {
-    mediaStreamUploadError = "실시간 스트리밍이 시작되지 않았습니다.";
+    mediaStreamUploadError = String("실시간 스트리밍이 기기에서 중단되었습니다. reason=") +
+                             String(mediaStreamLastStopReason);
     return false;
   }
   if (thermalWarning || temperatureSensorFault || thermalSafeMode || firmwareUpdateBusy()) {
@@ -342,11 +357,14 @@ void handleMediaStreamPushComplete() {
   mediaStreamLastBatchSeq = batchSeq;
   portalStartedMs = millis();
   resetMediaStreamUploadState();
-  sendJson(200, mediaStreamStatusJson());
+  // Push requests are the hot path. Return only flow-control fields instead
+  // of rebuilding the full statistics object on every batch.
+  sendJson(200, mediaStreamPushAckJson());
 }
 
 void handleMediaStreamStop() {
   if (!authorizePortalRequest()) return;
+  if (mediaStreamActive) mediaStreamLastStopReason = "user-stop";
   stopMediaStream();
   wakeDisplay();
   sendJson(200, mediaStreamStatusJson());
