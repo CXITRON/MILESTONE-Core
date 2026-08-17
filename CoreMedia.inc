@@ -620,6 +620,13 @@ bool moveMediaEntry(uint32_t id, int direction) {
 bool deleteMediaEntry(uint32_t id) {
   const int index = findMediaEntry(id);
   if (index < 0) return false;
+
+  // LittleFS deletion must not race an open playback handle. Close playback
+  // before changing the catalog or removing any media file. This also avoids
+  // keeping a stale catalog index when an earlier entry is removed.
+  closeMediaPlayback();
+
+  const MediaCatalog previousCatalog = mediaCatalog;
   mediaCatalogScratch = mediaCatalog;
   for (uint8_t i = static_cast<uint8_t>(index); i + 1U < mediaCatalogScratch.count; ++i) {
     mediaCatalogScratch.entries[i] = mediaCatalogScratch.entries[i + 1U];
@@ -627,9 +634,18 @@ bool deleteMediaEntry(uint32_t id) {
   --mediaCatalogScratch.count;
   mediaCatalogScratch.entries[mediaCatalogScratch.count] = MediaEntry();
   if (!commitMediaCatalog(mediaCatalogScratch)) return false;
-  if (mediaPlaybackCatalogIndex == static_cast<uint8_t>(index)) closeMediaPlayback();
+
   const String path = mediaPath(id);
-  return !LittleFS.exists(path) || LittleFS.remove(path);
+  if (!LittleFS.exists(path) || LittleFS.remove(path)) return true;
+
+  // The index update already succeeded. If physical removal fails, restore the
+  // previous catalog so the UI and filesystem do not silently diverge.
+  logLine(String("custom media delete failed: id=") + String(id));
+  mediaCatalogScratch = previousCatalog;
+  if (!commitMediaCatalog(mediaCatalogScratch)) {
+    logLine(String("custom media delete rollback failed: id=") + String(id));
+  }
+  return false;
 }
 
 bool mediaTransferBusy() {
