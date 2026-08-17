@@ -248,17 +248,8 @@ const settle = () => new Promise(resolve => setImmediate(resolve));
   assert.match(get('media_action_status').textContent,/catalog-write-failed:file-remove-failed/);
   deleteMode='success';
 
-  run(`streamState.active=true;streamState.session=${streamDevice.session};streamState.seq=0;streamState.fps=20;streamState.sent=0;streamState.browserDropped=0;streamState.started=Date.now()-1000;streamState.lastStatsAt=Date.now()-100;streamState.lastStatsSent=0`);
-  await run('pushStreamBatch([new Uint8Array(2048),new Uint8Array(2048),new Uint8Array(2048),new Uint8Array(2048)])');
-  assert.match(lastStreamPushUrl,/\/api\/stream\/push\?session=424242&seq=1&count=4/);
-  assert.strictEqual(run('streamState.sent'),4);
-  assert.strictEqual(streamDevice.received,4);
-  assert.match(get('stream_status').textContent,/스트리밍 중/);
-  assert.match(get('stream_status').textContent,/버퍼 0\/12/);
-  assert.strictEqual(run('packStreamWork().length'),2048);
-  run('streamState.active=false');
 
-  console.log('Media picker, delete, and live stream state-machine test passed');
+  console.log('Media picker and delete state-machine test passed');
 })().catch(error => {
   console.error(error);
   process.exitCode = 1;

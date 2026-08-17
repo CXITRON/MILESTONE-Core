@@ -1,0 +1,19 @@
+'use strict';
+const assert=require('assert'),fs=require('fs'),vm=require('vm');
+const source=fs.readFileSync(process.argv[2],'utf8');
+const match=source.match(/<script>([\s\S]*?)<\/script>/);assert(match,'stream page script missing');
+class El{constructor(id=''){this.id=id;this.value='';this.files=[];this.checked=false;this.disabled=false;this.textContent='';this.className='';this.style={};this.listeners={};}addEventListener(t,f){(this.listeners[t]??=[]).push(f)}removeEventListener(){}getContext(){return{save(){},restore(){},setTransform(){},fillRect(){},drawImage(){},getImageData(){return{data:new Uint8ClampedArray(65536)}}}}pause(){}removeAttribute(){}load(){}}
+const els=new Map();for(const id of source.matchAll(/id="([^"]+)"/g))els.set(id[1],new El(id[1]));const get=id=>els.get(id)||(()=>{const e=new El(id);els.set(id,e);return e})();
+get('fps').value='20';get('fit').value='cover';get('dither').value='bayer';get('threshold').value='128';get('brightness').value='0';get('contrast').value='0';get('background').value='black';
+let lastFetch=null,fetchCalls=[],failFetchCount=0;
+function ackBuffer(){const b=new ArrayBuffer(28),v=new DataView(b);[77,83,65,49,1,2,6,32].forEach((x,i)=>v.setUint8(i,x));v.setUint32(8,2,true);v.setUint32(12,1,true);v.setUint32(16,0,true);v.setUint16(20,0,true);v.setInt16(22,715,true);v.setUint16(24,198,true);v.setUint16(26,4100,true);return b;}
+const context=vm.createContext({console,Blob,Uint8Array,Uint8ClampedArray,Float32Array,DataView,ArrayBuffer,URLSearchParams,Date,Math,Promise,performance:{now:()=>1000},document:{getElementById:get,createElement:()=>new El()},window:{addEventListener(){}},URL:{createObjectURL(){return'blob:x'},revokeObjectURL(){}},setTimeout,clearTimeout,fetch:async(url,opt={})=>{lastFetch={url:String(url),opt};fetchCalls.push(lastFetch);if(failFetchCount>0){failFetchCount--;throw new TypeError('simulated transport loss')}return{ok:true,status:200,statusText:'OK',async arrayBuffer(){return ackBuffer()},async text(){return'{}'}}}});
+vm.runInContext(match[1],context,{filename:'StreamPage.inline.js'});
+const run=x=>vm.runInContext(x,context);
+for(let n=0;n<130;n++)run(`appendFrame(new Uint8Array(2048).fill(${n&255}))`);
+assert.strictEqual(run('state.frameCount'),130);
+const crossed=run('copyFrames(127,3)');assert.strictEqual(crossed.length,6144);assert.strictEqual(crossed[0],127);assert.strictEqual(crossed[2048],128);assert.strictEqual(crossed[4096],129);
+const parsed=run('parseAck((()=>{const b=new ArrayBuffer(28),v=new DataView(b);[77,83,65,49,1,2,6,32].forEach((x,i)=>v.setUint8(i,x));v.setUint32(8,12,true);v.setUint32(12,10,true);v.setUint32(16,2,true);v.setUint16(20,1,true);v.setInt16(22,755,true);v.setUint16(24,203,true);v.setUint16(26,3200,true);return b})())');
+assert.strictEqual(parsed.queue,6);assert.strictEqual(parsed.capacity,32);assert.strictEqual(parsed.temp,75.5);assert.strictEqual(parsed.actualFps,20.3);
+run('state.active=true;state.session=1234;state.seq=0;state.sent=0;state.started=500;state.frameCount=130');
+run('pushRaw(0,2)').then(async()=>{assert.match(lastFetch.url,/\/api\/stream\/push\?session=1234&seq=1&count=2/);assert.strictEqual(lastFetch.opt.headers['Content-Type'],'application/octet-stream');assert.strictEqual(lastFetch.opt.body.byteLength,4096);fetchCalls=[];failFetchCount=1;await run('pushRaw(2,2)');assert.strictEqual(fetchCalls.length,2,'transport loss should retry exactly the same batch');assert.strictEqual(fetchCalls[0].url,fetchCalls[1].url);assert.match(fetchCalls[0].url,/seq=2&count=2/);assert.strictEqual(fetchCalls[0].opt.body,fetchCalls[1].opt.body,'retry must reuse the same binary body');assert.strictEqual(run('state.seq'),2,'retry must not consume a new sequence number');console.log('Dedicated stream page state-machine test passed')}).catch(e=>{console.error(e);process.exitCode=1});

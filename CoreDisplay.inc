@@ -285,9 +285,9 @@ bool readChipTemperatureOnce(float &reading) {
          !isnan(reading);
 }
 
-bool refreshChipTemperature() {
+bool refreshChipTemperature(bool force = false) {
   uint32_t now = millis();
-  if (lastTemperatureReadMs != 0 && !elapsed(now, lastTemperatureReadMs, TEMPERATURE_REFRESH_MS)) return false;
+  if (!force && lastTemperatureReadMs != 0 && !elapsed(now, lastTemperatureReadMs, TEMPERATURE_REFRESH_MS)) return false;
   lastTemperatureReadMs = now;
   float reading = NAN;
   bool success = readChipTemperatureOnce(reading);

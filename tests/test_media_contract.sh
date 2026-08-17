@@ -19,7 +19,7 @@ reject() {
   fi
 }
 
-require 'FIRMWARE_VERSION\[\] = "1\.10\.3"' MILESTONE_Core.ino 'firmware version is not 1.10.3'
+require 'FIRMWARE_VERSION\[\] = "1\.10\.5"' MILESTONE_Core.ino 'firmware version is not 1.10.5'
 require 'CONFIG_VERSION = 9' MILESTONE_Core.ino 'config schema is not 9'
 require 'CUSTOM_MEDIA = 7' MILESTONE_Core.ino 'custom media view must preserve IDs 0-6'
 require 'CUSTOM_MEDIA = 8' MILESTONE_Core.ino 'custom media top mode must preserve IDs 0-7'
@@ -29,34 +29,97 @@ require 'config\.cycleOrder\[7\] = 7' CoreConfig.inc 'v8 cycle order migration m
 for route in status list upload update order delete clear repair; do
   require "server\.on\(\"/api/media/${route}\"" CorePortal.inc "missing media API route: $route"
 done
-for route in status start push stop; do
+for route in status start push finish stop; do
   require "server\.on\(\"/api/stream/${route}\"" CorePortal.inc "missing live stream API route: $route"
 done
-require 'MEDIA_STREAM_QUEUE_FRAMES = 12' CoreMedia.inc 'live stream queue capacity changed unexpectedly'
-require 'MEDIA_STREAM_MAX_BATCH_FRAMES = 4' CoreMedia.inc 'live stream batch bound missing'
-require 'MEDIA_STREAM_MAX_FPS = 24' CoreMedia.inc '24 fps source ceiling missing'
-require 'MEDIA_STREAM_MAX_RENDER_FPS = 15' CoreMedia.inc '400 kHz OLED streaming safety cap missing'
-require 'mediaStreamRenderFps = fps > MEDIA_STREAM_MAX_RENDER_FPS' CoreMedia.inc 'stream renderer must clamp physical OLED FPS'
-require 'render_fps' CorePortal.inc 'stream status must expose physical render FPS'
-require 'if \(streamPinsPortal\)' CoreRuntime.inc 'active stream must keep setup portal alive'
-require 'mediaStreamQueue' CoreMedia.inc 'live stream PSRAM queue missing'
-require 'return mediaUploadActive \|\| mediaStreamActive \|\| mediaStreamUploadActive;' CoreMedia.inc 'live stream must block concurrent media mutations'
-require 'enqueueMediaStreamFrames' CoreMedia.inc 'live stream queue ingress missing'
+require 'server\.on\("/stream", HTTP_GET, handleStreamPortal\)' CorePortal.inc 'dedicated stream page route missing'
+require 'MILESTONE_STREAM_HTML' CorePortal.inc 'dedicated stream page response missing'
+require 'server\.uri\(\) == "/"' CorePortal.inc 'general portal root must stay lightweight during STREAM_MODE'
+require 'MEDIA_STREAM_QUEUE_FRAMES = 32' CoreMedia.inc '32-frame PSRAM stream queue missing'
+require 'MEDIA_STREAM_MAX_PUSH_FRAMES = 8' CoreMedia.inc 'bounded raw stream push missing'
+require 'MEDIA_STREAM_PREBUFFER_FRAMES = 8' CoreMedia.inc 'initial stream prebuffer missing'
+require 'MEDIA_STREAM_REBUFFER_FRAMES = 4' CoreMedia.inc 'stream rebuffer threshold missing'
+require 'mediaStreamSourceEnded' CoreMedia.inc 'stream source-end state missing'
+require 'source-complete' CoreMedia.inc 'device must stop only after the final queued frame drains'
+require 'mediaStreamPhase == MediaStreamPhase::BUFFERING && mediaStreamQueueCount > 0' CoreMedia.inc 'EOF must drain short sources below the normal prebuffer threshold'
+require 'MEDIA_STREAM_MAX_FPS = 24' CoreMedia.inc '24 fps experimental ceiling missing'
+require 'MEDIA_STREAM_WARNING_C = 75\.0f' CoreMedia.inc 'stream warning threshold missing'
+require 'MEDIA_STREAM_STOP_C = 80\.0f' CoreMedia.inc '80 C stream stop threshold missing'
+require 'MEDIA_STREAM_EMERGENCY_C = 85\.0f' CoreMedia.inc '85 C emergency threshold missing'
+require 'psramFound\(\)' CoreMedia.inc 'stream buffer must require PSRAM'
+require 'MALLOC_CAP_SPIRAM' CoreMedia.inc 'stream queue must allocate from PSRAM'
+require 'releaseMediaPlaybackBuffersForStream\(\)' CoreMedia.inc 'stored-media playback buffers must be released for streaming'
+require 'HTTPRaw &raw = server\.raw\(\)' CorePortal.inc 'raw request streaming callback missing'
+require 'RAW_START' CorePortal.inc 'raw stream start handling missing'
+require 'RAW_WRITE' CorePortal.inc 'raw stream chunk handling missing'
+require 'RAW_END' CorePortal.inc 'raw stream completion handling missing'
+require 'application/octet-stream' CorePortal.inc 'binary stream ACK/content type missing'
+require 'mediaStreamRawDuplicate' CoreMedia.inc 'idempotent stream retry state missing'
+require 'seq == mediaStreamLastPushSeq' CoreMedia.inc 'duplicate stream sequence retry handling missing'
+reject 'mediaStreamUploadBuffer' CoreMedia.inc 'legacy stream staging buffer must be removed'
+require 'heap_caps_malloc\(UPDATE_DOWNLOAD_BUFFER_BYTES, MALLOC_CAP_INTERNAL' CoreUpdate.inc 'OTA buffer must be allocated only during OTA'
+reject 'uint8_t updateDownloadBuffer\[UPDATE_DOWNLOAD_BUFFER_BYTES\]' MILESTONE_Core.ino 'OTA transfer buffer must not occupy permanent SRAM during streaming'
+reject 'MEDIA_STREAM_MAX_RENDER_FPS' CoreMedia.inc 'legacy fixed 15fps render cap must be removed'
+reject 'mediaStreamRenderFps' CoreMedia.inc 'legacy render-fps clamp state must be removed'
+require 'updateDisplayArea\(' CoreMedia.inc 'SH1107 partial full-buffer update path missing'
 require 'renderMediaStreamFrameIfDue' CoreMedia.inc 'live stream renderer missing'
-require 'processMediaStreamState' CoreRuntime.inc 'live stream stale/safety processing missing'
-require 'id="stream_preview"' PortalPage.h 'live stream OLED preview missing'
-require 'id="stream_video" class="stream-source"' PortalPage.h 'stream decoder must stay renderable on mobile browsers'
-reject 'id="stream_video"[^>]*hidden' PortalPage.h 'hidden video elements may stall decoding on mobile browsers'
-require 'id="stream_file" type="file" accept="video/\*"' PortalPage.h 'live stream local video picker missing'
-require 'id="stream_url" type="url"' PortalPage.h 'live stream direct URL input missing'
-require '20 fps \(입력 · 최대 15fps 표시\)' PortalPage.h '20 fps source option must disclose OLED cap'
-require '24 fps \(입력 · 최대 15fps 표시\)' PortalPage.h '24 fps source option must disclose OLED cap'
-require '<option value="10">10 fps</option>' PortalPage.h '10 fps safe streaming default option missing'
-reject '<option value="20" selected>' PortalPage.h '20 fps must not remain the default on 400 kHz I2C'
-require '기기 표시.*renderFps' PortalPage.h 'portal stats must show actual device render FPS'
-require 'function startLiveStream\(' PortalPage.h 'browser live stream start path missing'
-require 'function pushStreamBatch\(' PortalPage.h 'browser live stream batch sender missing'
-require 'YouTube 페이지 URL' PortalPage.h 'YouTube browser limitation must be explicit'
+require 'MEDIA_STREAM_MIN_FREE_HEAP' CoreMedia.inc 'stream heap guard missing'
+require 'MEDIA_STREAM_MIN_LARGEST_HEAP_BLOCK' CoreMedia.inc 'stream contiguous-heap guard missing'
+require 'MEDIA_STREAM_MIN_STACK_FREE' CoreMedia.inc 'stream stack guard missing'
+require 'prefs\.putBool\("stream_open", true\)' CoreMedia.inc 'stream crash marker must be armed at stream start'
+require 'previous reset interrupted live stream' CoreRuntime.inc 'interrupted stream reset must be diagnosed on next boot'
+require 'void enterMediaStreamPerformanceMode\(\)' CoreRuntime.inc 'stream performance-mode entry missing'
+require 'void leaveMediaStreamPerformanceMode\(\)' CoreRuntime.inc 'stream performance-mode exit missing'
+require 'void processMediaStreamMode\(\)' CoreRuntime.inc 'isolated stream loop missing'
+require 'processMediaStreamNetworkOnly\(\)' CoreRuntime.inc 'stream-only network servicing missing'
+require 'refreshChipTemperature\(true\)' CoreRuntime.inc 'forced low-rate stream thermal sampling missing'
+require 'server\.enableDelay\(false\)' CoreRuntime.inc 'stream network loop tuning missing'
+require 'esp_sntp_stop\(\)' CoreRuntime.inc 'STREAM_MODE must stop background SNTP service'
+require 'mediaStreamSntpWasEnabled' CoreRuntime.inc 'STREAM_MODE must restore prior SNTP enable state on exit'
+require 'portalClosingAfterSuccess = false;' CoreRuntime.inc 'stream mode must pin setup portal'
+require 'bool rejectPortalWorkDuringStream\(\)' CorePortal.inc 'general portal work must be isolated from STREAM_MODE'
+require 'stream_active.*true' CorePortal.inc 'status endpoint must use a tiny response during STREAM_MODE'
+require 'if \(rejectPortalWorkDuringStream\(\)\) return;' CorePortal.inc 'heavy portal handlers must fail fast during STREAM_MODE'
+require 'if \(mediaStreamActive\) \{' CoreRuntime.inc 'stream mode early branch missing'
+python3 - <<'PY_STREAM_LOOP'
+from pathlib import Path
+s = Path('CoreRuntime.inc').read_text()
+start = s.index('void loopFirmware()')
+body = s[start:]
+first_stream = body.index('if (mediaStreamActive)')
+network = body.index('processNetwork();')
+second_stream = body.index('if (mediaStreamActive)', first_stream + 1)
+background = [body.index(name) for name in ['processFirmwareUpdate();','processDiagnostics();','processCycle();','processDisplay();','processLed();']]
+assert first_stream < network, 'active stream must bypass normal network/background loop immediately'
+assert network < second_stream < min(background), 'stream started by HTTP request must bypass every normal background subsystem'
+PY_STREAM_LOOP
+require 'location\.href=.*/stream' PortalPage.h 'main portal must link to dedicated stream page'
+reject 'id="stream_video"' PortalPage.h 'legacy embedded live stream decoder must be removed from main portal'
+reject 'function startLiveStream\(' PortalPage.h 'legacy embedded stream sender must be removed from main portal'
+require 'id="file" type="file" accept="video/\*"' StreamPage.h 'dedicated stream local video picker missing'
+require 'id="url" type="url"' StreamPage.h 'direct media URL field missing'
+require '<option value="20" selected>20 fps</option>' StreamPage.h '20 fps high-performance target must be the stream-page default'
+require '<option value="24">24 fps · Experimental</option>' StreamPage.h '24 fps experimental option missing'
+require 'const FRAME_BYTES=2048' StreamPage.h 'stream frame size contract missing'
+require 'CHUNK_FRAMES=128' StreamPage.h 'browser-side chunked preconversion store missing'
+require 'PREBUFFER=8' StreamPage.h 'browser initial prebuffer missing'
+require 'MAX_PUSH_FRAMES=8' StreamPage.h 'browser raw push bound missing'
+require 'async function convertAll\(' StreamPage.h 'full browser preconversion path missing'
+require 'Math\.ceil\(video\.duration\*fps\)' StreamPage.h 'full-video frame count must derive from duration and fps'
+require "'Content-Type':'application/octet-stream'" StreamPage.h 'stream page must send raw binary bodies'
+reject 'FormData' StreamPage.h 'stream page must not use multipart/FormData'
+require 'function parseAck\(' StreamPage.h 'binary stream ACK parser missing'
+require 'async function pushRaw\(' StreamPage.h 'paced raw stream sender missing'
+require 'finishAndDrain' StreamPage.h 'browser must let the device drain its real queue instead of guessing the tail delay'
+require 'STEADY_PUSH_FRAMES=2' StreamPage.h 'steady stream pacing must limit each normal push to two frames'
+require "waitForVideo\(video,\['seeked','loadeddata'\]" StreamPage.h 'stream preconversion must tolerate first-frame loadeddata/seeked behavior'
+require 'lastError' StreamPage.h 'stream sender must retry transport exceptions with the same sequence/body'
+require 'stale-stream-session' CorePortal.inc 'stale stream pages must not stop a newer stream session'
+require '이미 다른 스트리밍 세션' CorePortal.inc 'a second stream start must not silently replace the active session'
+require 'YouTube 페이지 URL' StreamPage.h 'YouTube browser limitation must be explicit'
+if command -v node >/dev/null 2>&1; then
+  node "$project_dir/tests/test_stream_page.js" "$project_dir/StreamPage.h"
+fi
 require 'bool deleteMediaEntry\(uint32_t id, String &detail\)' CoreMedia.inc 'missing detailed single media delete implementation'
 python3 - <<'PY_DELETE_ORDER'
 from pathlib import Path
@@ -121,21 +184,4 @@ if command -v node >/dev/null 2>&1; then
 fi
 
 
-
-# v1.10.3: live-stream hot path must avoid repeated full-status allocations and guard resources.
-require 'batchTarget=streamState\.fps>=10\?4:2' PortalPage.h '10 fps stream must use four-frame batches to reduce HTTP churn'
-require 'mediaStreamPushAckJson' CorePortal.inc 'stream push must use a minimal ACK response'
-require 'MEDIA_STREAM_MIN_FREE_HEAP' CoreMedia.inc 'stream heap guard missing'
-require 'MEDIA_STREAM_MIN_LARGEST_HEAP_BLOCK' CoreMedia.inc 'stream contiguous-heap guard missing'
-require 'MEDIA_STREAM_MIN_STACK_FREE' CoreMedia.inc 'stream stack guard missing'
-require 'media stream stopped before resource exhaustion' CoreMedia.inc 'stream must fail closed before resource exhaustion'
-require 'prefs\.putBool\("stream_open", true\)' CoreMedia.inc 'stream crash marker must be armed at stream start'
-require 'previous reset interrupted live stream' CoreRuntime.inc 'interrupted stream reset must be diagnosed on next boot'
-
-# v1.10.2: a live stream pins the setup AP and cannot inherit an already armed close.
-require 'const bool streamPinsPortal = mediaStreamActive \|\| mediaStreamUploadActive' CoreRuntime.inc 'live stream portal pin missing'
-require '!streamPinsPortal && portalClosingAfterSuccess' CoreRuntime.inc 'post-success portal close is not suppressed during streaming'
-require '!streamPinsPortal && !portalClosingAfterSuccess' CoreRuntime.inc 'AP timeout is not suppressed during streaming'
-require 'portalClosingAfterSuccess = false;' CorePortal.inc 'stream start does not cancel a pending portal close'
-require 'mediaStreamActive && mediaStreamReceivedFrames > 0' CoreRuntime.inc 'stream takes OLED ownership before first frame arrives'
 echo "Custom media portal/API contract test passed"

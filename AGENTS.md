@@ -107,6 +107,8 @@ Preserve working transaction/state-machine ordering unless the task specifically
 
 Custom media is optional. A mount, allocation, validation, or playback failure must disable or skip media without blocking boot validation, time display, Wi-Fi, diagnostics, rollback, or OTA. Never change `LittleFS.begin(false)` into automatic format-on-failure; formatting is allowed only during first initialization or an explicit user-confirmed repair.
 
+Live streaming is isolated in v1.10.5. Do not move the `/stream` sender back into the general portal hot path or reintroduce multipart/FormData for live frames. While `mediaStreamActive` is true, the dedicated stream loop must return before normal OTA, diagnostics, cycle, display, LED, NTP/reconnect scheduling, and stored-media work. Live frame storage belongs in PSRAM; the raw binary transport must not write frames to LittleFS/NVS. STREAM_MODE must pin the setup AP, retain BOOT/thermal/resource safety, stop at the stream-specific 80°C limit, and restore normal runtime only on exit.
+
 ## 6. Testing policy
 
 Prefer tests for hardware-independent logic before broad structural refactors.

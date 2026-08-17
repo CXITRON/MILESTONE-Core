@@ -477,6 +477,18 @@ bool installFirmwareUpdate() {
     return false;
   }
 
+  // OTA never runs inside STREAM_MODE, so do not permanently reserve this
+  // internal-SRAM transfer buffer. Allocate it only for the active download
+  // and release it before verification/finalization.
+  uint8_t *updateDownloadBuffer = static_cast<uint8_t *>(
+      heap_caps_malloc(UPDATE_DOWNLOAD_BUFFER_BYTES, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+  if (!updateDownloadBuffer) {
+    http.end();
+    Update.abort();
+    failFirmwareUpdate("OTA transfer buffer allocation failed");
+    return false;
+  }
+
   mbedtls_sha256_context shaContext;
   mbedtls_sha256_init(&shaContext);
   mbedtls_sha256_starts(&shaContext, 0);
@@ -488,7 +500,7 @@ bool installFirmwareUpdate() {
     int available = stream->available();
     if (available > 0) {
       size_t remaining = latestFirmwareSize - updateDownloadedBytes;
-      size_t wanted = min(min(static_cast<size_t>(available), sizeof(updateDownloadBuffer)), remaining);
+      size_t wanted = min(min(static_cast<size_t>(available), UPDATE_DOWNLOAD_BUFFER_BYTES), remaining);
       int count = stream->read(updateDownloadBuffer, wanted);
       if (count <= 0) continue;
       mbedtls_sha256_update(&shaContext, updateDownloadBuffer, count);
@@ -522,6 +534,8 @@ bool installFirmwareUpdate() {
   mbedtls_sha256_finish(&shaContext, digest);
   mbedtls_sha256_free(&shaContext);
   http.end();
+  heap_caps_free(updateDownloadBuffer);
+  updateDownloadBuffer = nullptr;
 
   if (failed || updateDownloadedBytes != latestFirmwareSize) {
     Update.abort();

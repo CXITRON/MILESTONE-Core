@@ -1,4 +1,4 @@
-// MILESTONE Core custom media storage, playback, and v1.10.0 live-stream layer.
+// MILESTONE Core custom media storage/playback and isolated v1.10.5 STREAM_MODE transport.
 // Original JPEG/GIF/video files are converted in the setup browser. The
 // device accepts only bounded, checksummed MSM1 128x128 one-bit files.
 
@@ -20,24 +20,29 @@ constexpr char MEDIA_INDEX_A[] = "/media/index.a";
 constexpr char MEDIA_INDEX_B[] = "/media/index.b";
 constexpr char MEDIA_UPLOAD_TEMP[] = "/media/upload.tmp";
 
-// Live streaming keeps only a small PSRAM-backed frame queue. Nothing from a
-// live stream is written to LittleFS, so duration is bounded by the browser
-// session rather than flash capacity or the MSM1 frame-count limit.
-constexpr uint8_t MEDIA_STREAM_QUEUE_FRAMES = 12;
-constexpr uint8_t MEDIA_STREAM_MAX_BATCH_FRAMES = 4;
+// Live streaming is an isolated runtime mode. The browser pre-converts the
+// whole source; the ESP32 only receives paced 128x128 one-bit frames into a
+// PSRAM ring and flushes them to the SH1107. No live frame is written to flash.
+constexpr uint8_t MEDIA_STREAM_QUEUE_FRAMES = 32;
+constexpr uint8_t MEDIA_STREAM_MAX_PUSH_FRAMES = 8;
+constexpr uint8_t MEDIA_STREAM_PREBUFFER_FRAMES = 8;
+constexpr uint8_t MEDIA_STREAM_REBUFFER_FRAMES = 4;
 constexpr uint16_t MEDIA_STREAM_MIN_FPS = 5;
 constexpr uint16_t MEDIA_STREAM_MAX_FPS = 24;
-// The SH1107 is connected over 400 kHz I2C. A full 128x128 one-bit frame is
-// 2048 bytes, so trying to physically refresh at 20-24 fps leaves almost no
-// application-loop time for the setup WebServer/DNS service. Accept higher
-// source rates for timestamp/drop behaviour, but cap physical OLED refreshes
-// while streaming so the setup AP remains responsive.
-constexpr uint16_t MEDIA_STREAM_MAX_RENDER_FPS = 15;
 constexpr uint32_t MEDIA_STREAM_STALE_MS = 5000UL;
-constexpr uint32_t MEDIA_STREAM_RESOURCE_CHECK_MS = 500UL;
-constexpr uint32_t MEDIA_STREAM_MIN_FREE_HEAP = 48U * 1024U;
-constexpr uint32_t MEDIA_STREAM_MIN_LARGEST_HEAP_BLOCK = 16U * 1024U;
-constexpr uint32_t MEDIA_STREAM_MIN_STACK_FREE = 2048U;
+constexpr uint32_t MEDIA_STREAM_RESOURCE_CHECK_MS = 2000UL;
+constexpr uint32_t MEDIA_STREAM_MIN_FREE_HEAP = 52U * 1024U;
+constexpr uint32_t MEDIA_STREAM_MIN_LARGEST_HEAP_BLOCK = 20U * 1024U;
+constexpr uint32_t MEDIA_STREAM_MIN_STACK_FREE = 3072U;
+constexpr float MEDIA_STREAM_WARNING_C = 75.0f;
+constexpr float MEDIA_STREAM_STOP_C = 80.0f;
+constexpr float MEDIA_STREAM_EMERGENCY_C = 85.0f;
+
+enum class MediaStreamPhase : uint8_t {
+  INACTIVE = 0,
+  BUFFERING = 1,
+  PLAYING = 2
+};
 
 struct MediaEntry {
   uint32_t id = 0;
@@ -82,37 +87,43 @@ String mediaUploadName;
 String mediaUploadError;
 
 uint8_t *mediaStreamQueue = nullptr;
-uint8_t *mediaStreamUploadBuffer = nullptr;
 bool mediaStreamActive = false;
-bool mediaStreamUploadActive = false;
-bool mediaStreamUploadComplete = false;
-bool mediaStreamUploadFailed = false;
-String mediaStreamUploadError;
+MediaStreamPhase mediaStreamPhase = MediaStreamPhase::INACTIVE;
+bool mediaStreamRawActive = false;
+bool mediaStreamRawComplete = false;
+bool mediaStreamRawFailed = false;
+bool mediaStreamRawDuplicate = false;
+const char *mediaStreamRawError = "idle";
 uint32_t mediaStreamSessionId = 0;
 uint32_t mediaStreamLastPushMs = 0;
 uint32_t mediaStreamNextFrameMs = 0;
-uint32_t mediaStreamLastBatchSeq = 0;
+uint32_t mediaStreamLastPushSeq = 0;
 uint32_t mediaStreamReceivedFrames = 0;
 uint32_t mediaStreamDisplayedFrames = 0;
 uint32_t mediaStreamDroppedFrames = 0;
 uint32_t mediaStreamUnderruns = 0;
-uint16_t mediaStreamFps = 10;
-uint16_t mediaStreamRenderFps = 10;
-uint16_t mediaStreamFrameIntervalMs = 100;
+uint16_t mediaStreamFps = 20;
+uint16_t mediaStreamFrameIntervalMs = 50;
 uint8_t mediaStreamQueueHead = 0;
 uint8_t mediaStreamQueueTail = 0;
 uint8_t mediaStreamQueueCount = 0;
-uint8_t mediaStreamUploadFrameCount = 0;
-size_t mediaStreamUploadExpectedBytes = 0;
-size_t mediaStreamUploadWrittenBytes = 0;
-uint32_t mediaStreamUploadBatchSeq = 0;
+uint8_t mediaStreamRawFrameCount = 0;
+uint8_t mediaStreamRawBaseTail = 0;
+size_t mediaStreamRawExpectedBytes = 0;
+size_t mediaStreamRawWrittenBytes = 0;
+uint32_t mediaStreamRawSeq = 0;
 uint32_t mediaStreamLastResourceCheckMs = 0;
 uint32_t mediaStreamMinFreeHeap = 0xFFFFFFFFUL;
 uint32_t mediaStreamMinLargestHeapBlock = 0xFFFFFFFFUL;
 uint32_t mediaStreamMinStackFree = 0xFFFFFFFFUL;
+uint32_t mediaStreamLastFlushUs = 0;
+uint32_t mediaStreamFlushEmaUs = 0;
+uint32_t mediaStreamFpsWindowStartedMs = 0;
+uint16_t mediaStreamFpsWindowFrames = 0;
+uint16_t mediaStreamActualFpsX10 = 0;
+bool mediaStreamThermalWarning = false;
+bool mediaStreamSourceEnded = false;
 const char *mediaStreamLastStopReason = "idle";
-String mediaStreamStatusBuffer;
-String mediaStreamAckBuffer;
 
 String mediaPath(uint32_t id) {
   char path[32];
@@ -732,110 +743,242 @@ bool deleteMediaEntry(uint32_t id, String &detail) {
   return true;
 }
 
-bool allocateMediaStreamBuffers() {
-  if (!mediaStreamQueue) {
-    mediaStreamQueue = static_cast<uint8_t *>(heap_caps_malloc(
-        static_cast<size_t>(MEDIA_STREAM_QUEUE_FRAMES) * MilestoneMedia::FRAME_BYTES,
-        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-    if (!mediaStreamQueue) {
-      mediaStreamQueue = static_cast<uint8_t *>(malloc(
-          static_cast<size_t>(MEDIA_STREAM_QUEUE_FRAMES) * MilestoneMedia::FRAME_BYTES));
-    }
-  }
-  if (!mediaStreamUploadBuffer) {
-    mediaStreamUploadBuffer = static_cast<uint8_t *>(heap_caps_malloc(
-        static_cast<size_t>(MEDIA_STREAM_MAX_BATCH_FRAMES) * MilestoneMedia::FRAME_BYTES,
-        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-    if (!mediaStreamUploadBuffer) {
-      mediaStreamUploadBuffer = static_cast<uint8_t *>(malloc(
-          static_cast<size_t>(MEDIA_STREAM_MAX_BATCH_FRAMES) * MilestoneMedia::FRAME_BYTES));
-    }
-  }
-  if (mediaStreamQueue && mediaStreamUploadBuffer) {
-    // Reuse these String capacities for the whole stream session. Rebuilding
-    // status JSON in a fresh String for every frame batch caused avoidable
-    // internal-heap churn on the synchronous WebServer path.
-    if (mediaStreamStatusBuffer.capacity() < 384) mediaStreamStatusBuffer.reserve(384);
-    if (mediaStreamAckBuffer.capacity() < 96) mediaStreamAckBuffer.reserve(96);
-  }
-  return mediaStreamQueue && mediaStreamUploadBuffer;
+bool allocateMediaStreamBuffer() {
+  if (mediaStreamQueue) return true;
+  if (!psramFound()) return false;
+  mediaStreamQueue = static_cast<uint8_t *>(heap_caps_malloc(
+      static_cast<size_t>(MEDIA_STREAM_QUEUE_FRAMES) * MilestoneMedia::FRAME_BYTES,
+      MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  return mediaStreamQueue != nullptr;
 }
 
-void resetMediaStreamUploadState() {
-  mediaStreamUploadActive = false;
-  mediaStreamUploadComplete = false;
-  mediaStreamUploadFailed = false;
-  mediaStreamUploadError = "";
-  mediaStreamUploadFrameCount = 0;
-  mediaStreamUploadExpectedBytes = 0;
-  mediaStreamUploadWrittenBytes = 0;
-  mediaStreamUploadBatchSeq = 0;
+void releaseMediaPlaybackBuffersForStream() {
+  closeMediaPlayback();
+  if (mediaFrameBuffer) {
+    free(mediaFrameBuffer);
+    mediaFrameBuffer = nullptr;
+  }
+  if (mediaFrameRecordBuffer) {
+    free(mediaFrameRecordBuffer);
+    mediaFrameRecordBuffer = nullptr;
+  }
+}
+
+void releaseMediaStreamBuffer() {
+  if (mediaStreamQueue) {
+    free(mediaStreamQueue);
+    mediaStreamQueue = nullptr;
+  }
+}
+
+void resetMediaStreamRawState() {
+  mediaStreamRawActive = false;
+  mediaStreamRawComplete = false;
+  mediaStreamRawFailed = false;
+  mediaStreamRawDuplicate = false;
+  mediaStreamRawError = "idle";
+  mediaStreamRawFrameCount = 0;
+  mediaStreamRawBaseTail = 0;
+  mediaStreamRawExpectedBytes = 0;
+  mediaStreamRawWrittenBytes = 0;
+  mediaStreamRawSeq = 0;
 }
 
 void stopMediaStream() {
   const bool wasActive = mediaStreamActive;
   mediaStreamActive = false;
-  resetMediaStreamUploadState();
+  mediaStreamPhase = MediaStreamPhase::INACTIVE;
+  mediaStreamThermalWarning = false;
+  mediaStreamSourceEnded = false;
+  resetMediaStreamRawState();
   mediaStreamSessionId = 0;
   mediaStreamLastPushMs = 0;
   mediaStreamNextFrameMs = 0;
-  mediaStreamLastBatchSeq = 0;
+  mediaStreamLastPushSeq = 0;
   mediaStreamQueueHead = 0;
   mediaStreamQueueTail = 0;
   mediaStreamQueueCount = 0;
-  if (wasActive && prefsReady) prefs.putBool("stream_open", false);
+  releaseMediaStreamBuffer();
+  if (wasActive) {
+    if (prefsReady) prefs.putBool("stream_open", false);
+    leaveMediaStreamPerformanceMode();
+  }
 }
 
 bool startMediaStream(uint16_t fps) {
-  if (fps < MEDIA_STREAM_MIN_FPS || fps > MEDIA_STREAM_MAX_FPS || !allocateMediaStreamBuffers()) {
-    return false;
-  }
-  closeMediaPlayback();
-  stopMediaStream();
+  if (fps < MEDIA_STREAM_MIN_FPS || fps > MEDIA_STREAM_MAX_FPS) return false;
+  if (mediaStreamActive) stopMediaStream();
+  if (!allocateMediaStreamBuffer()) return false;
+
+  releaseMediaPlaybackBuffersForStream();
   mediaStreamFps = fps;
-  mediaStreamRenderFps = fps > MEDIA_STREAM_MAX_RENDER_FPS ? MEDIA_STREAM_MAX_RENDER_FPS : fps;
-  mediaStreamFrameIntervalMs = static_cast<uint16_t>(
-      (1000U + mediaStreamRenderFps / 2U) / mediaStreamRenderFps);
+  mediaStreamFrameIntervalMs = static_cast<uint16_t>((1000U + fps / 2U) / fps);
   mediaStreamSessionId = esp_random();
   if (mediaStreamSessionId == 0) mediaStreamSessionId = 1;
   mediaStreamLastPushMs = millis();
+  mediaStreamNextFrameMs = 0;
+  mediaStreamLastPushSeq = 0;
   mediaStreamReceivedFrames = 0;
   mediaStreamDisplayedFrames = 0;
   mediaStreamDroppedFrames = 0;
   mediaStreamUnderruns = 0;
+  mediaStreamQueueHead = 0;
+  mediaStreamQueueTail = 0;
+  mediaStreamQueueCount = 0;
   mediaStreamLastResourceCheckMs = mediaStreamLastPushMs;
   mediaStreamMinFreeHeap = ESP.getFreeHeap();
   mediaStreamMinLargestHeapBlock = ESP.getMaxAllocHeap();
   mediaStreamMinStackFree = uxTaskGetStackHighWaterMark(nullptr);
+  mediaStreamLastFlushUs = 0;
+  mediaStreamFlushEmaUs = 0;
+  mediaStreamFpsWindowStartedMs = mediaStreamLastPushMs;
+  mediaStreamFpsWindowFrames = 0;
+  mediaStreamActualFpsX10 = 0;
+  mediaStreamThermalWarning = false;
+  mediaStreamSourceEnded = false;
   mediaStreamLastStopReason = "active";
+  resetMediaStreamRawState();
+  mediaStreamPhase = MediaStreamPhase::BUFFERING;
   mediaStreamActive = true;
+  enterMediaStreamPerformanceMode();
   if (prefsReady) prefs.putBool("stream_open", true);
-  logLine(String("media stream started: source_fps=") + String(mediaStreamFps) +
-          ", render_fps=" + String(mediaStreamRenderFps) +
+  logLine(String("STREAM_MODE start: fps=") + String(mediaStreamFps) +
           ", heap=" + String(ESP.getFreeHeap()) +
+          ", largest=" + String(ESP.getMaxAllocHeap()) +
           ", psram=" + String(ESP.getFreePsram()));
   return true;
 }
 
 uint8_t mediaStreamQueueFree() {
-  return MEDIA_STREAM_QUEUE_FRAMES - mediaStreamQueueCount;
+  return static_cast<uint8_t>(MEDIA_STREAM_QUEUE_FRAMES - mediaStreamQueueCount);
 }
 
-bool enqueueMediaStreamFrames(const uint8_t *frames, uint8_t frameCount) {
-  if (!mediaStreamActive || !mediaStreamQueue || !frames || frameCount == 0 ||
-      frameCount > MEDIA_STREAM_MAX_BATCH_FRAMES || frameCount > mediaStreamQueueFree()) {
+bool beginMediaStreamRawWrite(uint32_t session, uint32_t seq, uint8_t frameCount) {
+  resetMediaStreamRawState();
+  if (!mediaStreamActive || !mediaStreamQueue || session != mediaStreamSessionId) {
+    mediaStreamRawError = "invalid-session";
+    mediaStreamRawFailed = true;
     return false;
   }
-  for (uint8_t i = 0; i < frameCount; ++i) {
-    memcpy(mediaStreamQueue + static_cast<size_t>(mediaStreamQueueTail) * MilestoneMedia::FRAME_BYTES,
-           frames + static_cast<size_t>(i) * MilestoneMedia::FRAME_BYTES,
-           MilestoneMedia::FRAME_BYTES);
-    mediaStreamQueueTail = (mediaStreamQueueTail + 1U) % MEDIA_STREAM_QUEUE_FRAMES;
-    ++mediaStreamQueueCount;
+  if (mediaStreamSourceEnded) {
+    mediaStreamRawError = "source-ended";
+    mediaStreamRawFailed = true;
+    return false;
   }
-  mediaStreamReceivedFrames += frameCount;
+  if (seq == 0 || seq < mediaStreamLastPushSeq || frameCount == 0 ||
+      frameCount > MEDIA_STREAM_MAX_PUSH_FRAMES) {
+    mediaStreamRawError = "invalid-sequence";
+    mediaStreamRawFailed = true;
+    return false;
+  }
+  // A lost HTTP response can make the browser retry a batch that the device
+  // already committed. Consume and validate that body, but never enqueue it a
+  // second time. The completion handler will simply resend the current ACK.
+  if (seq == mediaStreamLastPushSeq && mediaStreamLastPushSeq != 0) {
+    mediaStreamRawFrameCount = frameCount;
+    mediaStreamRawExpectedBytes = static_cast<size_t>(frameCount) * MilestoneMedia::FRAME_BYTES;
+    mediaStreamRawWrittenBytes = 0;
+    mediaStreamRawSeq = seq;
+    mediaStreamRawDuplicate = true;
+    mediaStreamRawActive = true;
+    mediaStreamRawError = "duplicate";
+    return true;
+  }
+  if (frameCount > mediaStreamQueueFree()) {
+    mediaStreamRawError = "buffer-full";
+    mediaStreamRawFailed = true;
+    return false;
+  }
+  mediaStreamRawFrameCount = frameCount;
+  mediaStreamRawExpectedBytes = static_cast<size_t>(frameCount) * MilestoneMedia::FRAME_BYTES;
+  mediaStreamRawWrittenBytes = 0;
+  mediaStreamRawSeq = seq;
+  mediaStreamRawBaseTail = mediaStreamQueueTail;
+  mediaStreamRawActive = true;
+  mediaStreamRawError = "active";
+  return true;
+}
+
+bool writeMediaStreamRawChunk(const uint8_t *data, size_t length) {
+  if (!mediaStreamRawActive || mediaStreamRawFailed || !data) return false;
+  if (mediaStreamRawWrittenBytes + length > mediaStreamRawExpectedBytes) {
+    mediaStreamRawError = "body-too-large";
+    mediaStreamRawFailed = true;
+    return false;
+  }
+  if (mediaStreamRawDuplicate) {
+    mediaStreamRawWrittenBytes += length;
+    return true;
+  }
+  size_t sourceOffset = 0;
+  while (sourceOffset < length) {
+    const size_t absolute = mediaStreamRawWrittenBytes;
+    const uint8_t frameIndex = static_cast<uint8_t>(absolute / MilestoneMedia::FRAME_BYTES);
+    const size_t frameOffset = absolute % MilestoneMedia::FRAME_BYTES;
+    const uint8_t slot = static_cast<uint8_t>((mediaStreamRawBaseTail + frameIndex) % MEDIA_STREAM_QUEUE_FRAMES);
+    const size_t room = MilestoneMedia::FRAME_BYTES - frameOffset;
+    const size_t chunk = min(room, length - sourceOffset);
+    memcpy(mediaStreamQueue + static_cast<size_t>(slot) * MilestoneMedia::FRAME_BYTES + frameOffset,
+           data + sourceOffset, chunk);
+    mediaStreamRawWrittenBytes += chunk;
+    sourceOffset += chunk;
+  }
+  return true;
+}
+
+bool finishMediaStreamRawWrite(size_t totalSize) {
+  if (!mediaStreamRawActive || mediaStreamRawFailed ||
+      mediaStreamRawWrittenBytes != mediaStreamRawExpectedBytes ||
+      totalSize != mediaStreamRawExpectedBytes) {
+    if (!mediaStreamRawFailed) mediaStreamRawError = "body-size-mismatch";
+    mediaStreamRawFailed = true;
+    mediaStreamRawActive = false;
+    return false;
+  }
+  mediaStreamRawComplete = true;
+  mediaStreamRawActive = false;
+  return true;
+}
+
+bool commitMediaStreamRawWrite() {
+  if (!mediaStreamRawComplete || mediaStreamRawFailed || mediaStreamRawFrameCount == 0) return false;
+  if (mediaStreamRawDuplicate) {
+    mediaStreamLastPushMs = millis();
+    resetMediaStreamRawState();
+    return true;
+  }
+  mediaStreamQueueTail = static_cast<uint8_t>(
+      (mediaStreamQueueTail + mediaStreamRawFrameCount) % MEDIA_STREAM_QUEUE_FRAMES);
+  mediaStreamQueueCount = static_cast<uint8_t>(mediaStreamQueueCount + mediaStreamRawFrameCount);
+  mediaStreamReceivedFrames += mediaStreamRawFrameCount;
+  mediaStreamLastPushSeq = mediaStreamRawSeq;
   mediaStreamLastPushMs = millis();
-  if (mediaStreamNextFrameMs == 0) mediaStreamNextFrameMs = mediaStreamLastPushMs;
+  const uint8_t resumeThreshold = mediaStreamDisplayedFrames == 0
+      ? MEDIA_STREAM_PREBUFFER_FRAMES : MEDIA_STREAM_REBUFFER_FRAMES;
+  if (mediaStreamPhase == MediaStreamPhase::BUFFERING &&
+      mediaStreamQueueCount >= resumeThreshold) {
+    mediaStreamPhase = MediaStreamPhase::PLAYING;
+    mediaStreamNextFrameMs = mediaStreamLastPushMs + mediaStreamFrameIntervalMs;
+    mediaStreamFpsWindowStartedMs = mediaStreamLastPushMs;
+    mediaStreamFpsWindowFrames = 0;
+  }
+  resetMediaStreamRawState();
+  return true;
+}
+
+bool finishMediaStreamSource(uint32_t session) {
+  if (!mediaStreamActive || session == 0 || session != mediaStreamSessionId) return false;
+  mediaStreamSourceEnded = true;
+  mediaStreamLastPushMs = millis();
+  // A short source, or the tail after an underrun, may contain fewer frames
+  // than the normal prebuffer/rebuffer threshold. Once the browser declares
+  // EOF there is nothing more to wait for, so drain every queued frame.
+  if (mediaStreamPhase == MediaStreamPhase::BUFFERING && mediaStreamQueueCount > 0) {
+    mediaStreamPhase = MediaStreamPhase::PLAYING;
+    mediaStreamNextFrameMs = mediaStreamLastPushMs + mediaStreamFrameIntervalMs;
+    mediaStreamFpsWindowStartedMs = mediaStreamLastPushMs;
+    mediaStreamFpsWindowFrames = 0;
+  }
   return true;
 }
 
@@ -846,17 +989,21 @@ void processMediaStreamState(uint32_t now) {
     stopMediaStream();
     return;
   }
-  if (thermalWarning || temperatureSensorFault || thermalSafeMode || firmwareUpdateBusy()) {
+  if (temperatureSensorFault || thermalSafeMode || firmwareUpdateBusy()) {
     mediaStreamLastStopReason = "safety-state";
     stopMediaStream();
     return;
   }
-  if (elapsed(now, mediaStreamLastPushMs, MEDIA_STREAM_STALE_MS)) {
+  if (mediaStreamSourceEnded && !mediaStreamRawActive && mediaStreamQueueCount == 0) {
+    mediaStreamLastStopReason = "source-complete";
+    stopMediaStream();
+    return;
+  }
+  if (!mediaStreamSourceEnded && elapsed(now, mediaStreamLastPushMs, MEDIA_STREAM_STALE_MS)) {
     mediaStreamLastStopReason = "source-stale";
     stopMediaStream();
     return;
   }
-
   if (!elapsed(now, mediaStreamLastResourceCheckMs, MEDIA_STREAM_RESOURCE_CHECK_MS)) return;
   mediaStreamLastResourceCheckMs = now;
   const uint32_t freeHeap = ESP.getFreeHeap();
@@ -865,60 +1012,111 @@ void processMediaStreamState(uint32_t now) {
   if (freeHeap < mediaStreamMinFreeHeap) mediaStreamMinFreeHeap = freeHeap;
   if (largestHeapBlock < mediaStreamMinLargestHeapBlock) mediaStreamMinLargestHeapBlock = largestHeapBlock;
   if (stackFree < mediaStreamMinStackFree) mediaStreamMinStackFree = stackFree;
-
   if (freeHeap < MEDIA_STREAM_MIN_FREE_HEAP ||
       largestHeapBlock < MEDIA_STREAM_MIN_LARGEST_HEAP_BLOCK ||
       stackFree < MEDIA_STREAM_MIN_STACK_FREE) {
-    logLine(String("media stream stopped before resource exhaustion: heap=") + String(freeHeap) +
-            ", largest=" + String(largestHeapBlock) +
-            ", stack=" + String(stackFree) +
-            ", received=" + String(mediaStreamReceivedFrames) +
-            ", displayed=" + String(mediaStreamDisplayedFrames));
     mediaStreamLastStopReason = "resource-low";
+    // Avoid dynamic String allocation precisely when internal heap is under pressure.
+    Serial.printf("[MILESTONE] STREAM_MODE resource stop: heap=%lu, largest=%lu, stack=%lu\n",
+                  static_cast<unsigned long>(freeHeap),
+                  static_cast<unsigned long>(largestHeapBlock),
+                  static_cast<unsigned long>(stackFree));
     stopMediaStream();
   }
 }
 
-bool renderMediaStreamFrameIfDue(uint32_t now) {
-  if (!mediaStreamActive || !oledReady || displaySleeping || !mediaStreamQueue ||
-      mediaStreamNextFrameMs == 0 || !deadlineReached(now, mediaStreamNextFrameMs)) {
-    return false;
+void updateMediaStreamMeasuredFps(uint32_t now) {
+  if (!elapsed(now, mediaStreamFpsWindowStartedMs, 1000UL)) return;
+  const uint32_t windowMs = now - mediaStreamFpsWindowStartedMs;
+  uint32_t measuredX10 = windowMs > 0
+      ? (static_cast<uint32_t>(mediaStreamFpsWindowFrames) * 10000U + windowMs / 2U) / windowMs
+      : 0U;
+  if (measuredX10 > 65535U) measuredX10 = 65535U;
+  mediaStreamActualFpsX10 = static_cast<uint16_t>(measuredX10);
+  mediaStreamFpsWindowFrames = 0;
+  mediaStreamFpsWindowStartedMs = now;
+}
+bool flushMediaStreamFrame(const uint8_t *frame) {
+  uint8_t *displayBuffer = display.getBufferPtr();
+  if (!displayBuffer || !frame) return false;
+  uint8_t firstChanged = 16;
+  uint8_t lastChanged = 0;
+  uint8_t changedRows = 0;
+  for (uint8_t row = 0; row < 16; ++row) {
+    const size_t offset = static_cast<size_t>(row) * 128U;
+    if (memcmp(displayBuffer + offset, frame + offset, 128U) != 0) {
+      if (firstChanged == 16) firstChanged = row;
+      lastChanged = row;
+      ++changedRows;
+    }
   }
+  if (changedRows == 0) {
+    mediaStreamLastFlushUs = 0;
+    return true;
+  }
+  memcpy(displayBuffer, frame, MilestoneMedia::FRAME_BYTES);
+  const uint32_t startedUs = micros();
+  const uint8_t span = static_cast<uint8_t>(lastChanged - firstChanged + 1U);
+  if (changedRows <= 10U && span <= 12U) {
+    display.updateDisplayArea(0, firstChanged, 16, span);
+  } else {
+    display.sendBuffer();
+  }
+  const uint32_t flushUs = micros() - startedUs;
+  mediaStreamLastFlushUs = flushUs;
+  mediaStreamFlushEmaUs = mediaStreamFlushEmaUs == 0 ? flushUs
+      : static_cast<uint32_t>((mediaStreamFlushEmaUs * 7ULL + flushUs) / 8ULL);
+  return true;
+}
+
+bool renderMediaStreamFrameIfDue(uint32_t now) {
+  if (!mediaStreamActive || mediaStreamPhase != MediaStreamPhase::PLAYING ||
+      !oledReady || displaySleeping || !mediaStreamQueue || mediaStreamNextFrameMs == 0 ||
+      !deadlineReached(now, mediaStreamNextFrameMs)) return false;
 
   if (mediaStreamQueueCount == 0) {
     ++mediaStreamUnderruns;
-    mediaStreamNextFrameMs = now + mediaStreamFrameIntervalMs;
+    mediaStreamPhase = MediaStreamPhase::BUFFERING;
+    mediaStreamNextFrameMs = 0;
     return false;
   }
 
-  // Keep a live stream close to real time. If rendering fell behind by more
-  // than one frame interval, discard stale queued frames instead of allowing
-  // latency to grow for the rest of the session.
   const int32_t behindMs = static_cast<int32_t>(now - mediaStreamNextFrameMs);
   if (behindMs >= static_cast<int32_t>(mediaStreamFrameIntervalMs) && mediaStreamQueueCount > 1) {
     uint32_t stale = static_cast<uint32_t>(behindMs) / mediaStreamFrameIntervalMs;
     if (stale >= mediaStreamQueueCount) stale = mediaStreamQueueCount - 1U;
-    mediaStreamQueueHead = static_cast<uint8_t>(
-        (mediaStreamQueueHead + stale) % MEDIA_STREAM_QUEUE_FRAMES);
-    mediaStreamQueueCount -= static_cast<uint8_t>(stale);
+    mediaStreamQueueHead = static_cast<uint8_t>((mediaStreamQueueHead + stale) % MEDIA_STREAM_QUEUE_FRAMES);
+    mediaStreamQueueCount = static_cast<uint8_t>(mediaStreamQueueCount - stale);
     mediaStreamDroppedFrames += stale;
     mediaStreamNextFrameMs += stale * mediaStreamFrameIntervalMs;
   }
 
-  memcpy(display.getBufferPtr(),
-         mediaStreamQueue + static_cast<size_t>(mediaStreamQueueHead) * MilestoneMedia::FRAME_BYTES,
-         MilestoneMedia::FRAME_BYTES);
-  mediaStreamQueueHead = (mediaStreamQueueHead + 1U) % MEDIA_STREAM_QUEUE_FRAMES;
+  const uint8_t *frame = mediaStreamQueue +
+      static_cast<size_t>(mediaStreamQueueHead) * MilestoneMedia::FRAME_BYTES;
+  flushMediaStreamFrame(frame);
+  mediaStreamQueueHead = static_cast<uint8_t>((mediaStreamQueueHead + 1U) % MEDIA_STREAM_QUEUE_FRAMES);
   --mediaStreamQueueCount;
-  display.sendBuffer();
   ++mediaStreamDisplayedFrames;
+  updateMediaStreamMeasuredFps(now);
   mediaStreamNextFrameMs += mediaStreamFrameIntervalMs;
   if (deadlineReached(now, mediaStreamNextFrameMs + mediaStreamFrameIntervalMs * 2U)) {
     mediaStreamNextFrameMs = now + mediaStreamFrameIntervalMs;
   }
+  if (mediaStreamQueueCount == 0) {
+    mediaStreamPhase = MediaStreamPhase::BUFFERING;
+    mediaStreamNextFrameMs = 0;
+  }
   return true;
 }
 
+const char *mediaStreamPhaseName() {
+  switch (mediaStreamPhase) {
+    case MediaStreamPhase::BUFFERING: return "buffering";
+    case MediaStreamPhase::PLAYING: return "playing";
+    default: return "inactive";
+  }
+}
+
 bool mediaTransferBusy() {
-  return mediaUploadActive || mediaStreamActive || mediaStreamUploadActive;
+  return mediaUploadActive || mediaStreamActive || mediaStreamRawActive;
 }

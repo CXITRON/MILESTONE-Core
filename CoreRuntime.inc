@@ -71,7 +71,7 @@ void processNetwork() {
     // A live stream owns the setup AP session. While streaming, cancel any
     // previously armed post-Wi-Fi-success close and suppress every normal AP
     // timeout path. The browser that is feeding frames must not lose the AP.
-    const bool streamPinsPortal = mediaStreamActive || mediaStreamUploadActive;
+    const bool streamPinsPortal = mediaStreamActive || mediaStreamRawActive;
     if (streamPinsPortal) {
       portalStartedMs = now;
       portalClosingAfterSuccess = false;
@@ -687,17 +687,6 @@ void processDisplay() {
     }
     return;
   }
-  // Do not hand OLED ownership to the stream until at least one frame has
-  // actually reached the device. This keeps the SETUP screen visible while
-  // the browser is starting/decoding the source instead of freezing a stale
-  // pre-stream framebuffer.
-  if (mediaStreamActive && mediaStreamReceivedFrames > 0 && !thermalSafeMode && !bootSplashActive() &&
-      !firmwareTransferActive() && updateState != UpdateState::ERROR_STATE &&
-      !(updateState == UpdateState::AVAILABLE && updatePromptVisible) && !resetConfirmation) {
-    if (elapsed(now, lastDisplayMs, DISPLAY_REFRESH_MS)) updateContrast();
-    if (renderMediaStreamFrameIfDue(now)) lastDisplayMs = now;
-    return;
-  }
   if (mediaDisplayOwnsFrame()) {
     if (elapsed(now, lastDisplayMs, DISPLAY_REFRESH_MS)) updateContrast();
     if (renderMediaFrameIfNeeded(now)) {
@@ -730,6 +719,148 @@ void initializeView() {
   if (currentView == View::DEVICE_INFO) deviceInfoStartedMs = millis();
   lastCycleMs = millis();
   scrollStartedMs = millis();
+}
+
+
+uint32_t mediaStreamPreviousCpuMhz = 240;
+uint32_t mediaStreamLastThermalCheckMs = 0;
+bool mediaStreamButtonPressed = false;
+bool mediaStreamSntpWasEnabled = false;
+
+void enterMediaStreamPerformanceMode() {
+  mediaStreamPreviousCpuMhz = getCpuFrequencyMhz();
+  portalClosingAfterSuccess = false;
+  portalStartedMs = millis();
+  cancelPortalWifiScan();
+  if (savedWifiScanActive) {
+    WiFi.scanDelete();
+    savedWifiScanActive = false;
+  }
+  stopMdns();
+  WiFi.setSleep(false);
+  mediaStreamSntpWasEnabled = esp_sntp_enabled();
+  if (mediaStreamSntpWasEnabled) esp_sntp_stop();
+  ntpRequestActive = false;
+  ntpSyncEvent = false;
+  ntpRequestStartedMs = 0;
+  server.enableDelay(false);
+  if (mediaStreamPreviousCpuMhz < 240U && !thermalThrottled) {
+    if (!setCpuFrequencyMhz(240)) logLine("STREAM_MODE could not force 240 MHz CPU");
+  }
+  mediaStreamLastThermalCheckMs = 0;
+  mediaStreamButtonPressed = digitalRead(PIN_BOOT) == LOW;
+  buttonRawPressed = mediaStreamButtonPressed;
+  buttonStablePressed = mediaStreamButtonPressed;
+  buttonRawChangedMs = millis();
+  buttonPressedMs = buttonRawChangedMs;
+  // One fixed LED write on entry; normal LED animation is suspended until exit.
+  writeStatusLed(0, 170, 255, 72);
+  wakeDisplay();
+}
+
+void leaveMediaStreamPerformanceMode() {
+  server.enableDelay(true);
+  if (!thermalSafeMode && !thermalThrottled && mediaStreamPreviousCpuMhz > 0 &&
+      getCpuFrequencyMhz() != mediaStreamPreviousCpuMhz) {
+    if (!setCpuFrequencyMhz(mediaStreamPreviousCpuMhz)) {
+      logLine("STREAM_MODE CPU restore failed");
+    }
+  }
+  if (!thermalSafeMode && stationNetworkReady()) {
+    startMdns();
+    if (mediaStreamSntpWasEnabled) {
+      configTzTime(TZ_INFO, "time.google.com", "pool.ntp.org", "time.cloudflare.com");
+    }
+  }
+  mediaStreamSntpWasEnabled = false;
+  if (portalActive && !thermalSafeMode) setRuntimeState(RuntimeState::SETUP_AP);
+  appliedLedColor = UINT32_MAX;
+  lastDisplayMs = 0;
+  wakeDisplay();
+}
+
+void processMediaStreamNetworkOnly() {
+  if (!portalActive) {
+    mediaStreamLastStopReason = "portal-closed";
+    stopMediaStream();
+    return;
+  }
+  portalClosingAfterSuccess = false;
+  portalStartedMs = millis();
+  dnsServer.processNextRequest();
+  server.handleClient();
+}
+
+void processMediaStreamThermalOnly(uint32_t now) {
+  if (!mediaStreamActive || !elapsed(now, mediaStreamLastThermalCheckMs, 1000UL)) return;
+  mediaStreamLastThermalCheckMs = now;
+  refreshChipTemperature(true);
+  if (temperatureSensorFault || isnan(chipTemperatureC)) {
+    mediaStreamLastStopReason = "temperature-sensor";
+    stopMediaStream();
+    return;
+  }
+  mediaStreamThermalWarning = chipTemperatureC >= MEDIA_STREAM_WARNING_C;
+  if (chipTemperatureC >= MEDIA_STREAM_EMERGENCY_C) {
+    mediaStreamLastStopReason = "temperature-emergency";
+    // enterThermalSafeMode() marks the safety state before it stops the stream,
+    // so STREAM_MODE exit cannot briefly restart mDNS/SNTP during an emergency.
+    enterThermalSafeMode(false);
+    return;
+  }
+  if (chipTemperatureC >= MEDIA_STREAM_STOP_C) {
+    mediaStreamLastStopReason = "temperature-limit";
+    stopMediaStream();
+  }
+}
+
+void processMediaStreamButtonOnly(uint32_t now) {
+  if (!mediaStreamActive) return;
+  const bool rawPressed = digitalRead(PIN_BOOT) == LOW;
+  if (rawPressed != buttonRawPressed) {
+    buttonRawPressed = rawPressed;
+    buttonRawChangedMs = now;
+  }
+  if (rawPressed != buttonStablePressed && elapsed(now, buttonRawChangedMs, BUTTON_DEBOUNCE_MS)) {
+    const bool wasPressed = buttonStablePressed;
+    buttonStablePressed = rawPressed;
+    if (buttonStablePressed) {
+      buttonPressedMs = now;
+      mediaStreamButtonPressed = true;
+    } else if (wasPressed && mediaStreamButtonPressed) {
+      mediaStreamButtonPressed = false;
+      mediaStreamLastStopReason = "button-stop";
+      stopMediaStream();
+    }
+  }
+}
+
+void processMediaStreamMode() {
+  processMediaStreamNetworkOnly();
+  if (!mediaStreamActive) {
+    delay(1);
+    return;
+  }
+  const uint32_t now = millis();
+  processMediaStreamThermalOnly(now);
+  if (!mediaStreamActive) {
+    delay(1);
+    return;
+  }
+  processMediaStreamState(now);
+  if (!mediaStreamActive) {
+    delay(1);
+    return;
+  }
+  processMediaStreamButtonOnly(now);
+  if (!mediaStreamActive) {
+    delay(1);
+    return;
+  }
+  if (mediaStreamPhase == MediaStreamPhase::PLAYING) {
+    renderMediaStreamFrameIfDue(millis());
+  }
+  delay(1);
 }
 
 void setupFirmware() {
@@ -811,13 +942,23 @@ void setupFirmware() {
 }
 
 void loopFirmware() {
+  if (mediaStreamActive) {
+    processMediaStreamMode();
+    return;
+  }
+
   processThermalProtection();
   processButton();
   processViewStateSave();
   processNetwork();
+  // A /api/stream/start request can switch modes inside processNetwork().
+  // Do not run any normal background subsystem after that transition.
+  if (mediaStreamActive) {
+    processMediaStreamMode();
+    return;
+  }
   processFirmwareUpdate();
   processDiagnostics();
-  processMediaStreamState(millis());
   processCycle();
   processDisplay();
   processLed();

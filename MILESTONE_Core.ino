@@ -33,6 +33,7 @@
 #endif
 
 #include "PortalPage.h"
+#include "StreamPage.h"
 #include "UpdateCertificates.h"
 #include "CoreLogic.h"
 #include "CoreDiagnostics.h"
@@ -49,7 +50,7 @@ SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 
 namespace Milestone {
 
-constexpr char FIRMWARE_VERSION[] = "1.10.3";
+constexpr char FIRMWARE_VERSION[] = "1.10.5";
 constexpr char AP_SSID[] = "MILESTONE-D1-SETUP";
 constexpr char HOSTNAME[] = "milestone-d1";
 constexpr char PREFS_NS[] = "milestone";
@@ -363,10 +364,6 @@ volatile uint16_t lastWifiDisconnectReason = 0;
 uint32_t ntpRequestStartedMs = 0;
 float highestChipTemperatureC = NAN;
 
-// Keep the OTA transfer buffer out of loopTask's limited stack. TLS, HTTPClient,
-// SHA-256 and String locals already consume a substantial part of that stack.
-uint8_t updateDownloadBuffer[UPDATE_DOWNLOAD_BUFFER_BYTES];
-
 uint32_t stateStartedMs = 0;
 uint32_t bootSplashStartedMs = 0;
 uint32_t deviceInfoStartedMs = 0;
@@ -547,6 +544,8 @@ void drawCenteredStr(const char *text, int baseline, int8_t offsetX);
 bool bootSplashActive();
 void recordDiagnostic(MilestoneDiagnostics::Event event, int16_t detail,
                       int32_t value, bool force);
+void enterMediaStreamPerformanceMode();
+void leaveMediaStreamPerformanceMode();
 
 #include "CoreConfig.inc"
 #include "CoreMedia.inc"

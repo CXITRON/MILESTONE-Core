@@ -1,6 +1,6 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v1.10.3
+> Current baseline: MILESTONE Core v1.10.5
 > Hardware: Waveshare ESP32-S3-Zero + SH1107 128×128 OLED
 > Repository: `CXITRON/MILESTONE-Core`
 
@@ -50,6 +50,7 @@ MILESTONE_Core/
 ├── CoreMedia.h
 ├── CoreMedia.cpp
 ├── PortalPage.h
+├── StreamPage.h
 ├── UpdateCertificates.h
 ├── README.md
 ├── tests/
@@ -58,6 +59,7 @@ MILESTONE_Core/
 │   ├── test_core_media.cpp
 │   ├── test_diagnostics_contract.sh
 │   ├── test_media_contract.sh
+│   ├── test_stream_page.js
 │   ├── test_release_reconcile.sh
 │   └── test_release_manifest.sh
 └── tools/
@@ -75,7 +77,7 @@ The `*.inc` runtime files are intentionally included into the sketch as one tran
 Firmware and persistent schema versions are separate concepts.
 
 ```cpp
-FIRMWARE_VERSION = "1.10.3"
+FIRMWARE_VERSION = "1.10.5"
 CONFIG_VERSION = 9
 ```
 
@@ -112,6 +114,27 @@ Application-level rollback cannot recover a candidate that fails before the roll
 ### Runtime/input/thermal
 
 `CoreRuntime.inc` coordinates the main loop, BOOT-button behavior, screen cycling, temperature protection, and high-level state progression. Preserve cooperative/early-return semantics when modifying state processing.
+
+### Live streaming (v1.10.5)
+
+Live streaming is intentionally isolated from the normal cooperative runtime. `/stream` serves a dedicated lightweight browser page. The browser pre-converts the full source into 128×128 one-bit frames before playback, then sends paced `application/octet-stream` bodies. The ESP32 stores only a bounded PSRAM ring; live frames are never written to LittleFS.
+
+While `mediaStreamActive` is true, `loopFirmware()` enters `processMediaStreamMode()` and returns before normal OTA, diagnostics, cycle, display, LED, NTP/reconnect scheduling, or stored-media work can run. The stream loop services only captive-portal networking, the raw frame transport, PSRAM queue/OLED timing, BOOT-stop input, resource guards, and low-rate thermal checks. A stream started inside `processNetwork()` is detected immediately and also returns before any normal background subsystem runs.
+
+Important stream contracts:
+
+- PSRAM is required; the ring capacity is 32 frames.
+- Initial playback starts after 8 queued frames and recovers from underrun after 4 frames.
+- Raw pushes carry at most 8 frames and receive a compact binary ACK; steady playback normally paces two frames per request, and transport-loss retries reuse the same idempotent sequence/body.
+- Duplicate committed sequence numbers are consumed and ACKed without enqueueing frames twice.
+- 20fps is the normal high-performance target; 24fps is experimental. The renderer preserves the media timebase by dropping stale frames rather than accumulating latency.
+- The SH1107 path may update a changed tile span instead of flushing all 2048 bytes when that is cheaper.
+- Stream thermal policy is 75°C warning, 80°C controlled stream stop, 85°C emergency thermal-safe entry.
+- End-of-source is explicit: `/api/stream/finish` marks EOF and the device drains the real queue before leaving STREAM_MODE, including short sources below the normal prebuffer threshold.
+- The OTA 2KiB transfer scratch buffer is allocated only during an OTA download instead of permanently occupying internal SRAM while streaming.
+- A stream cannot start while the normal thermal throttle/safe state is active.
+- Resource guards stop the stream on low internal heap, largest-block, or loopTask stack headroom.
+- STREAM_MODE pins the setup portal and suspends normal background state machines; exit restores the previous CPU policy and normal runtime.
 
 ### Diagnostics & Health
 
@@ -249,7 +272,7 @@ cd /tmp && milestone-release --dry-run taildrop X.Y.Z "short release note"
 
 Use `--yes` only when an unattended final publish is explicitly desired.
 
-## 8. Areas intentionally not refactored through v1.10.3
+## 8. Areas intentionally not refactored through v1.10.5
 
 The following broad refactors were deliberately rejected because their regression risk exceeded their immediate value:
 
@@ -288,4 +311,4 @@ The agent should select the mode according to whether the source was edited dire
 For recovery or automation, `milestone-release --zip /path/to/MILESTONE_Core_X.Y.Z.zip taildrop X.Y.Z "notes"` runs the same staging/reconciliation/release pipeline without fetching another Taildrop file. Normal user-facing usage remains `milestone-release taildrop ...`.
 
 
-v1.10.3 hardens live streaming after real-device playback reached the OLED but became severely choppy and eventually reset the ESP32. The browser now batches four frames per request from 10 fps upward, cutting multipart request churn in half at 10 fps. The device reuses pre-reserved JSON buffers and returns a minimal per-batch ACK instead of allocating a full statistics JSON object on every push. Live streaming also monitors internal heap, largest contiguous heap block, and loop-task stack every 500 ms; it stops the stream before resource exhaustion rather than allowing a watchdog/panic-style reset.
+v1.10.3 was the last incremental live-stream implementation. v1.10.5 replaces that hot path: browser-side full preconversion, a dedicated `/stream` page, raw binary transport, a 32-frame PSRAM queue, isolated STREAM_MODE execution, partial SH1107 updates, stream-specific thermal policy, and explicit resource/sequence recovery. Do not reintroduce the v1.10.3 multipart/burst sender into the live path.

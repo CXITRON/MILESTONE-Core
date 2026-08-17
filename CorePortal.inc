@@ -1,5 +1,15 @@
+bool rejectPortalWorkDuringStream() {
+  if (!mediaStreamActive) return false;
+  server.send(423, "application/json; charset=UTF-8", "{\"error\":\"stream-active\"}");
+  return true;
+}
+
 void handleStatus() {
   if (!requireSetupApRequest()) return;
+  if (mediaStreamActive) {
+    server.send(200, "application/json; charset=UTF-8", "{\"stream_active\":true}");
+    return;
+  }
   String wifiLabel;
   if (runtimeState == RuntimeState::WIFI_SLEEP) wifiLabel = "sleep";
   else if (WiFi.status() == WL_CONNECTED) wifiLabel = String(WiFi.SSID()) + " (" + WiFi.RSSI() + " dBm)";
@@ -54,6 +64,7 @@ void handleStatus() {
 
 void handleDiagnostics() {
   if (!requireSetupApRequest()) return;
+  if (rejectPortalWorkDuringStream()) return;
   String json = "{";
   json.reserve(4096);
   json += "\"firmware\":\"" + String(FIRMWARE_VERSION) + "\",";
@@ -108,6 +119,7 @@ void handleDiagnostics() {
 
 void handleDiagnosticsClear() {
   if (!authorizePortalRequest()) return;
+  if (rejectPortalWorkDuringStream()) return;
   if (!clearDiagnosticHistory()) {
     return sendJson(500, "{\"error\":\"진단 이력을 초기화하지 못했습니다.\"}");
   }
@@ -160,6 +172,7 @@ bool authorizeMediaMutation() {
 
 void handleMediaStatus() {
   if (!requireSetupApRequest()) return;
+  if (rejectPortalWorkDuringStream()) return;
   const size_t total = mediaStorageReady ? LittleFS.totalBytes() : 0;
   const size_t used = mediaStorageReady ? LittleFS.usedBytes() : 0;
   String json = "{";
@@ -178,6 +191,7 @@ void handleMediaStatus() {
 
 void handleMediaList() {
   if (!requireSetupApRequest()) return;
+  if (rejectPortalWorkDuringStream()) return;
   String json = "{\"items\":[";
   json.reserve(512 + static_cast<size_t>(mediaCatalog.count) * 160U);
   for (uint8_t i = 0; i < mediaCatalog.count; ++i) {
@@ -197,35 +211,46 @@ void handleMediaList() {
   sendJson(200, json);
 }
 
-const String &mediaStreamStatusJson() {
-  mediaStreamStatusBuffer = "{";
-  mediaStreamStatusBuffer += "\"active\":" + String(mediaStreamActive ? "true" : "false") + ",";
-  mediaStreamStatusBuffer += "\"session\":" + String(mediaStreamSessionId) + ",";
-  mediaStreamStatusBuffer += "\"fps\":" + String(mediaStreamFps) + ",";
-  mediaStreamStatusBuffer += "\"render_fps\":" + String(mediaStreamRenderFps) + ",";
-  mediaStreamStatusBuffer += "\"queue\":" + String(mediaStreamQueueCount) + ",";
-  mediaStreamStatusBuffer += "\"queue_capacity\":" + String(MEDIA_STREAM_QUEUE_FRAMES) + ",";
-  mediaStreamStatusBuffer += "\"batch_max\":" + String(MEDIA_STREAM_MAX_BATCH_FRAMES) + ",";
-  mediaStreamStatusBuffer += "\"received\":" + String(mediaStreamReceivedFrames) + ",";
-  mediaStreamStatusBuffer += "\"displayed\":" + String(mediaStreamDisplayedFrames) + ",";
-  mediaStreamStatusBuffer += "\"dropped\":" + String(mediaStreamDroppedFrames) + ",";
-  mediaStreamStatusBuffer += "\"underruns\":" + String(mediaStreamUnderruns) + ",";
-  mediaStreamStatusBuffer += "\"heap_min\":" + String(mediaStreamMinFreeHeap == 0xFFFFFFFFUL ? 0 : mediaStreamMinFreeHeap) + ",";
-  mediaStreamStatusBuffer += "\"largest_heap_min\":" + String(mediaStreamMinLargestHeapBlock == 0xFFFFFFFFUL ? 0 : mediaStreamMinLargestHeapBlock) + ",";
-  mediaStreamStatusBuffer += "\"stack_min\":" + String(mediaStreamMinStackFree == 0xFFFFFFFFUL ? 0 : mediaStreamMinStackFree) + ",";
-  mediaStreamStatusBuffer += "\"stop_reason\":\"" + String(mediaStreamLastStopReason) + "\"}";
-  return mediaStreamStatusBuffer;
+String mediaStreamStatusJson() {
+  String json;
+  json.reserve(420);
+  json = "{";
+  json += "\"active\":" + String(mediaStreamActive ? "true" : "false") + ",";
+  json += "\"phase\":\"" + String(mediaStreamPhaseName()) + "\",";
+  json += "\"session\":" + String(mediaStreamSessionId) + ",";
+  json += "\"fps\":" + String(mediaStreamFps) + ",";
+  json += "\"actual_fps\":" + String(mediaStreamActualFpsX10 / 10.0f, 1) + ",";
+  json += "\"queue\":" + String(mediaStreamQueueCount) + ",";
+  json += "\"queue_capacity\":" + String(MEDIA_STREAM_QUEUE_FRAMES) + ",";
+  json += "\"source_ended\":" + String(mediaStreamSourceEnded ? "true" : "false") + ",";
+  json += "\"push_max\":" + String(MEDIA_STREAM_MAX_PUSH_FRAMES) + ",";
+  json += "\"received\":" + String(mediaStreamReceivedFrames) + ",";
+  json += "\"displayed\":" + String(mediaStreamDisplayedFrames) + ",";
+  json += "\"dropped\":" + String(mediaStreamDroppedFrames) + ",";
+  json += "\"underruns\":" + String(mediaStreamUnderruns) + ",";
+  json += "\"flush_us\":" + String(mediaStreamFlushEmaUs) + ",";
+  json += "\"temperature_c\":" + String(isnan(chipTemperatureC) ? 0.0f : chipTemperatureC, 1) + ",";
+  json += "\"heap_min\":" + String(mediaStreamMinFreeHeap == 0xFFFFFFFFUL ? 0 : mediaStreamMinFreeHeap) + ",";
+  json += "\"stack_min\":" + String(mediaStreamMinStackFree == 0xFFFFFFFFUL ? 0 : mediaStreamMinStackFree) + ",";
+  json += "\"stop_reason\":\"" + String(mediaStreamLastStopReason) + "\"}";
+  return json;
 }
 
-const String &mediaStreamPushAckJson() {
-  mediaStreamAckBuffer = "{\"ok\":true,\"queue\":";
-  mediaStreamAckBuffer.concat(static_cast<unsigned int>(mediaStreamQueueCount));
-  mediaStreamAckBuffer += ",\"queue_capacity\":";
-  mediaStreamAckBuffer.concat(static_cast<unsigned int>(MEDIA_STREAM_QUEUE_FRAMES));
-  mediaStreamAckBuffer += ",\"render_fps\":";
-  mediaStreamAckBuffer.concat(static_cast<unsigned int>(mediaStreamRenderFps));
-  mediaStreamAckBuffer += "}";
-  return mediaStreamAckBuffer;
+void sendMediaStreamAck() {
+  uint8_t ack[28] = {'M', 'S', 'A', '1', 1, static_cast<uint8_t>(mediaStreamPhase),
+                     mediaStreamQueueCount, MEDIA_STREAM_QUEUE_FRAMES};
+  MilestoneMedia::writeLe32(ack + 8, mediaStreamReceivedFrames);
+  MilestoneMedia::writeLe32(ack + 12, mediaStreamDisplayedFrames);
+  MilestoneMedia::writeLe32(ack + 16, mediaStreamDroppedFrames);
+  MilestoneMedia::writeLe16(ack + 20, static_cast<uint16_t>(mediaStreamUnderruns > 65535U ? 65535U : mediaStreamUnderruns));
+  const int16_t tempDeci = isnan(chipTemperatureC) ? 0 : static_cast<int16_t>(chipTemperatureC * 10.0f);
+  MilestoneMedia::writeLe16(ack + 22, static_cast<uint16_t>(tempDeci));
+  MilestoneMedia::writeLe16(ack + 24, mediaStreamActualFpsX10);
+  const uint32_t flush10 = mediaStreamFlushEmaUs / 10U;
+  MilestoneMedia::writeLe16(ack + 26, static_cast<uint16_t>(flush10 > 65535U ? 65535U : flush10));
+  server.setContentLength(sizeof(ack));
+  server.send(200, "application/octet-stream", "");
+  server.sendContent(reinterpret_cast<const char *>(ack), sizeof(ack));
 }
 
 void handleMediaStreamStatus() {
@@ -235,135 +260,105 @@ void handleMediaStreamStatus() {
 
 void handleMediaStreamStart() {
   if (!authorizePortalRequest()) return;
-  if (mediaUploadActive || firmwareUpdateBusy()) {
-    return sendJson(409, "{\"error\":\"미디어 저장 또는 펌웨어 작업이 진행 중입니다.\"}");
+  if (mediaStreamActive) {
+    return sendJson(409, "{\"error\":\"이미 다른 스트리밍 세션이 실행 중입니다.\"}");
   }
-  if (thermalWarning || temperatureSensorFault || thermalSafeMode) {
-    return sendJson(409, "{\"error\":\"온도 보호 상태에서는 실시간 스트리밍을 시작할 수 없습니다.\"}");
+  if (mediaUploadActive || firmwareUpdateBusy() || wifiTestState != WifiTestState::IDLE) {
+    return sendJson(409, "{\"error\":\"미디어 저장·Wi-Fi 시험·펌웨어 작업이 끝난 뒤 시작하세요.\"}");
+  }
+  refreshChipTemperature(true);
+  if (temperatureSensorFault || thermalSafeMode || thermalThrottled ||
+      (!isnan(chipTemperatureC) && chipTemperatureC >= MEDIA_STREAM_STOP_C)) {
+    return sendJson(409, "{\"error\":\"현재 온도 또는 센서 상태에서는 STREAM_MODE를 시작할 수 없습니다.\"}");
   }
   uint32_t fps = 0;
   if (!parseUintArg("fps", fps) || fps < MEDIA_STREAM_MIN_FPS || fps > MEDIA_STREAM_MAX_FPS) {
     return sendJson(400, "{\"error\":\"스트리밍 FPS는 5~24 범위여야 합니다.\"}");
   }
   if (!startMediaStream(static_cast<uint16_t>(fps))) {
-    return sendJson(503, "{\"error\":\"스트리밍 프레임 버퍼를 확보하지 못했습니다. PSRAM 상태를 확인하세요.\"}");
+    return sendJson(503, "{\"error\":\"PSRAM 스트림 버퍼를 확보하지 못했습니다.\"}");
   }
-  // Starting a stream is an explicit request to keep using the setup portal.
-  // Cancel a close that may have been armed by a successful Wi-Fi test.
   portalClosingAfterSuccess = false;
   portalStartedMs = millis();
   wakeDisplay();
   sendJson(200, mediaStreamStatusJson());
 }
 
-bool prepareMediaStreamUpload() {
-  if (!requestFromSetupAp() || !validToken()) {
-    mediaStreamUploadError = "스트리밍 세션이 유효하지 않습니다.";
-    return false;
-  }
-  if (!mediaStreamActive || !allocateMediaStreamBuffers()) {
-    mediaStreamUploadError = String("실시간 스트리밍이 기기에서 중단되었습니다. reason=") +
-                             String(mediaStreamLastStopReason);
-    return false;
-  }
-  if (thermalWarning || temperatureSensorFault || thermalSafeMode || firmwareUpdateBusy()) {
-    mediaStreamUploadError = "안전 상태가 바뀌어 스트리밍을 계속할 수 없습니다.";
-    return false;
-  }
-  uint32_t session = 0;
-  uint32_t frameCount = 0;
-  uint32_t batchSeq = 0;
-  if (!parseUintArg("session", session) || session != mediaStreamSessionId ||
-      !parseUintArg("count", frameCount) || frameCount == 0 ||
-      frameCount > MEDIA_STREAM_MAX_BATCH_FRAMES ||
-      !parseUintArg("seq", batchSeq) || batchSeq == 0) {
-    mediaStreamUploadError = "스트리밍 배치 정보가 잘못되었습니다.";
-    return false;
-  }
-  if (batchSeq <= mediaStreamLastBatchSeq) {
-    mediaStreamUploadError = "이미 처리했거나 순서가 뒤바뀐 스트리밍 배치입니다.";
-    return false;
-  }
-  if (frameCount > mediaStreamQueueFree()) {
-    mediaStreamUploadError = "기기 프레임 버퍼가 가득 찼습니다.";
-    return false;
-  }
-  mediaStreamUploadFrameCount = static_cast<uint8_t>(frameCount);
-  mediaStreamUploadExpectedBytes = static_cast<size_t>(frameCount) * MilestoneMedia::FRAME_BYTES;
-  mediaStreamUploadWrittenBytes = 0;
-  mediaStreamUploadBatchSeq = batchSeq;
-  mediaStreamUploadFailed = false;
-  mediaStreamUploadComplete = false;
-  mediaStreamUploadActive = true;
-  return true;
-}
-
-void handleMediaStreamPushData() {
-  HTTPUpload &upload = server.upload();
-  if (upload.status == UPLOAD_FILE_START) {
-    resetMediaStreamUploadState();
-    if (!prepareMediaStreamUpload()) mediaStreamUploadFailed = true;
-    return;
-  }
-  if (upload.status == UPLOAD_FILE_WRITE) {
-    if (!mediaStreamUploadActive || mediaStreamUploadFailed) return;
-    if (mediaStreamUploadWrittenBytes + upload.currentSize > mediaStreamUploadExpectedBytes) {
-      mediaStreamUploadFailed = true;
-      mediaStreamUploadError = "스트리밍 프레임 배치 크기가 예상보다 큽니다.";
+void handleMediaStreamPushRaw() {
+  HTTPRaw &raw = server.raw();
+  if (raw.status == RAW_START) {
+    resetMediaStreamRawState();
+    if (!requestFromSetupAp() || !validToken()) {
+      mediaStreamRawFailed = true;
+      mediaStreamRawError = "unauthorized";
       return;
     }
-    memcpy(mediaStreamUploadBuffer + mediaStreamUploadWrittenBytes, upload.buf, upload.currentSize);
-    mediaStreamUploadWrittenBytes += upload.currentSize;
-    return;
-  }
-  if (upload.status == UPLOAD_FILE_END) {
-    if (!mediaStreamUploadActive || mediaStreamUploadFailed ||
-        mediaStreamUploadWrittenBytes != mediaStreamUploadExpectedBytes ||
-        upload.totalSize != mediaStreamUploadExpectedBytes) {
-      mediaStreamUploadFailed = true;
-      if (mediaStreamUploadError.length() == 0) {
-        mediaStreamUploadError = "스트리밍 프레임 배치 길이가 올바르지 않습니다.";
-      }
-    } else {
-      mediaStreamUploadComplete = true;
+    if (!mediaStreamActive || temperatureSensorFault || thermalSafeMode || firmwareUpdateBusy()) {
+      mediaStreamRawFailed = true;
+      mediaStreamRawError = "stream-inactive";
+      return;
     }
-    mediaStreamUploadActive = false;
+    uint32_t session = 0, seq = 0, count = 0;
+    if (!parseUintArg("session", session) || !parseUintArg("seq", seq) ||
+        !parseUintArg("count", count) || count > MEDIA_STREAM_MAX_PUSH_FRAMES ||
+        !beginMediaStreamRawWrite(session, seq, static_cast<uint8_t>(count))) {
+      if (!mediaStreamRawFailed) {
+        mediaStreamRawFailed = true;
+        mediaStreamRawError = "invalid-request";
+      }
+    }
     return;
   }
-  if (upload.status == UPLOAD_FILE_ABORTED) {
-    mediaStreamUploadFailed = true;
-    mediaStreamUploadError = "스트리밍 프레임 전송이 중단되었습니다.";
-    mediaStreamUploadActive = false;
+  if (raw.status == RAW_WRITE) {
+    if (!mediaStreamRawFailed) writeMediaStreamRawChunk(raw.buf, raw.currentSize);
+    return;
+  }
+  if (raw.status == RAW_END) {
+    if (!mediaStreamRawFailed) finishMediaStreamRawWrite(raw.totalSize);
+    return;
+  }
+  if (raw.status == RAW_ABORTED) {
+    mediaStreamRawFailed = true;
+    mediaStreamRawError = "aborted";
+    mediaStreamRawActive = false;
   }
 }
 
 void handleMediaStreamPushComplete() {
-  if (!authorizePortalRequest()) {
-    resetMediaStreamUploadState();
-    return;
+  if (!mediaStreamActive) {
+    resetMediaStreamRawState();
+    return server.send(409, "text/plain; charset=UTF-8", "stream-inactive");
   }
-  if (!mediaStreamUploadComplete || mediaStreamUploadFailed) {
-    const String error = mediaStreamUploadError.length() ? mediaStreamUploadError
-                                                         : "스트리밍 프레임을 받지 못했습니다.";
-    resetMediaStreamUploadState();
-    return sendJson(409, String("{\"error\":\"") + jsonEscape(error) + "\"}");
+  if (mediaStreamRawFailed || !mediaStreamRawComplete) {
+    const char *error = mediaStreamRawError ? mediaStreamRawError : "raw-incomplete";
+    const bool unauthorized = strcmp(error, "unauthorized") == 0;
+    resetMediaStreamRawState();
+    return server.send(unauthorized ? 403 : 409, "text/plain; charset=UTF-8", error);
   }
-  const uint8_t frameCount = mediaStreamUploadFrameCount;
-  const uint32_t batchSeq = mediaStreamUploadBatchSeq;
-  if (!enqueueMediaStreamFrames(mediaStreamUploadBuffer, frameCount)) {
-    resetMediaStreamUploadState();
-    return sendJson(409, "{\"error\":\"기기 프레임 버퍼에 배치를 넣지 못했습니다.\"}");
+  if (!commitMediaStreamRawWrite()) {
+    resetMediaStreamRawState();
+    return server.send(409, "text/plain; charset=UTF-8", "commit-failed");
   }
-  mediaStreamLastBatchSeq = batchSeq;
   portalStartedMs = millis();
-  resetMediaStreamUploadState();
-  // Push requests are the hot path. Return only flow-control fields instead
-  // of rebuilding the full statistics object on every batch.
-  sendJson(200, mediaStreamPushAckJson());
+  sendMediaStreamAck();
+}
+
+void handleMediaStreamFinish() {
+  if (!authorizePortalRequest()) return;
+  uint32_t session = 0;
+  if (!parseUintArg("session", session) || !finishMediaStreamSource(session)) {
+    return sendJson(409, "{\"error\":\"stale-stream-session\"}");
+  }
+  portalStartedMs = millis();
+  sendJson(202, "{\"ok\":true,\"state\":\"draining\"}");
 }
 
 void handleMediaStreamStop() {
   if (!authorizePortalRequest()) return;
+  uint32_t session = 0;
+  if (mediaStreamActive && (!parseUintArg("session", session) || session != mediaStreamSessionId)) {
+    return sendJson(409, "{\"error\":\"stale-stream-session\"}");
+  }
   if (mediaStreamActive) mediaStreamLastStopReason = "user-stop";
   stopMediaStream();
   wakeDisplay();
@@ -567,6 +562,7 @@ void handleMediaRepair() {
 
 void handleGetConfig() {
   if (!requireSetupApRequest()) return;
+  if (rejectPortalWorkDuringStream()) return;
   String json = "{";
   json.reserve(1400);
   String preferredSsid = config.savedNetworkCount > 0 ? config.savedNetworks[0].ssid : "";
@@ -626,6 +622,7 @@ void handleGetConfig() {
 
 void handleWifiScan() {
   if (!requireSetupApRequest()) return;
+  if (rejectPortalWorkDuringStream()) return;
   if (savedWifiScanActive) {
     sendJson(409, "{\"error\":\"저장된 Wi-Fi 자동 검색이 진행 중입니다. 잠시 후 다시 시도하세요.\"}");
     return;
@@ -708,6 +705,7 @@ bool parseBoolArg(const char *name, bool &value) {
 
 void handlePostConfig() {
   if (!authorizePortalRequest()) return;
+  if (rejectPortalWorkDuringStream()) return;
   if (!server.hasArg("title") || !server.hasArg("target") || !server.hasArg("message") ||
       !server.hasArg("cycle_order")) {
     return sendJson(400, "{\"error\":\"필수 설정 항목이 누락되었습니다.\"}");
@@ -815,6 +813,7 @@ void handlePostConfig() {
 
 void handleWifiTest() {
   if (!authorizePortalRequest()) return;
+  if (rejectPortalWorkDuringStream()) return;
   String ssid = server.arg("ssid");
   String password = server.arg("pass");
   String securityText = server.arg("security");
@@ -875,6 +874,7 @@ void handleWifiTest() {
 
 void handleTimeSync() {
   if (!authorizePortalRequest()) return;
+  if (rejectPortalWorkDuringStream()) return;
   if (wifiTestState == WifiTestState::CONNECTING || wifiTestState == WifiTestState::TIME_SYNCING) {
     return sendJson(409, "{\"error\":\"Wi-Fi 시험이 진행 중입니다. 완료 후 다시 시도하세요.\"}");
   }
@@ -900,6 +900,7 @@ void restartAfterFactoryReset() {
 
 void handleFactoryReset() {
   if (!authorizePortalRequest()) return;
+  if (rejectPortalWorkDuringStream()) return;
   if (!prefsReady) return sendJson(503, "{\"error\":\"NVS 저장공간을 사용할 수 없어 공장 초기화를 실행할 수 없습니다.\"}");
   if (server.arg("confirm") != "RESET") return sendJson(400, "{\"error\":\"초기화 확인 문자열이 올바르지 않습니다.\"}");
   if (!clearAllMediaFiles()) return sendJson(500, "{\"error\":\"커스텀 미디어를 초기화하지 못했습니다.\"}");
@@ -911,6 +912,7 @@ void handleFactoryReset() {
 
 void handleSettingsReset() {
   if (!authorizePortalRequest()) return;
+  if (rejectPortalWorkDuringStream()) return;
   if (server.arg("confirm") != "DEFAULTS") return sendJson(400, "{\"error\":\"설정 초기화 확인 문자열이 올바르지 않습니다.\"}");
 
   const Config previous = config;
@@ -942,6 +944,7 @@ void handleSettingsReset() {
 
 void handleDeleteSavedWifi() {
   if (!authorizePortalRequest()) return;
+  if (rejectPortalWorkDuringStream()) return;
   String ssid = server.arg("ssid");
   int index = findSavedNetwork(ssid);
   if (index < 0) return sendJson(404, "{\"error\":\"저장된 Wi-Fi를 찾을 수 없습니다.\"}");
@@ -968,6 +971,7 @@ void handleDeleteSavedWifi() {
 
 void handleUpdateCheck() {
   if (!authorizePortalRequest()) return;
+  if (rejectPortalWorkDuringStream()) return;
   if (mediaTransferBusy()) {
     return sendJson(409, "{\"error\":\"미디어 업로드가 진행 중입니다. 완료 후 다시 시도하세요.\"}");
   }
@@ -993,6 +997,7 @@ void handleUpdateCheck() {
 
 void handleUpdateInstall() {
   if (!authorizePortalRequest()) return;
+  if (rejectPortalWorkDuringStream()) return;
   if (mediaTransferBusy()) {
     return sendJson(409, "{\"error\":\"미디어 업로드가 진행 중입니다. 완료 후 다시 시도하세요.\"}");
   }
@@ -1023,9 +1028,28 @@ void handleUpdateInstall() {
 
 void handlePortalRoot() {
   if (!requireSetupApRequest(false)) return;
+  if (mediaStreamActive) {
+    // Do not send the large general portal while video timing owns the device.
+    // A direct root visit moves to the lightweight stream page; captive-probe
+    // endpoints get an empty response instead of downloading either page.
+    if (server.uri() == "/") {
+      server.sendHeader("Location", "/stream", true);
+      server.send(302, "text/plain", "");
+    } else {
+      server.send(204, "text/plain", "");
+    }
+    return;
+  }
   server.sendHeader("Cache-Control", "no-store");
   server.sendHeader("Set-Cookie", String("MILESTONE_TOKEN=") + sessionToken + "; Path=/; HttpOnly; SameSite=Strict");
   server.send_P(200, "text/html; charset=UTF-8", MILESTONE_PORTAL_HTML);
+}
+
+void handleStreamPortal() {
+  if (!requireSetupApRequest(false)) return;
+  server.sendHeader("Cache-Control", "no-store");
+  server.sendHeader("Set-Cookie", String("MILESTONE_TOKEN=") + sessionToken + "; Path=/; HttpOnly; SameSite=Strict");
+  server.send_P(200, "text/html; charset=UTF-8", MILESTONE_STREAM_HTML);
 }
 
 void registerPortalRoutes() {
@@ -1035,6 +1059,7 @@ void registerPortalRoutes() {
   static const char *headerKeys[] = {"Cookie"};
   server.collectHeaders(headerKeys, 1);
   server.on("/", HTTP_GET, handlePortalRoot);
+  server.on("/stream", HTTP_GET, handleStreamPortal);
   server.on("/api/status", HTTP_GET, handleStatus);
   server.on("/api/diagnostics", HTTP_GET, handleDiagnostics);
   server.on("/api/diagnostics/clear", HTTP_POST, handleDiagnosticsClear);
@@ -1048,7 +1073,8 @@ void registerPortalRoutes() {
   server.on("/api/media/repair", HTTP_POST, handleMediaRepair);
   server.on("/api/stream/status", HTTP_GET, handleMediaStreamStatus);
   server.on("/api/stream/start", HTTP_POST, handleMediaStreamStart);
-  server.on("/api/stream/push", HTTP_POST, handleMediaStreamPushComplete, handleMediaStreamPushData);
+  server.on("/api/stream/push", HTTP_POST, handleMediaStreamPushComplete, handleMediaStreamPushRaw);
+  server.on("/api/stream/finish", HTTP_POST, handleMediaStreamFinish);
   server.on("/api/stream/stop", HTTP_POST, handleMediaStreamStop);
   server.on("/api/config", HTTP_GET, handleGetConfig);
   server.on("/api/wifi/scan", HTTP_GET, handleWifiScan);
