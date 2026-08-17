@@ -1,4 +1,4 @@
-// MILESTONE Core v1.9.0 custom media storage and playback layer.
+// MILESTONE Core custom media storage, playback, and v1.10.0 live-stream layer.
 // Original JPEG/GIF/video files are converted in the setup browser. The
 // device accepts only bounded, checksummed MSM1 128x128 one-bit files.
 
@@ -19,6 +19,15 @@ constexpr char MEDIA_DIRECTORY[] = "/media";
 constexpr char MEDIA_INDEX_A[] = "/media/index.a";
 constexpr char MEDIA_INDEX_B[] = "/media/index.b";
 constexpr char MEDIA_UPLOAD_TEMP[] = "/media/upload.tmp";
+
+// Live streaming keeps only a small PSRAM-backed frame queue. Nothing from a
+// live stream is written to LittleFS, so duration is bounded by the browser
+// session rather than flash capacity or the MSM1 frame-count limit.
+constexpr uint8_t MEDIA_STREAM_QUEUE_FRAMES = 12;
+constexpr uint8_t MEDIA_STREAM_MAX_BATCH_FRAMES = 4;
+constexpr uint16_t MEDIA_STREAM_MIN_FPS = 5;
+constexpr uint16_t MEDIA_STREAM_MAX_FPS = 24;
+constexpr uint32_t MEDIA_STREAM_STALE_MS = 3000UL;
 
 struct MediaEntry {
   uint32_t id = 0;
@@ -61,6 +70,31 @@ size_t mediaUploadWritten = 0;
 uint8_t mediaUploadDisplaySeconds = 8;
 String mediaUploadName;
 String mediaUploadError;
+
+uint8_t *mediaStreamQueue = nullptr;
+uint8_t *mediaStreamUploadBuffer = nullptr;
+bool mediaStreamActive = false;
+bool mediaStreamUploadActive = false;
+bool mediaStreamUploadComplete = false;
+bool mediaStreamUploadFailed = false;
+String mediaStreamUploadError;
+uint32_t mediaStreamSessionId = 0;
+uint32_t mediaStreamLastPushMs = 0;
+uint32_t mediaStreamNextFrameMs = 0;
+uint32_t mediaStreamLastBatchSeq = 0;
+uint32_t mediaStreamReceivedFrames = 0;
+uint32_t mediaStreamDisplayedFrames = 0;
+uint32_t mediaStreamDroppedFrames = 0;
+uint32_t mediaStreamUnderruns = 0;
+uint16_t mediaStreamFps = 10;
+uint16_t mediaStreamFrameIntervalMs = 100;
+uint8_t mediaStreamQueueHead = 0;
+uint8_t mediaStreamQueueTail = 0;
+uint8_t mediaStreamQueueCount = 0;
+uint8_t mediaStreamUploadFrameCount = 0;
+size_t mediaStreamUploadExpectedBytes = 0;
+size_t mediaStreamUploadWrittenBytes = 0;
+uint32_t mediaStreamUploadBatchSeq = 0;
 
 String mediaPath(uint32_t id) {
   char path[32];
@@ -680,6 +714,140 @@ bool deleteMediaEntry(uint32_t id, String &detail) {
   return true;
 }
 
+bool allocateMediaStreamBuffers() {
+  if (!mediaStreamQueue) {
+    mediaStreamQueue = static_cast<uint8_t *>(heap_caps_malloc(
+        static_cast<size_t>(MEDIA_STREAM_QUEUE_FRAMES) * MilestoneMedia::FRAME_BYTES,
+        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (!mediaStreamQueue) {
+      mediaStreamQueue = static_cast<uint8_t *>(malloc(
+          static_cast<size_t>(MEDIA_STREAM_QUEUE_FRAMES) * MilestoneMedia::FRAME_BYTES));
+    }
+  }
+  if (!mediaStreamUploadBuffer) {
+    mediaStreamUploadBuffer = static_cast<uint8_t *>(heap_caps_malloc(
+        static_cast<size_t>(MEDIA_STREAM_MAX_BATCH_FRAMES) * MilestoneMedia::FRAME_BYTES,
+        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (!mediaStreamUploadBuffer) {
+      mediaStreamUploadBuffer = static_cast<uint8_t *>(malloc(
+          static_cast<size_t>(MEDIA_STREAM_MAX_BATCH_FRAMES) * MilestoneMedia::FRAME_BYTES));
+    }
+  }
+  return mediaStreamQueue && mediaStreamUploadBuffer;
+}
+
+void resetMediaStreamUploadState() {
+  mediaStreamUploadActive = false;
+  mediaStreamUploadComplete = false;
+  mediaStreamUploadFailed = false;
+  mediaStreamUploadError = "";
+  mediaStreamUploadFrameCount = 0;
+  mediaStreamUploadExpectedBytes = 0;
+  mediaStreamUploadWrittenBytes = 0;
+  mediaStreamUploadBatchSeq = 0;
+}
+
+void stopMediaStream() {
+  mediaStreamActive = false;
+  resetMediaStreamUploadState();
+  mediaStreamSessionId = 0;
+  mediaStreamLastPushMs = 0;
+  mediaStreamNextFrameMs = 0;
+  mediaStreamLastBatchSeq = 0;
+  mediaStreamQueueHead = 0;
+  mediaStreamQueueTail = 0;
+  mediaStreamQueueCount = 0;
+}
+
+bool startMediaStream(uint16_t fps) {
+  if (fps < MEDIA_STREAM_MIN_FPS || fps > MEDIA_STREAM_MAX_FPS || !allocateMediaStreamBuffers()) {
+    return false;
+  }
+  closeMediaPlayback();
+  stopMediaStream();
+  mediaStreamFps = fps;
+  mediaStreamFrameIntervalMs = static_cast<uint16_t>((1000U + fps / 2U) / fps);
+  mediaStreamSessionId = esp_random();
+  if (mediaStreamSessionId == 0) mediaStreamSessionId = 1;
+  mediaStreamLastPushMs = millis();
+  mediaStreamReceivedFrames = 0;
+  mediaStreamDisplayedFrames = 0;
+  mediaStreamDroppedFrames = 0;
+  mediaStreamUnderruns = 0;
+  mediaStreamActive = true;
+  return true;
+}
+
+uint8_t mediaStreamQueueFree() {
+  return MEDIA_STREAM_QUEUE_FRAMES - mediaStreamQueueCount;
+}
+
+bool enqueueMediaStreamFrames(const uint8_t *frames, uint8_t frameCount) {
+  if (!mediaStreamActive || !mediaStreamQueue || !frames || frameCount == 0 ||
+      frameCount > MEDIA_STREAM_MAX_BATCH_FRAMES || frameCount > mediaStreamQueueFree()) {
+    return false;
+  }
+  for (uint8_t i = 0; i < frameCount; ++i) {
+    memcpy(mediaStreamQueue + static_cast<size_t>(mediaStreamQueueTail) * MilestoneMedia::FRAME_BYTES,
+           frames + static_cast<size_t>(i) * MilestoneMedia::FRAME_BYTES,
+           MilestoneMedia::FRAME_BYTES);
+    mediaStreamQueueTail = (mediaStreamQueueTail + 1U) % MEDIA_STREAM_QUEUE_FRAMES;
+    ++mediaStreamQueueCount;
+  }
+  mediaStreamReceivedFrames += frameCount;
+  mediaStreamLastPushMs = millis();
+  if (mediaStreamNextFrameMs == 0) mediaStreamNextFrameMs = mediaStreamLastPushMs;
+  return true;
+}
+
+void processMediaStreamState(uint32_t now) {
+  if (!mediaStreamActive) return;
+  if (!portalActive || thermalWarning || temperatureSensorFault || thermalSafeMode ||
+      firmwareUpdateBusy() || elapsed(now, mediaStreamLastPushMs, MEDIA_STREAM_STALE_MS)) {
+    stopMediaStream();
+  }
+}
+
+bool renderMediaStreamFrameIfDue(uint32_t now) {
+  if (!mediaStreamActive || !oledReady || displaySleeping || !mediaStreamQueue ||
+      mediaStreamNextFrameMs == 0 || !deadlineReached(now, mediaStreamNextFrameMs)) {
+    return false;
+  }
+
+  if (mediaStreamQueueCount == 0) {
+    ++mediaStreamUnderruns;
+    mediaStreamNextFrameMs = now + mediaStreamFrameIntervalMs;
+    return false;
+  }
+
+  // Keep a live stream close to real time. If rendering fell behind by more
+  // than one frame interval, discard stale queued frames instead of allowing
+  // latency to grow for the rest of the session.
+  const int32_t behindMs = static_cast<int32_t>(now - mediaStreamNextFrameMs);
+  if (behindMs >= static_cast<int32_t>(mediaStreamFrameIntervalMs) && mediaStreamQueueCount > 1) {
+    uint32_t stale = static_cast<uint32_t>(behindMs) / mediaStreamFrameIntervalMs;
+    if (stale >= mediaStreamQueueCount) stale = mediaStreamQueueCount - 1U;
+    mediaStreamQueueHead = static_cast<uint8_t>(
+        (mediaStreamQueueHead + stale) % MEDIA_STREAM_QUEUE_FRAMES);
+    mediaStreamQueueCount -= static_cast<uint8_t>(stale);
+    mediaStreamDroppedFrames += stale;
+    mediaStreamNextFrameMs += stale * mediaStreamFrameIntervalMs;
+  }
+
+  memcpy(display.getBufferPtr(),
+         mediaStreamQueue + static_cast<size_t>(mediaStreamQueueHead) * MilestoneMedia::FRAME_BYTES,
+         MilestoneMedia::FRAME_BYTES);
+  mediaStreamQueueHead = (mediaStreamQueueHead + 1U) % MEDIA_STREAM_QUEUE_FRAMES;
+  --mediaStreamQueueCount;
+  display.sendBuffer();
+  ++mediaStreamDisplayedFrames;
+  mediaStreamNextFrameMs += mediaStreamFrameIntervalMs;
+  if (deadlineReached(now, mediaStreamNextFrameMs + mediaStreamFrameIntervalMs * 2U)) {
+    mediaStreamNextFrameMs = now + mediaStreamFrameIntervalMs;
+  }
+  return true;
+}
+
 bool mediaTransferBusy() {
-  return mediaUploadActive;
+  return mediaUploadActive || mediaStreamActive || mediaStreamUploadActive;
 }

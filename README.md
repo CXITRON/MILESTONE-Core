@@ -248,13 +248,13 @@ PC의 현재 프로젝트를 직접 수정한 경우에는 **MILESTONE_Core 프�
 
 ```bash
 cd /run/media/citron/T7/Documents/Dev/MILESTONE_Core
-milestone-release local 1.9.9 "Raise custom media frame limit"
+milestone-release local 1.10.0 "Add live media streaming"
 ```
 
-Tailscale Taildrop으로 `MILESTONE_Core_1.9.9.zip`을 받은 경우에는 교체 대상 프로젝트 디렉터리 밖의 정상적으로 존재하는 디렉터리에서 실행합니다. 기존 프로젝트가 교체될 때 현재 셸 경로가 사라지는 문제를 방지하기 위해 `/tmp`로 이동하는 방식을 권장합니다.
+Tailscale Taildrop으로 `MILESTONE_Core_1.10.0.zip`을 받은 경우에는 교체 대상 프로젝트 디렉터리 밖의 정상적으로 존재하는 디렉터리에서 실행합니다. 기존 프로젝트가 교체될 때 현재 셸 경로가 사라지는 문제를 방지하기 위해 `/tmp`로 이동하는 방식을 권장합니다.
 
 ```bash
-cd /tmp && milestone-release taildrop 1.9.9 "Raise custom media frame limit"
+cd /tmp && milestone-release taildrop 1.10.0 "Add live media streaming"
 ```
 
 Taildrop 모드는 ZIP을 라이브 프로젝트에 바로 덮어쓰지 않습니다. 별도 staging 디렉터리에서 구조·버전·Git 상태를 검사하고 테스트와 ESP32 릴리즈 빌드까지 성공한 뒤에만 프로젝트를 교체합니다. GitHub 게시 전 실패하면 기존 프로젝트를 자동 복구합니다. `--dry-run`은 테스트/빌드까지만 수행하고 로컬 프로젝트·Git·GitHub를 변경하지 않습니다. `--yes`를 사용하지 않는 기본 동작은 최종 게시 직전에 한 번 확인합니다.
@@ -267,10 +267,10 @@ Taildrop 모드는 ZIP을 라이브 프로젝트에 바로 덮어쓰지 않습�
 
 ```bash
 chmod +x tools/make-release.sh
-./tools/make-release.sh 1.9.9 "Raise custom media frame limit"
+./tools/make-release.sh 1.10.0 "Add live media streaming"
 ```
 
-기본 설명을 사용하려면 `./tools/make-release.sh 1.9.9`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
+기본 설명을 사용하려면 `./tools/make-release.sh 1.10.0`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
 
 다음 두 파일이 `release/`에 생성됩니다.
 
@@ -290,11 +290,11 @@ release/MILESTONE_Core.json
 일반적인 게시에는 위의 `milestone-release`를 사용합니다. 아래 수동 절차는 자동화 도구를 복구하거나 디버깅해야 할 때만 참고합니다.
 
 1. 저장소의 `Releases`에서 `Draft a new release`를 선택합니다.
-2. 버전과 동일한 태그를 만듭니다. 예: `v1.9.9`
-3. Release 제목을 `MILESTONE Core v1.9.9`로 지정합니다.
+2. 버전과 동일한 태그를 만듭니다. 예: `v1.10.0`
+3. Release 제목을 `MILESTONE Core v1.10.0`로 지정합니다.
 4. `release/MILESTONE_Core.bin`과 `release/MILESTONE_Core.json`을 첨부합니다.
 5. Pre-release가 아닌 최신 정식 Release로 게시합니다.
-6. 1.9.8이 설치된 기기에서 1.9.9 OTA 업데이트와 기존 설정·Wi-Fi·롤백 보호·진단 이력·커스텀 미디어 동작을 검증합니다.
+6. 1.9.9가 설치된 기기에서 1.10.0 OTA 업데이트와 기존 설정·Wi-Fi·롤백 보호·진단 이력·커스텀 미디어·실시간 스트리밍 동작을 검증합니다.
 
 두 파일의 이름은 모든 Release에서 정확히 같아야 합니다. 초안이나 Pre-release는 `latest` 업데이트 대상으로 사용하지 않습니다.
 
@@ -422,6 +422,18 @@ release/MILESTONE_Core.json
 - 요청 길이는 원본 남은 길이, `1024 / FPS`, 160 KiB 변환 결과 한도에 의해 자동 제한
 - 이론상 최대 길이는 5fps 204.8초, 8fps 128초, 10fps 102.4초이며 실제 영상은 압축 결과에 따라 160 KiB 한도에 먼저 도달할 수 있음
 - 포털에 프레임/시간/용량 제한 관계를 명시하고 레거시 300프레임·40초 제한이 다시 들어오지 않도록 계약 테스트 추가
+
+## v1.10.0 업데이트 안내
+
+- 설정 포털에 **실시간 스트리밍** 영역 추가
+- 휴대폰/PC의 로컬 동영상 또는 브라우저가 직접 읽을 수 있는 영상 URL을 128×128 1비트 프레임으로 실시간 변환
+- 스트림 프레임은 LittleFS에 저장하지 않고 PSRAM 기반 12프레임 링버퍼로만 처리해 1024프레임·160 KiB 저장형 미디어 제한 제거
+- 프레임 전송은 최대 4장을 한 HTTP multipart 배치로 묶어 요청 횟수를 줄이고 5/10/15/20fps 및 24fps 실험 모드 제공
+- 브라우저 송신 FPS·건너뛴 프레임과 기기 수신·표시·드롭·언더런·버퍼 상태를 포털에 실시간 표시
+- 기기가 일정 이상 뒤처지면 오래된 큐 프레임을 버려 누적 지연 대신 현재 영상 시간에 가깝게 유지
+- 포털 종료, 3초 이상 프레임 미수신, 온도 보호, 펌웨어 작업 진입 시 스트림 자동 종료
+- 저장형 미디어 기능과 MSM1 포맷은 그대로 유지하고 스트리밍 중에는 OTA/미디어 저장 변경과 상호 배제
+- YouTube 일반 페이지/iframe URL은 브라우저가 cross-origin 플레이어 픽셀을 직접 읽을 수 없어 직접 입력 대상으로 지원하지 않으며, 로컬 파일 또는 CORS 허용 직접 영상 URL을 사용
 
 ## v1.8.3 업데이트 안내
 
@@ -644,7 +656,7 @@ release/MILESTONE_Core.json
 - 기존 설정 스키마, 저장된 Wi-Fi, 여섯 가지 화면을 그대로 유지
 - 기기 세부정보 화면은 OTA 검증용 1.5.1에서 추가 예정
 
-정식 버전: `1.9.9`
+정식 버전: `1.10.0`
 
 
 ### Taildrop 원격 이력 조정

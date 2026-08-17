@@ -82,12 +82,16 @@ const documentListeners = new Map();
 const windowListeners = new Map();
 let mediaItems = [];
 let deleteMode = 'success';
+let streamDevice={active:false,session:424242,fps:20,queue:0,queue_capacity:12,batch_max:4,received:0,displayed:0,dropped:0,underruns:0};
+let lastStreamPushUrl='';
 const context = vm.createContext({
   console,
   Blob,
   File,
   TextEncoder,
   URLSearchParams,
+  FormData,
+  performance,
   Uint8Array,
   Uint8ClampedArray,
   Float32Array,
@@ -120,6 +124,26 @@ const context = vm.createContext({
       mediaItems=mediaItems.filter(item=>Number(item.id)!==id);
       return {ok:true,status:200,statusText:'OK',async text(){return JSON.stringify({ok:true,id,stage:'catalog-committed:file-removed'})}};
     }
+    if(textUrl.includes('/api/stream/start')){
+      streamDevice={...streamDevice,active:true,queue:0,received:0,displayed:0,dropped:0,underruns:0};
+      return {ok:true,status:200,statusText:'OK',async text(){return JSON.stringify(streamDevice)}};
+    }
+    if(textUrl.includes('/api/stream/push')){
+      lastStreamPushUrl=textUrl;
+      const q=new URLSearchParams(textUrl.split('?')[1]||'');
+      const count=Number(q.get('count')||0);
+      assert.strictEqual(Number(q.get('session')),streamDevice.session);
+      assert.ok(count>=1&&count<=4);
+      streamDevice.received+=count;
+      streamDevice.displayed+=count;
+      streamDevice.queue=0;
+      return {ok:true,status:200,statusText:'OK',async text(){return JSON.stringify(streamDevice)}};
+    }
+    if(textUrl.includes('/api/stream/stop')){
+      streamDevice.active=false;
+      streamDevice.queue=0;
+      return {ok:true,status:200,statusText:'OK',async text(){return JSON.stringify(streamDevice)}};
+    }
     return {
       ok: true,
       status: 200,
@@ -128,6 +152,7 @@ const context = vm.createContext({
         if (textUrl.includes('/api/config')) return JSON.stringify({saved_networks: []});
         if (textUrl.includes('/api/media/status')) return JSON.stringify({ready: true, media_limit_bytes: 200000, media_used_bytes: mediaItems.reduce((n,x)=>n+x.size,0), item_count:mediaItems.length,max_items:64,psram:true});
         if (textUrl.includes('/api/media/list')) return JSON.stringify({items: mediaItems});
+        if (textUrl.includes('/api/stream/status')) return JSON.stringify(streamDevice);
         if (textUrl.includes('/api/diagnostics')) return JSON.stringify({events: []});
         return '{}';
       }
@@ -223,7 +248,17 @@ const settle = () => new Promise(resolve => setImmediate(resolve));
   assert.match(get('media_action_status').textContent,/catalog-write-failed:file-remove-failed/);
   deleteMode='success';
 
-  console.log('Media picker and delete state-machine test passed');
+  run(`streamState.active=true;streamState.session=${streamDevice.session};streamState.seq=0;streamState.fps=20;streamState.sent=0;streamState.browserDropped=0;streamState.started=Date.now()-1000;streamState.lastStatsAt=Date.now()-100;streamState.lastStatsSent=0`);
+  await run('pushStreamBatch([new Uint8Array(2048),new Uint8Array(2048),new Uint8Array(2048),new Uint8Array(2048)])');
+  assert.match(lastStreamPushUrl,/\/api\/stream\/push\?session=424242&seq=1&count=4/);
+  assert.strictEqual(run('streamState.sent'),4);
+  assert.strictEqual(streamDevice.received,4);
+  assert.match(get('stream_status').textContent,/스트리밍 중/);
+  assert.match(get('stream_status').textContent,/버퍼 0\/12/);
+  assert.strictEqual(run('packStreamWork().length'),2048);
+  run('streamState.active=false');
+
+  console.log('Media picker, delete, and live stream state-machine test passed');
 })().catch(error => {
   console.error(error);
   process.exitCode = 1;

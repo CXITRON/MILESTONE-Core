@@ -1,6 +1,6 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v1.9.9
+> Current baseline: MILESTONE Core v1.10.0
 > Hardware: Waveshare ESP32-S3-Zero + SH1107 128×128 OLED
 > Repository: `CXITRON/MILESTONE-Core`
 
@@ -75,7 +75,7 @@ The `*.inc` runtime files are intentionally included into the sketch as one tran
 Firmware and persistent schema versions are separate concepts.
 
 ```cpp
-FIRMWARE_VERSION = "1.9.9"
+FIRMWARE_VERSION = "1.10.0"
 CONFIG_VERSION = 9
 ```
 
@@ -150,6 +150,8 @@ v1.9.8 fixes the remaining client-side delete activation path. Single-item delet
 
 v1.9.9 removes the browser-side 300-frame and 40-second conversion ceilings. The portal now uses the MSM1 format limit of 1024 frames directly; requested duration is bounded only by source length, 1024/fps, and the existing 160 KiB encoded-media limit. The UI states the theoretical frame-limited durations for 5/8/10 fps.
 
+v1.10.0 adds live media streaming without changing the stored MSM1 format. While the setup portal remains open, a phone or PC browser can decode a local video or a browser-readable direct media URL, convert each frame to the same 128x128 one-bit U8g2 page layout, and push bounded batches to a 12-frame runtime queue. The stream is never written to LittleFS, so the 1024-frame and 160 KiB stored-media limits do not apply. The portal offers 5/10/15/20 fps plus a 24 fps experimental mode, reports browser send rate and device queue/receive/display/drop/underrun counters, and stops automatically if the portal disappears, safety state changes, or frame delivery stalls. YouTube page/iframe URLs are intentionally rejected because the browser cannot directly sample pixels from the cross-origin embedded player.
+
 Media uses LittleFS with a runtime limit of `min(160 KiB, totalBytes - 16 KiB)`, at most 64 items, generated internal filenames, a streamed temporary upload, full size/CRC/frame validation, and A/B generation indexes. `LittleFS.begin(false)` is mandatory after initialization: a later mount failure disables only media and must never silently format user data. Explicit `REPAIR` and factory reset may format/delete media. OTA and media upload are mutually exclusive flash writers.
 
 The first MSM1 frame is a 2,048-byte raw U8g2 page buffer. Later frames use raw data or bounded XOR+RLE deltas. Runtime playback reads one frame at a time, prefers PSRAM, skips corrupt items, and yields to boot, portal, reset, OTA, and thermal safety screens. Media files survive OTA and rollback; v1.8.x ignores the filesystem.
@@ -169,7 +171,7 @@ v1.8.1 introduced `CoreLogic.h/.cpp` so pure logic can be compiled on the host w
 - diagnostic duplicate-suppression behavior and event classification
 - portal/API endpoint contract for diagnostics view/copy/clear
 - MSM1 header/CRC/duration validation and raw/XOR-RLE reconstruction
-- custom media portal routes, schema migration, factory-reset, and OTA exclusion contracts
+- custom media and live-stream portal routes, schema migration, factory-reset, and OTA exclusion contracts
 
 Run:
 
@@ -243,7 +245,7 @@ cd /tmp && milestone-release --dry-run taildrop X.Y.Z "short release note"
 
 Use `--yes` only when an unattended final publish is explicitly desired.
 
-## 8. Areas intentionally not refactored through v1.9.9
+## 8. Areas intentionally not refactored through v1.10.0
 
 The following broad refactors were deliberately rejected because their regression risk exceeded their immediate value:
 

@@ -197,6 +197,157 @@ void handleMediaList() {
   sendJson(200, json);
 }
 
+String mediaStreamStatusJson() {
+  String json = "{";
+  json.reserve(384);
+  json += "\"active\":" + String(mediaStreamActive ? "true" : "false") + ",";
+  json += "\"session\":" + String(mediaStreamSessionId) + ",";
+  json += "\"fps\":" + String(mediaStreamFps) + ",";
+  json += "\"queue\":" + String(mediaStreamQueueCount) + ",";
+  json += "\"queue_capacity\":" + String(MEDIA_STREAM_QUEUE_FRAMES) + ",";
+  json += "\"batch_max\":" + String(MEDIA_STREAM_MAX_BATCH_FRAMES) + ",";
+  json += "\"received\":" + String(mediaStreamReceivedFrames) + ",";
+  json += "\"displayed\":" + String(mediaStreamDisplayedFrames) + ",";
+  json += "\"dropped\":" + String(mediaStreamDroppedFrames) + ",";
+  json += "\"underruns\":" + String(mediaStreamUnderruns) + "}";
+  return json;
+}
+
+void handleMediaStreamStatus() {
+  if (!requireSetupApRequest()) return;
+  sendJson(200, mediaStreamStatusJson());
+}
+
+void handleMediaStreamStart() {
+  if (!authorizePortalRequest()) return;
+  if (mediaUploadActive || firmwareUpdateBusy()) {
+    return sendJson(409, "{\"error\":\"미디어 저장 또는 펌웨어 작업이 진행 중입니다.\"}");
+  }
+  if (thermalWarning || temperatureSensorFault || thermalSafeMode) {
+    return sendJson(409, "{\"error\":\"온도 보호 상태에서는 실시간 스트리밍을 시작할 수 없습니다.\"}");
+  }
+  uint32_t fps = 0;
+  if (!parseUintArg("fps", fps) || fps < MEDIA_STREAM_MIN_FPS || fps > MEDIA_STREAM_MAX_FPS) {
+    return sendJson(400, "{\"error\":\"스트리밍 FPS는 5~24 범위여야 합니다.\"}");
+  }
+  if (!startMediaStream(static_cast<uint16_t>(fps))) {
+    return sendJson(503, "{\"error\":\"스트리밍 프레임 버퍼를 확보하지 못했습니다. PSRAM 상태를 확인하세요.\"}");
+  }
+  portalStartedMs = millis();
+  wakeDisplay();
+  sendJson(200, mediaStreamStatusJson());
+}
+
+bool prepareMediaStreamUpload() {
+  if (!requestFromSetupAp() || !validToken()) {
+    mediaStreamUploadError = "스트리밍 세션이 유효하지 않습니다.";
+    return false;
+  }
+  if (!mediaStreamActive || !allocateMediaStreamBuffers()) {
+    mediaStreamUploadError = "실시간 스트리밍이 시작되지 않았습니다.";
+    return false;
+  }
+  if (thermalWarning || temperatureSensorFault || thermalSafeMode || firmwareUpdateBusy()) {
+    mediaStreamUploadError = "안전 상태가 바뀌어 스트리밍을 계속할 수 없습니다.";
+    return false;
+  }
+  uint32_t session = 0;
+  uint32_t frameCount = 0;
+  uint32_t batchSeq = 0;
+  if (!parseUintArg("session", session) || session != mediaStreamSessionId ||
+      !parseUintArg("count", frameCount) || frameCount == 0 ||
+      frameCount > MEDIA_STREAM_MAX_BATCH_FRAMES ||
+      !parseUintArg("seq", batchSeq) || batchSeq == 0) {
+    mediaStreamUploadError = "스트리밍 배치 정보가 잘못되었습니다.";
+    return false;
+  }
+  if (batchSeq <= mediaStreamLastBatchSeq) {
+    mediaStreamUploadError = "이미 처리했거나 순서가 뒤바뀐 스트리밍 배치입니다.";
+    return false;
+  }
+  if (frameCount > mediaStreamQueueFree()) {
+    mediaStreamUploadError = "기기 프레임 버퍼가 가득 찼습니다.";
+    return false;
+  }
+  mediaStreamUploadFrameCount = static_cast<uint8_t>(frameCount);
+  mediaStreamUploadExpectedBytes = static_cast<size_t>(frameCount) * MilestoneMedia::FRAME_BYTES;
+  mediaStreamUploadWrittenBytes = 0;
+  mediaStreamUploadBatchSeq = batchSeq;
+  mediaStreamUploadFailed = false;
+  mediaStreamUploadComplete = false;
+  mediaStreamUploadActive = true;
+  return true;
+}
+
+void handleMediaStreamPushData() {
+  HTTPUpload &upload = server.upload();
+  if (upload.status == UPLOAD_FILE_START) {
+    resetMediaStreamUploadState();
+    if (!prepareMediaStreamUpload()) mediaStreamUploadFailed = true;
+    return;
+  }
+  if (upload.status == UPLOAD_FILE_WRITE) {
+    if (!mediaStreamUploadActive || mediaStreamUploadFailed) return;
+    if (mediaStreamUploadWrittenBytes + upload.currentSize > mediaStreamUploadExpectedBytes) {
+      mediaStreamUploadFailed = true;
+      mediaStreamUploadError = "스트리밍 프레임 배치 크기가 예상보다 큽니다.";
+      return;
+    }
+    memcpy(mediaStreamUploadBuffer + mediaStreamUploadWrittenBytes, upload.buf, upload.currentSize);
+    mediaStreamUploadWrittenBytes += upload.currentSize;
+    return;
+  }
+  if (upload.status == UPLOAD_FILE_END) {
+    if (!mediaStreamUploadActive || mediaStreamUploadFailed ||
+        mediaStreamUploadWrittenBytes != mediaStreamUploadExpectedBytes ||
+        upload.totalSize != mediaStreamUploadExpectedBytes) {
+      mediaStreamUploadFailed = true;
+      if (mediaStreamUploadError.length() == 0) {
+        mediaStreamUploadError = "스트리밍 프레임 배치 길이가 올바르지 않습니다.";
+      }
+    } else {
+      mediaStreamUploadComplete = true;
+    }
+    mediaStreamUploadActive = false;
+    return;
+  }
+  if (upload.status == UPLOAD_FILE_ABORTED) {
+    mediaStreamUploadFailed = true;
+    mediaStreamUploadError = "스트리밍 프레임 전송이 중단되었습니다.";
+    mediaStreamUploadActive = false;
+  }
+}
+
+void handleMediaStreamPushComplete() {
+  if (!authorizePortalRequest()) {
+    resetMediaStreamUploadState();
+    return;
+  }
+  if (!mediaStreamUploadComplete || mediaStreamUploadFailed) {
+    const String error = mediaStreamUploadError.length() ? mediaStreamUploadError
+                                                         : "스트리밍 프레임을 받지 못했습니다.";
+    resetMediaStreamUploadState();
+    return sendJson(409, String("{\"error\":\"") + jsonEscape(error) + "\"}");
+  }
+  const uint8_t frameCount = mediaStreamUploadFrameCount;
+  const uint32_t batchSeq = mediaStreamUploadBatchSeq;
+  if (!enqueueMediaStreamFrames(mediaStreamUploadBuffer, frameCount)) {
+    resetMediaStreamUploadState();
+    return sendJson(409, "{\"error\":\"기기 프레임 버퍼에 배치를 넣지 못했습니다.\"}");
+  }
+  mediaStreamLastBatchSeq = batchSeq;
+  portalStartedMs = millis();
+  resetMediaStreamUploadState();
+  sendJson(200, mediaStreamStatusJson());
+}
+
+void handleMediaStreamStop() {
+  if (!authorizePortalRequest()) return;
+  stopMediaStream();
+  wakeDisplay();
+  sendJson(200, mediaStreamStatusJson());
+}
+
 bool prepareMediaUploadRequest() {
   if (!requestFromSetupAp() || !validToken()) {
     mediaUploadError = "업로드 세션이 유효하지 않습니다.";
@@ -873,6 +1024,10 @@ void registerPortalRoutes() {
   server.on("/api/media/delete", HTTP_POST, handleMediaDelete);
   server.on("/api/media/clear", HTTP_POST, handleMediaClear);
   server.on("/api/media/repair", HTTP_POST, handleMediaRepair);
+  server.on("/api/stream/status", HTTP_GET, handleMediaStreamStatus);
+  server.on("/api/stream/start", HTTP_POST, handleMediaStreamStart);
+  server.on("/api/stream/push", HTTP_POST, handleMediaStreamPushComplete, handleMediaStreamPushData);
+  server.on("/api/stream/stop", HTTP_POST, handleMediaStreamStop);
   server.on("/api/config", HTTP_GET, handleGetConfig);
   server.on("/api/wifi/scan", HTTP_GET, handleWifiScan);
   server.on("/api/config", HTTP_POST, handlePostConfig);

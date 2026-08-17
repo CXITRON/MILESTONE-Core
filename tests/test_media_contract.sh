@@ -19,7 +19,7 @@ reject() {
   fi
 }
 
-require 'FIRMWARE_VERSION\[\] = "1\.9\.9"' MILESTONE_Core.ino 'firmware version is not 1.9.9'
+require 'FIRMWARE_VERSION\[\] = "1\.10\.0"' MILESTONE_Core.ino 'firmware version is not 1.10.0'
 require 'CONFIG_VERSION = 9' MILESTONE_Core.ino 'config schema is not 9'
 require 'CUSTOM_MEDIA = 7' MILESTONE_Core.ino 'custom media view must preserve IDs 0-6'
 require 'CUSTOM_MEDIA = 8' MILESTONE_Core.ino 'custom media top mode must preserve IDs 0-7'
@@ -29,6 +29,26 @@ require 'config\.cycleOrder\[7\] = 7' CoreConfig.inc 'v8 cycle order migration m
 for route in status list upload update order delete clear repair; do
   require "server\.on\(\"/api/media/${route}\"" CorePortal.inc "missing media API route: $route"
 done
+for route in status start push stop; do
+  require "server\.on\(\"/api/stream/${route}\"" CorePortal.inc "missing live stream API route: $route"
+done
+require 'MEDIA_STREAM_QUEUE_FRAMES = 12' CoreMedia.inc 'live stream queue capacity changed unexpectedly'
+require 'MEDIA_STREAM_MAX_BATCH_FRAMES = 4' CoreMedia.inc 'live stream batch bound missing'
+require 'MEDIA_STREAM_MAX_FPS = 24' CoreMedia.inc '24 fps experimental ceiling missing'
+require 'mediaStreamQueue' CoreMedia.inc 'live stream PSRAM queue missing'
+require 'return mediaUploadActive \|\| mediaStreamActive \|\| mediaStreamUploadActive;' CoreMedia.inc 'live stream must block concurrent media mutations'
+require 'enqueueMediaStreamFrames' CoreMedia.inc 'live stream queue ingress missing'
+require 'renderMediaStreamFrameIfDue' CoreMedia.inc 'live stream renderer missing'
+require 'processMediaStreamState' CoreRuntime.inc 'live stream stale/safety processing missing'
+require 'id="stream_preview"' PortalPage.h 'live stream OLED preview missing'
+require 'id="stream_video" class="stream-source"' PortalPage.h 'stream decoder must stay renderable on mobile browsers'
+reject 'id="stream_video"[^>]*hidden' PortalPage.h 'hidden video elements may stall decoding on mobile browsers'
+require 'id="stream_file" type="file" accept="video/\*"' PortalPage.h 'live stream local video picker missing'
+require 'id="stream_url" type="url"' PortalPage.h 'live stream direct URL input missing'
+require '24 fps \(실험\)' PortalPage.h '24 fps experimental portal option missing'
+require 'function startLiveStream\(' PortalPage.h 'browser live stream start path missing'
+require 'function pushStreamBatch\(' PortalPage.h 'browser live stream batch sender missing'
+require 'YouTube 페이지 URL' PortalPage.h 'YouTube browser limitation must be explicit'
 require 'bool deleteMediaEntry\(uint32_t id, String &detail\)' CoreMedia.inc 'missing detailed single media delete implementation'
 python3 - <<'PY_DELETE_ORDER'
 from pathlib import Path

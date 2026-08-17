@@ -265,6 +265,7 @@ void startPortal() {
 
 void stopPortal() {
   if (!portalActive) return;
+  stopMediaStream();
   cancelPortalWifiScan();
   dnsServer.stop();
   server.stop();

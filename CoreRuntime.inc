@@ -386,6 +386,7 @@ void enterThermalSafeMode(bool sensorFault = false) {
   }
   stopMdns();
   if (portalActive) {
+    stopMediaStream();
     dnsServer.stop();
     server.stop();
     WiFi.softAPdisconnect(true);
@@ -675,6 +676,13 @@ void processDisplay() {
     }
     return;
   }
+  if (mediaStreamActive && !thermalSafeMode && !bootSplashActive() &&
+      !firmwareTransferActive() && updateState != UpdateState::ERROR_STATE &&
+      !(updateState == UpdateState::AVAILABLE && updatePromptVisible) && !resetConfirmation) {
+    if (elapsed(now, lastDisplayMs, DISPLAY_REFRESH_MS)) updateContrast();
+    if (renderMediaStreamFrameIfDue(now)) lastDisplayMs = now;
+    return;
+  }
   if (mediaDisplayOwnsFrame()) {
     if (elapsed(now, lastDisplayMs, DISPLAY_REFRESH_MS)) updateContrast();
     if (renderMediaFrameIfNeeded(now)) {
@@ -788,6 +796,7 @@ void loopFirmware() {
   processNetwork();
   processFirmwareUpdate();
   processDiagnostics();
+  processMediaStreamState(millis());
   processCycle();
   processDisplay();
   processLed();
