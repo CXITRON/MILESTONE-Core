@@ -68,6 +68,10 @@ void processNetwork() {
   if (portalActive) {
     dnsServer.processNextRequest();
     server.handleClient();
+    // A live stream is an active portal session. Keep the setup AP timeout
+    // from expiring during long playback even when individual browser requests
+    // are delayed by video decoding or OLED refresh work.
+    if (mediaStreamActive || mediaStreamUploadActive) portalStartedMs = now;
     if (portalClosingAfterSuccess && elapsed(now, portalSuccessMs, PORTAL_SUCCESS_HOLD_MS)) {
       stopPortal();
       return;

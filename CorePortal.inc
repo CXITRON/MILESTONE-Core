@@ -203,6 +203,7 @@ String mediaStreamStatusJson() {
   json += "\"active\":" + String(mediaStreamActive ? "true" : "false") + ",";
   json += "\"session\":" + String(mediaStreamSessionId) + ",";
   json += "\"fps\":" + String(mediaStreamFps) + ",";
+  json += "\"render_fps\":" + String(mediaStreamRenderFps) + ",";
   json += "\"queue\":" + String(mediaStreamQueueCount) + ",";
   json += "\"queue_capacity\":" + String(MEDIA_STREAM_QUEUE_FRAMES) + ",";
   json += "\"batch_max\":" + String(MEDIA_STREAM_MAX_BATCH_FRAMES) + ",";

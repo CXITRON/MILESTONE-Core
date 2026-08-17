@@ -19,7 +19,7 @@ reject() {
   fi
 }
 
-require 'FIRMWARE_VERSION\[\] = "1\.10\.0"' MILESTONE_Core.ino 'firmware version is not 1.10.0'
+require 'FIRMWARE_VERSION\[\] = "1\.10\.1"' MILESTONE_Core.ino 'firmware version is not 1.10.1'
 require 'CONFIG_VERSION = 9' MILESTONE_Core.ino 'config schema is not 9'
 require 'CUSTOM_MEDIA = 7' MILESTONE_Core.ino 'custom media view must preserve IDs 0-6'
 require 'CUSTOM_MEDIA = 8' MILESTONE_Core.ino 'custom media top mode must preserve IDs 0-7'
@@ -34,7 +34,11 @@ for route in status start push stop; do
 done
 require 'MEDIA_STREAM_QUEUE_FRAMES = 12' CoreMedia.inc 'live stream queue capacity changed unexpectedly'
 require 'MEDIA_STREAM_MAX_BATCH_FRAMES = 4' CoreMedia.inc 'live stream batch bound missing'
-require 'MEDIA_STREAM_MAX_FPS = 24' CoreMedia.inc '24 fps experimental ceiling missing'
+require 'MEDIA_STREAM_MAX_FPS = 24' CoreMedia.inc '24 fps source ceiling missing'
+require 'MEDIA_STREAM_MAX_RENDER_FPS = 15' CoreMedia.inc '400 kHz OLED streaming safety cap missing'
+require 'mediaStreamRenderFps = fps > MEDIA_STREAM_MAX_RENDER_FPS' CoreMedia.inc 'stream renderer must clamp physical OLED FPS'
+require 'render_fps' CorePortal.inc 'stream status must expose physical render FPS'
+require 'mediaStreamActive \|\| mediaStreamUploadActive.*portalStartedMs = now' CoreRuntime.inc 'active stream must keep setup portal alive'
 require 'mediaStreamQueue' CoreMedia.inc 'live stream PSRAM queue missing'
 require 'return mediaUploadActive \|\| mediaStreamActive \|\| mediaStreamUploadActive;' CoreMedia.inc 'live stream must block concurrent media mutations'
 require 'enqueueMediaStreamFrames' CoreMedia.inc 'live stream queue ingress missing'
@@ -45,7 +49,11 @@ require 'id="stream_video" class="stream-source"' PortalPage.h 'stream decoder m
 reject 'id="stream_video"[^>]*hidden' PortalPage.h 'hidden video elements may stall decoding on mobile browsers'
 require 'id="stream_file" type="file" accept="video/\*"' PortalPage.h 'live stream local video picker missing'
 require 'id="stream_url" type="url"' PortalPage.h 'live stream direct URL input missing'
-require '24 fps \(실험\)' PortalPage.h '24 fps experimental portal option missing'
+require '20 fps \(입력 · 최대 15fps 표시\)' PortalPage.h '20 fps source option must disclose OLED cap'
+require '24 fps \(입력 · 최대 15fps 표시\)' PortalPage.h '24 fps source option must disclose OLED cap'
+require '<option value="10">10 fps</option>' PortalPage.h '10 fps safe streaming default option missing'
+reject '<option value="20" selected>' PortalPage.h '20 fps must not remain the default on 400 kHz I2C'
+require '기기 표시.*renderFps' PortalPage.h 'portal stats must show actual device render FPS'
 require 'function startLiveStream\(' PortalPage.h 'browser live stream start path missing'
 require 'function pushStreamBatch\(' PortalPage.h 'browser live stream batch sender missing'
 require 'YouTube 페이지 URL' PortalPage.h 'YouTube browser limitation must be explicit'

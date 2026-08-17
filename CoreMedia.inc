@@ -27,7 +27,13 @@ constexpr uint8_t MEDIA_STREAM_QUEUE_FRAMES = 12;
 constexpr uint8_t MEDIA_STREAM_MAX_BATCH_FRAMES = 4;
 constexpr uint16_t MEDIA_STREAM_MIN_FPS = 5;
 constexpr uint16_t MEDIA_STREAM_MAX_FPS = 24;
-constexpr uint32_t MEDIA_STREAM_STALE_MS = 3000UL;
+// The SH1107 is connected over 400 kHz I2C. A full 128x128 one-bit frame is
+// 2048 bytes, so trying to physically refresh at 20-24 fps leaves almost no
+// application-loop time for the setup WebServer/DNS service. Accept higher
+// source rates for timestamp/drop behaviour, but cap physical OLED refreshes
+// while streaming so the setup AP remains responsive.
+constexpr uint16_t MEDIA_STREAM_MAX_RENDER_FPS = 15;
+constexpr uint32_t MEDIA_STREAM_STALE_MS = 5000UL;
 
 struct MediaEntry {
   uint32_t id = 0;
@@ -87,6 +93,7 @@ uint32_t mediaStreamDisplayedFrames = 0;
 uint32_t mediaStreamDroppedFrames = 0;
 uint32_t mediaStreamUnderruns = 0;
 uint16_t mediaStreamFps = 10;
+uint16_t mediaStreamRenderFps = 10;
 uint16_t mediaStreamFrameIntervalMs = 100;
 uint8_t mediaStreamQueueHead = 0;
 uint8_t mediaStreamQueueTail = 0;
@@ -766,7 +773,9 @@ bool startMediaStream(uint16_t fps) {
   closeMediaPlayback();
   stopMediaStream();
   mediaStreamFps = fps;
-  mediaStreamFrameIntervalMs = static_cast<uint16_t>((1000U + fps / 2U) / fps);
+  mediaStreamRenderFps = fps > MEDIA_STREAM_MAX_RENDER_FPS ? MEDIA_STREAM_MAX_RENDER_FPS : fps;
+  mediaStreamFrameIntervalMs = static_cast<uint16_t>(
+      (1000U + mediaStreamRenderFps / 2U) / mediaStreamRenderFps);
   mediaStreamSessionId = esp_random();
   if (mediaStreamSessionId == 0) mediaStreamSessionId = 1;
   mediaStreamLastPushMs = millis();
@@ -775,6 +784,10 @@ bool startMediaStream(uint16_t fps) {
   mediaStreamDroppedFrames = 0;
   mediaStreamUnderruns = 0;
   mediaStreamActive = true;
+  logLine(String("media stream started: source_fps=") + String(mediaStreamFps) +
+          ", render_fps=" + String(mediaStreamRenderFps) +
+          ", heap=" + String(ESP.getFreeHeap()) +
+          ", psram=" + String(ESP.getFreePsram()));
   return true;
 }
 
