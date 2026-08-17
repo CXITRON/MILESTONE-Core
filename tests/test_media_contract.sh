@@ -19,7 +19,7 @@ reject() {
   fi
 }
 
-require 'FIRMWARE_VERSION\[\] = "1\.9\.4"' MILESTONE_Core.ino 'firmware version is not 1.9.4'
+require 'FIRMWARE_VERSION\[\] = "1\.9\.5"' MILESTONE_Core.ino 'firmware version is not 1.9.5'
 require 'CONFIG_VERSION = 9' MILESTONE_Core.ino 'config schema is not 9'
 require 'CUSTOM_MEDIA = 7' MILESTONE_Core.ino 'custom media view must preserve IDs 0-6'
 require 'CUSTOM_MEDIA = 8' MILESTONE_Core.ino 'custom media top mode must preserve IDs 0-7'
@@ -50,8 +50,11 @@ require 'function selectMediaFile\(' PortalPage.h 'selected-file state handling 
 require "addEventListener\('input',handleMediaInput\)" PortalPage.h 'file input event handling is missing'
 require "addEventListener\('change',handleMediaInput\)" PortalPage.h 'file change event handling is missing'
 require 'function pollMediaPick\(' PortalPage.h 'file handoff event-loss fallback is missing'
-require '180초 동안 영상 파일이 브라우저에 전달되지 않았습니다' PortalPage.h 'file-provider timeout diagnosis is missing'
-require 'post-cancel-watch' PortalPage.h 'empty cancel must retain the delayed handoff watchdog'
+require '180초 동안 파일이 브라우저에 전달되지 않았습니다' PortalPage.h 'file-provider timeout diagnosis is missing'
+require 'provider-no-file' PortalPage.h 'empty cancel must be diagnosed as a provider no-file result'
+require '모바일 데이터 또는 인터넷' PortalPage.h 'iCloud/mobile-data recovery guidance is missing'
+require "phase:'파일 선택 중'" PortalPage.h 'explicit media phase tracking is missing'
+reject 'post-cancel-watch' PortalPage.h 'empty cancel must not leave the user waiting after the provider returned files=0'
 require 'function probeMediaFile\(' PortalPage.h 'selected File readability probe is missing'
 require 'function handleMediaDrop\(' PortalPage.h 'drag-and-drop file handling is missing'
 require 'function openVideoFile\(' PortalPage.h 'bounded video initialization is missing'

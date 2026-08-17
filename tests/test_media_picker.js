@@ -149,13 +149,12 @@ const settle = () => new Promise(resolve => setImmediate(resolve));
 
   run("beginMediaPick($('media_video_file'),'사진 앱에서 동영상 선택')");
   video.dispatch('cancel');
-  assert.strictEqual(run('mediaPick.active'), true);
-  assert.match(get('media_trace').textContent, /post-cancel-watch/);
-  assert.match(get('media_info').textContent, /후속 파일 전달 감시 중/);
-  video.files = [new File([new Uint8Array([9])], 'after-cancel.mp4', {type: 'video/mp4'})];
-  run('pollMediaPick()');
-  await settle();
-  assert.strictEqual(run('selectedMediaFile.name'), 'after-cancel.mp4');
+  assert.strictEqual(run('mediaPick.active'), false);
+  assert.strictEqual(run('mediaPick.phase'), '파일 전달 실패');
+  assert.match(get('media_trace').textContent, /provider-no-file/);
+  assert.match(get('media_trace').textContent, /현재 단계: 파일 전달 실패/);
+  assert.match(get('media_info').textContent, /모바일 데이터 또는 인터넷/);
+  assert.match(get('media_info').textContent, /재생·다운로드/);
 
   run("beginMediaPick($('media_video_file'),'사진 앱에서 동영상 선택')");
   video.files = [new File([new Uint8Array([4, 5])], 'eventless.mp4', {type: 'video/mp4'})];
@@ -167,10 +166,11 @@ const settle = () => new Promise(resolve => setImmediate(resolve));
   run("beginMediaPick($('media_video_file'),'사진 앱에서 동영상 선택'); mediaPick.started=Date.now()-181000; pollMediaPick()");
   assert.strictEqual(run('mediaPick.active'), false);
   assert.match(get('media_info').textContent, /180초 동안/);
+  assert.strictEqual(run('mediaPick.phase'), '파일 전달 실패');
   assert.match(get('media_trace').textContent, /timeout/);
 
   run("beginMediaPick($('media_video_file'),'사진 앱에서 동영상 선택'); convertMedia()");
-  assert.match(get('media_info').textContent, /파일 전달 대기 중/);
+  assert.match(get('media_info').textContent, /파일 선택 중/);
 
   console.log('Media picker state-machine test passed');
 })().catch(error => {
