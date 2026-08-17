@@ -19,7 +19,7 @@ reject() {
   fi
 }
 
-require 'FIRMWARE_VERSION\[\] = "1\.9\.8"' MILESTONE_Core.ino 'firmware version is not 1.9.8'
+require 'FIRMWARE_VERSION\[\] = "1\.9\.9"' MILESTONE_Core.ino 'firmware version is not 1.9.9'
 require 'CONFIG_VERSION = 9' MILESTONE_Core.ino 'config schema is not 9'
 require 'CUSTOM_MEDIA = 7' MILESTONE_Core.ino 'custom media view must preserve IDs 0-6'
 require 'CUSTOM_MEDIA = 8' MILESTONE_Core.ino 'custom media top mode must preserve IDs 0-7'
@@ -80,6 +80,12 @@ require 'function openVideoFile\(' PortalPage.h 'bounded video initialization is
 require 'function waitForVideo\(' PortalPage.h 'video load timeout handling is missing'
 require 'buildMsm\(' PortalPage.h 'MSM1 browser encoder is missing'
 require 'x\+\(y>>3\)\*128' PortalPage.h 'U8g2 page-major packing contract is missing'
+require 'const MEDIA_MAX_FRAMES=1024' PortalPage.h 'browser converter must use the MSM1 1024-frame ceiling'
+require 'MEDIA_MAX_FRAMES/fps' PortalPage.h 'video duration must be bounded by the 1024-frame ceiling'
+reject 'Math\.min\(300' PortalPage.h 'legacy 300-frame conversion ceiling must be removed'
+reject 'frames\.length<300' PortalPage.h 'legacy 300-frame GIF decode ceiling must be removed'
+reject 'id="media_duration"[^>]*max="40"' PortalPage.h 'legacy 40-second media duration ceiling must be removed'
+reject 'Math\.min\(40,Math\.max\(1,Number\(val\('media_duration'\)' PortalPage.h 'legacy 40-second JS clamp must be removed'
 
 if command -v node >/dev/null 2>&1; then
   awk '/<\/main><script>/{p=1; sub(/^.*<\/main><script>/,"")} p{if(/<\/script><\/body>/){sub(/<\/script><\/body>.*$/,""); print; exit} print}' \

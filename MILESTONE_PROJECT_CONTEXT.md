@@ -1,6 +1,6 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v1.9.8
+> Current baseline: MILESTONE Core v1.9.9
 > Hardware: Waveshare ESP32-S3-Zero + SH1107 128×128 OLED
 > Repository: `CXITRON/MILESTONE-Core`
 
@@ -75,7 +75,7 @@ The `*.inc` runtime files are intentionally included into the sketch as one tran
 Firmware and persistent schema versions are separate concepts.
 
 ```cpp
-FIRMWARE_VERSION = "1.9.8"
+FIRMWARE_VERSION = "1.9.9"
 CONFIG_VERSION = 9
 ```
 
@@ -147,6 +147,8 @@ v1.9.6 attempted to harden single-item deletion by closing playback before catal
 v1.9.7 hardened the server-side media delete transaction and added post-delete list verification, but its browser regression test invoked the delete function directly instead of exercising the rendered delete button. That left a client-side activation failure undetected on the real portal.
 
 v1.9.8 fixes the remaining client-side delete activation path. Single-item deletion no longer depends on a modal confirm() call or a per-button onclick closure: the media list uses delegated click handling, the first tap immediately arms an 8-second confirmation state, and a second tap sends the delete request. Dynamic media buttons are explicit type=button controls wired through addEventListener. The v1.9.7 server-side catalog/file deletion recovery and post-delete list verification remain in place.
+
+v1.9.9 removes the browser-side 300-frame and 40-second conversion ceilings. The portal now uses the MSM1 format limit of 1024 frames directly; requested duration is bounded only by source length, 1024/fps, and the existing 160 KiB encoded-media limit. The UI states the theoretical frame-limited durations for 5/8/10 fps.
 
 Media uses LittleFS with a runtime limit of `min(160 KiB, totalBytes - 16 KiB)`, at most 64 items, generated internal filenames, a streamed temporary upload, full size/CRC/frame validation, and A/B generation indexes. `LittleFS.begin(false)` is mandatory after initialization: a later mount failure disables only media and must never silently format user data. Explicit `REPAIR` and factory reset may format/delete media. OTA and media upload are mutually exclusive flash writers.
 
@@ -241,7 +243,7 @@ cd /tmp && milestone-release --dry-run taildrop X.Y.Z "short release note"
 
 Use `--yes` only when an unattended final publish is explicitly desired.
 
-## 8. Areas intentionally not refactored through v1.9.8
+## 8. Areas intentionally not refactored through v1.9.9
 
 The following broad refactors were deliberately rejected because their regression risk exceeded their immediate value:
 
