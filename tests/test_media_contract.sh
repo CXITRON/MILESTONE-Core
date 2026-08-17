@@ -19,7 +19,7 @@ reject() {
   fi
 }
 
-require 'FIRMWARE_VERSION\[\] = "1\.9\.2"' MILESTONE_Core.ino 'firmware version is not 1.9.2'
+require 'FIRMWARE_VERSION\[\] = "1\.9\.3"' MILESTONE_Core.ino 'firmware version is not 1.9.3'
 require 'CONFIG_VERSION = 9' MILESTONE_Core.ino 'config schema is not 9'
 require 'CUSTOM_MEDIA = 7' MILESTONE_Core.ino 'custom media view must preserve IDs 0-6'
 require 'CUSTOM_MEDIA = 8' MILESTONE_Core.ino 'custom media top mode must preserve IDs 0-7'
@@ -39,11 +39,19 @@ require 'mediaTransferBusy\(\)' CorePortal.inc 'portal update API must respect m
 
 require 'id="media_preview"' PortalPage.h 'OLED media preview is missing'
 require 'decodeGif\(' PortalPage.h 'browser GIF decoder is missing'
-require 'id="media_file" type="file"' PortalPage.h 'unfiltered media file chooser is missing'
-reject 'id="media_file"[^>]*accept=' PortalPage.h 'media chooser must not apply a native accept filter'
+require 'id="media_image_file" type="file" accept="image/\*"' PortalPage.h 'dedicated photo chooser is missing'
+require 'id="media_video_file" type="file" accept="video/\*"' PortalPage.h 'dedicated native video chooser is missing'
+require 'id="media_any_file" type="file"' PortalPage.h 'unrestricted Files-provider fallback is missing'
+reject 'id="media_any_file"[^>]*accept=' PortalPage.h 'Files-provider fallback must not apply a native accept filter'
 require 'id="media_drop"' PortalPage.h 'drag-and-drop media fallback is missing'
+require 'id="media_trace"' PortalPage.h 'copyable media chooser diagnostics are missing'
 require 'function mediaKind\(' PortalPage.h 'MIME/extension media detection is missing'
 require 'function selectMediaFile\(' PortalPage.h 'selected-file state handling is missing'
+require "addEventListener\('input',handleMediaInput\)" PortalPage.h 'file input event handling is missing'
+require "addEventListener\('change',handleMediaInput\)" PortalPage.h 'file change event handling is missing'
+require 'function pollMediaPick\(' PortalPage.h 'file handoff event-loss fallback is missing'
+require '180초 동안 영상 파일이 브라우저에 전달되지 않았습니다' PortalPage.h 'file-provider timeout diagnosis is missing'
+require 'function probeMediaFile\(' PortalPage.h 'selected File readability probe is missing'
 require 'function handleMediaDrop\(' PortalPage.h 'drag-and-drop file handling is missing'
 require 'function openVideoFile\(' PortalPage.h 'bounded video initialization is missing'
 require 'function waitForVideo\(' PortalPage.h 'video load timeout handling is missing'

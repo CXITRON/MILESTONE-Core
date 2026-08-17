@@ -48,4 +48,5 @@ trap cleanup EXIT
 bash "$project_dir/tests/test_release_manifest.sh"
 bash "$project_dir/tests/test_diagnostics_contract.sh"
 bash "$project_dir/tests/test_media_contract.sh"
+node "$project_dir/tests/test_media_picker.js" "$project_dir/PortalPage.h"
 bash "$project_dir/tests/test_release_reconcile.sh"
