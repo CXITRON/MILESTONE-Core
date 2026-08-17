@@ -28,6 +28,7 @@ class MockElement {
     this._value = '';
     this.attributes = new Map();
     this.dataset = {};
+    this.isConnected = true;
   }
   get value() { return this._value; }
   set value(value) {
@@ -40,8 +41,13 @@ class MockElement {
     this.listeners.set(type, handlers);
   }
   removeEventListener() {}
-  dispatch(type) {
-    for (const handler of this.listeners.get(type) || []) handler({type, currentTarget: this});
+  dispatch(type, event = {}) {
+    const e = Object.assign({type, currentTarget: this, target: this, preventDefault() {}}, event);
+    for (const handler of this.listeners.get(type) || []) handler(e);
+  }
+  closest(selector) {
+    if (selector === 'button[data-media-action]' && this.dataset.mediaAction) return this;
+    return null;
   }
   getAttribute(name) { return this.attributes.get(name) || ''; }
   setAttribute(name, value) { this.attributes.set(name, String(value)); }
@@ -187,7 +193,15 @@ const settle = () => new Promise(resolve => setImmediate(resolve));
 
 
   mediaItems=[{id:1234567890,name:'삭제시험',size:4096,frames:1,duration_ms:1000,display_seconds:8,animated:false,loop:false,enabled:true}];
-  await run("deleteMedia(1234567890,'삭제시험')");
+  const deleteButton=new MockElement('delete-button');
+  deleteButton.dataset.mediaAction='delete';
+  deleteButton.dataset.mediaId='1234567890';
+  deleteButton.dataset.mediaName='삭제시험';
+  get('media_list').dispatch('click',{target:deleteButton});
+  assert.match(get('media_action_status').textContent,/삭제 확인/);
+  assert.strictEqual(deleteButton.textContent,'다시 눌러 삭제');
+  get('media_list').dispatch('click',{target:deleteButton});
+  await settle();
   await settle();
   assert.strictEqual(mediaItems.length,0);
   assert.match(get('media_action_status').textContent,/삭제 완료/);
@@ -195,7 +209,13 @@ const settle = () => new Promise(resolve => setImmediate(resolve));
 
   mediaItems=[{id:777,name:'실패시험',size:4096,frames:1,duration_ms:1000,display_seconds:8,animated:false,loop:false,enabled:true}];
   deleteMode='failure';
-  await run("deleteMedia(777,'실패시험')");
+  const failButton=new MockElement('fail-delete-button');
+  failButton.dataset.mediaAction='delete';
+  failButton.dataset.mediaId='777';
+  failButton.dataset.mediaName='실패시험';
+  get('media_list').dispatch('click',{target:failButton});
+  assert.match(get('media_action_status').textContent,/삭제 확인/);
+  get('media_list').dispatch('click',{target:failButton});
   await settle();
   assert.strictEqual(mediaItems.length,1);
   assert.match(get('media_action_status').textContent,/삭제 실패/);

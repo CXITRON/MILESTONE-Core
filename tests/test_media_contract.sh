@@ -19,7 +19,7 @@ reject() {
   fi
 }
 
-require 'FIRMWARE_VERSION\[\] = "1\.9\.7"' MILESTONE_Core.ino 'firmware version is not 1.9.7'
+require 'FIRMWARE_VERSION\[\] = "1\.9\.8"' MILESTONE_Core.ino 'firmware version is not 1.9.8'
 require 'CONFIG_VERSION = 9' MILESTONE_Core.ino 'config schema is not 9'
 require 'CUSTOM_MEDIA = 7' MILESTONE_Core.ino 'custom media view must preserve IDs 0-6'
 require 'CUSTOM_MEDIA = 8' MILESTONE_Core.ino 'custom media top mode must preserve IDs 0-7'
@@ -44,6 +44,10 @@ PY_DELETE_ORDER
 require 'media_action_status' PortalPage.h 'visible media action status missing'
 require '목록 재확인 중' PortalPage.h 'delete response verification feedback missing'
 require '성공 응답 후에도 ID' PortalPage.h 'delete must verify item disappearance after success response'
+require "media_list.*addEventListener\('click'" PortalPage.h 'media delete must use delegated click handling'
+require "data-media-action" PortalPage.h 'media delete button action marker missing'
+require '다시 눌러 삭제' PortalPage.h 'two-tap delete confirmation missing'
+reject 'deleteMedia\(id,name\).*confirm' PortalPage.h 'single media delete must not depend on confirm dialog'
 require 'MEDIA_UPLOAD_TEMP' CoreMedia.inc 'transactional upload temp file is missing'
 require 'MEDIA_INDEX_A' CoreMedia.inc 'A media index is missing'
 require 'MEDIA_INDEX_B' CoreMedia.inc 'B media index is missing'
