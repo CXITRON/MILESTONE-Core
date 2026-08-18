@@ -496,6 +496,25 @@ prepare_local_mode() {
   validate_source_version "$PROJECT_DIR"
 }
 
+
+ensure_clean_worktree_or_normalize_modes() {
+  local repo=$1
+
+  if [[ -z $(git -C "$repo" status --porcelain) ]]; then
+    return 0
+  fi
+
+  # Some external filesystems (for example exFAT) expose every extracted file
+  # as executable. If the tracked contents are otherwise identical, ignore only
+  # those mode-bit differences and persist that repository-local policy.
+  if [[ -z $(git -C "$repo" -c core.fileMode=false status --porcelain) ]]; then
+    git -C "$repo" config core.fileMode false
+    return 0
+  fi
+
+  return 1
+}
+
 prepare_taildrop_mode() {
   if [[ -z $INPUT_ZIP ]]; then
     require_command tailscale
@@ -554,8 +573,8 @@ prepare_taildrop_mode() {
   validate_project_root "$incoming"
   validate_source_version "$incoming"
 
-  if [[ -n $(git -C "$incoming" status --porcelain) ]]; then
-    git -C "$incoming" status --short >&2
+  if ! ensure_clean_worktree_or_normalize_modes "$incoming"; then
+    git -C "$incoming" -c core.fileMode=false status --short >&2
     die "받은 프로젝트 Git 작업 트리가 clean 상태가 아닙니다."
   fi
 

@@ -12,6 +12,7 @@ trap cleanup EXIT
 # would intentionally proceed into GitHub authentication and the firmware build.
 sed -n '/^source_version_at_ref()/,/^}/p' "$ROOT_DIR/tools/milestone-release" > "$TEST_DIR/helpers.sh"
 sed -n '/^find_taildrop_version_anchor()/,/^}/p' "$ROOT_DIR/tools/milestone-release" >> "$TEST_DIR/helpers.sh"
+sed -n '/^ensure_clean_worktree_or_normalize_modes()/,/^}/p' "$ROOT_DIR/tools/milestone-release" >> "$TEST_DIR/helpers.sh"
 # shellcheck source=/dev/null
 source "$TEST_DIR/helpers.sh"
 
@@ -98,3 +99,26 @@ version_anchor=$(find_taildrop_version_anchor 1.10.5 v1.10.3 remote-match)
 [[ $version_anchor != "$local_only_same_version" ]]
 
 printf 'Taildrop exact-tree anchor selection test passed\n'
+
+# External filesystems can expose all extracted files as executable. The
+# Taildrop validator must ignore mode-only dirtiness without ignoring content
+# changes.
+repo3="$TEST_DIR/repo-mode-only"
+git init -q -b main "$repo3"
+git -C "$repo3" config user.name CXITRON
+git -C "$repo3" config user.email cxitron@proton.me
+printf '%s\n' 'mode test' > "$repo3/README.md"
+git -C "$repo3" add README.md
+git -C "$repo3" commit -q -m 'test: mode baseline'
+chmod +x "$repo3/README.md"
+[[ -n $(git -C "$repo3" status --porcelain) ]]
+ensure_clean_worktree_or_normalize_modes "$repo3"
+[[ $(git -C "$repo3" config --get core.fileMode) == false ]]
+[[ -z $(git -C "$repo3" status --porcelain) ]]
+printf '%s\n' 'content change' >> "$repo3/README.md"
+if ensure_clean_worktree_or_normalize_modes "$repo3"; then
+  printf 'mode normalization accepted real content changes\n' >&2
+  exit 1
+fi
+
+printf 'Taildrop filesystem mode normalization test passed\n'
