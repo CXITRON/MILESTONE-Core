@@ -25,8 +25,8 @@ constexpr char MEDIA_UPLOAD_TEMP[] = "/media/upload.tmp";
 // PSRAM ring and flushes them to the SH1107. No live frame is written to flash.
 constexpr uint8_t MEDIA_STREAM_QUEUE_FRAMES = 32;
 constexpr uint8_t MEDIA_STREAM_MAX_PUSH_FRAMES = 8;
-constexpr uint8_t MEDIA_STREAM_PREBUFFER_FRAMES = 8;
-constexpr uint8_t MEDIA_STREAM_REBUFFER_FRAMES = 4;
+constexpr uint8_t MEDIA_STREAM_PREBUFFER_FRAMES = 20;
+constexpr uint8_t MEDIA_STREAM_REBUFFER_FRAMES = 12;
 constexpr uint16_t MEDIA_STREAM_MIN_FPS = 5;
 constexpr uint16_t MEDIA_STREAM_MAX_FPS = 24;
 constexpr uint32_t MEDIA_STREAM_STALE_MS = 5000UL;

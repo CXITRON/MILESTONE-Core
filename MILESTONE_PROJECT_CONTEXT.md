@@ -1,6 +1,6 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v1.10.6
+> Current baseline: MILESTONE Core v1.10.7
 > Hardware: Waveshare ESP32-S3-Zero + SH1107 128×128 OLED
 > Repository: `CXITRON/MILESTONE-Core`
 
@@ -78,7 +78,7 @@ The `*.inc` runtime files are intentionally included into the sketch as one tran
 Firmware and persistent schema versions are separate concepts.
 
 ```cpp
-FIRMWARE_VERSION = "1.10.6"
+FIRMWARE_VERSION = "1.10.7"
 CONFIG_VERSION = 9
 ```
 
@@ -116,7 +116,7 @@ Application-level rollback cannot recover a candidate that fails before the roll
 
 `CoreRuntime.inc` coordinates the main loop, BOOT-button behavior, screen cycling, temperature protection, and high-level state progression. Preserve cooperative/early-return semantics when modifying state processing.
 
-### Live streaming (v1.10.5+, raw request metadata fixed in v1.10.6)
+### Live streaming (v1.10.5+, sender pacing revised in v1.10.7)
 
 Live streaming is intentionally isolated from the normal cooperative runtime. `/stream` serves a dedicated lightweight browser page. The browser pre-converts the full source into 128×128 one-bit frames before playback, then sends paced `application/octet-stream` bodies. The ESP32 stores only a bounded PSRAM ring; live frames are never written to LittleFS.
 
@@ -274,7 +274,7 @@ cd /tmp && milestone-release --dry-run taildrop X.Y.Z "short release note"
 
 Use `--yes` only when an unattended final publish is explicitly desired.
 
-## 8. Areas intentionally not refactored through v1.10.6
+## 8. Areas intentionally not refactored through v1.10.7
 
 The following broad refactors were deliberately rejected because their regression risk exceeded their immediate value:
 
@@ -313,4 +313,4 @@ The agent should select the mode according to whether the source was edited dire
 For recovery or automation, `milestone-release --zip /path/to/MILESTONE_Core_X.Y.Z.zip taildrop X.Y.Z "notes"` runs the same staging/reconciliation/release pipeline without fetching another Taildrop file. Normal user-facing usage remains `milestone-release taildrop ...`.
 
 
-v1.10.3 was the last incremental live-stream implementation. v1.10.5 replaces that hot path: browser-side full preconversion, a dedicated `/stream` page, raw binary transport, a 32-frame PSRAM queue, isolated STREAM_MODE execution, partial SH1107 updates, stream-specific thermal policy, and explicit resource/sequence recovery. v1.10.6 fixes the Arduino-ESP32 3.3.11 raw `WebServer` metadata incompatibility by carrying session/sequence/frame-count in explicitly collected headers instead of URL query arguments. Do not reintroduce the v1.10.3 multipart/burst sender or query-based raw metadata into the live path.
+v1.10.3 was the last incremental live-stream implementation. v1.10.5 replaces that hot path: browser-side full preconversion, a dedicated `/stream` page, raw binary transport, a 32-frame PSRAM queue, isolated STREAM_MODE execution, partial SH1107 updates, stream-specific thermal policy, and explicit resource/sequence recovery. v1.10.6 fixes the Arduino-ESP32 3.3.11 raw `WebServer` metadata incompatibility by carrying session/sequence/frame-count in explicitly collected headers instead of URL query arguments. v1.10.7 then removes the two-frame ACK-locked sender cadence: the browser fills 20 frames before playback, refills when the queue falls to 12, and drives it back toward 22–24 frames with batches of up to 8 while the ESP32 remains the sole playback clock. Do not reintroduce the v1.10.3 multipart/burst sender, query-based raw metadata, or a tiny browser lead buffer into the live path.
