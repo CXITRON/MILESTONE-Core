@@ -7,7 +7,7 @@ The source code is always the final authority when documentation and implementat
 ## 1. Project baseline
 
 - Product: MILESTONE Core
-- Current firmware baseline: `1.9.5`
+- Current firmware baseline: `1.10.6`
 - Persistent config schema: `9`
 - Hardware: Waveshare ESP32-S3-Zero + SH1107 128×128 OLED
 - Main branch: `main`
@@ -67,7 +67,9 @@ The installer copies the command to `~/.local/bin/milestone-release`.
 - `FIRMWARE_VERSION` exactly matches the requested version
 - project is the expected `CXITRON/MILESTONE-Core` repository on `main`
 - local Git identity is `CXITRON <cxitron@proton.me>`
-- host regression tests pass
+- host regression tests pass, including documentation/version synchronization checks
+- `AGENTS.md` and `MILESTONE_PROJECT_CONTEXT.md` baseline versions match `FIRMWARE_VERSION`
+- `README.md` contains the current version entry and keeps version history in newest-to-oldest semantic-version order
 - the fixed Arduino release build passes
 - generated BIN/manifest exist and version/size/SHA-256 agree
 - new commits covered by the current commit-hygiene policy use the expected Author and Committer identity
@@ -85,6 +87,19 @@ Use minor releases (`1.8.x` → `1.9.0`) for broad primary-product capabilities,
 Do not increment `CONFIG_VERSION` unless the persistent NVS schema actually changes and a migration path is implemented.
 
 A tooling/documentation-only commit that does not change the firmware binary does not require a firmware version bump by itself.
+
+### Documentation synchronization
+
+Documentation is part of every firmware release, not an optional follow-up. Before releasing a new firmware version:
+
+- update the baseline version in `AGENTS.md` and `MILESTONE_PROJECT_CONTEXT.md`
+- update user-facing current behavior and the implementation scope in `README.md`
+- add exactly one `## vX.Y.Z 업데이트 안내` entry for the firmware version
+- keep README version entries sorted newest-to-oldest by semantic version; intentional skipped versions do not require placeholder entries
+- distinguish stored MSM1 media limitations from isolated live-streaming behavior so one mode is not documented as the other
+- run `./tools/test-core.sh`; `tests/test_docs_contract.sh` must fail the release if these invariants drift
+
+A documentation-only correction that does not change `FIRMWARE_VERSION` may be committed without creating a new firmware release.
 
 ## 5. High-risk areas
 
@@ -107,7 +122,7 @@ Preserve working transaction/state-machine ordering unless the task specifically
 
 Custom media is optional. A mount, allocation, validation, or playback failure must disable or skip media without blocking boot validation, time display, Wi-Fi, diagnostics, rollback, or OTA. Never change `LittleFS.begin(false)` into automatic format-on-failure; formatting is allowed only during first initialization or an explicit user-confirmed repair.
 
-Live streaming is isolated in v1.10.5. Do not move the `/stream` sender back into the general portal hot path or reintroduce multipart/FormData for live frames. While `mediaStreamActive` is true, the dedicated stream loop must return before normal OTA, diagnostics, cycle, display, LED, NTP/reconnect scheduling, and stored-media work. Live frame storage belongs in PSRAM; the raw binary transport must not write frames to LittleFS/NVS. STREAM_MODE must pin the setup AP, retain BOOT/thermal/resource safety, stop at the stream-specific 80°C limit, and restore normal runtime only on exit.
+Live streaming is isolated in v1.10.5 and the raw-request metadata contract is fixed in v1.10.6. Do not move the `/stream` sender back into the general portal hot path, reintroduce multipart/FormData for live frames, or put raw session/sequence/count metadata back into URL query arguments; Arduino-ESP32 3.3.11 raw-body callbacks require those values to be explicitly collected as request headers. While `mediaStreamActive` is true, the dedicated stream loop must return before normal OTA, diagnostics, cycle, display, LED, NTP/reconnect scheduling, and stored-media work. Live frame storage belongs in PSRAM; the raw binary transport must not write frames to LittleFS/NVS. STREAM_MODE must pin the setup AP, retain BOOT/thermal/resource safety, stop at the stream-specific 80°C limit, and restore normal runtime only on exit.
 
 ## 6. Testing policy
 

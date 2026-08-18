@@ -127,6 +127,7 @@ void handleDiagnosticsClear() {
 }
 
 bool parseUintArg(const char *name, uint32_t &value);
+bool parseUintHeader(const char *name, uint32_t &value);
 bool parseBoolArg(const char *name, bool &value);
 
 void resetMediaUploadState(bool removeTemporary) {
@@ -298,15 +299,23 @@ void handleMediaStreamPushRaw() {
       mediaStreamRawError = "stream-inactive";
       return;
     }
+    // Arduino-ESP32 WebServer 3.3.11 does not parse URL query arguments on
+    // routes that use the raw-body callback. Stream metadata therefore travels
+    // in explicitly collected headers while the request body stays frame-only.
     uint32_t session = 0, seq = 0, count = 0;
-    if (!parseUintArg("session", session) || !parseUintArg("seq", seq) ||
-        !parseUintArg("count", count) || count > MEDIA_STREAM_MAX_PUSH_FRAMES ||
-        !beginMediaStreamRawWrite(session, seq, static_cast<uint8_t>(count))) {
-      if (!mediaStreamRawFailed) {
-        mediaStreamRawFailed = true;
-        mediaStreamRawError = "invalid-request";
-      }
+    if (!parseUintHeader("X-MILESTONE-Session", session) ||
+        !parseUintHeader("X-MILESTONE-Seq", seq) ||
+        !parseUintHeader("X-MILESTONE-Count", count)) {
+      mediaStreamRawFailed = true;
+      mediaStreamRawError = "invalid-stream-metadata";
+      return;
     }
+    if (count == 0 || count > MEDIA_STREAM_MAX_PUSH_FRAMES) {
+      mediaStreamRawFailed = true;
+      mediaStreamRawError = "invalid-frame-count";
+      return;
+    }
+    beginMediaStreamRawWrite(session, seq, static_cast<uint8_t>(count));
     return;
   }
   if (raw.status == RAW_WRITE) {
@@ -675,9 +684,7 @@ void handleWifiScan() {
   sendJson(200, json);
 }
 
-bool parseUintArg(const char *name, uint32_t &value) {
-  if (!server.hasArg(name)) return false;
-  const String text = server.arg(name);
+bool parseUintText(const String &text, uint32_t &value) {
   if (text.length() == 0) return false;
   uint64_t parsed = 0;
   for (size_t i = 0; i < text.length(); ++i) {
@@ -687,6 +694,16 @@ bool parseUintArg(const char *name, uint32_t &value) {
   }
   value = static_cast<uint32_t>(parsed);
   return true;
+}
+
+bool parseUintArg(const char *name, uint32_t &value) {
+  if (!server.hasArg(name)) return false;
+  return parseUintText(server.arg(name), value);
+}
+
+bool parseUintHeader(const char *name, uint32_t &value) {
+  if (!server.hasHeader(name)) return false;
+  return parseUintText(server.header(name), value);
 }
 
 bool parseBoolArg(const char *name, bool &value) {
@@ -1056,8 +1073,9 @@ void registerPortalRoutes() {
   static bool registered = false;
   if (registered) return;
   registered = true;
-  static const char *headerKeys[] = {"Cookie"};
-  server.collectHeaders(headerKeys, 1);
+  static const char *headerKeys[] = {
+      "Cookie", "X-MILESTONE-Session", "X-MILESTONE-Seq", "X-MILESTONE-Count"};
+  server.collectHeaders(headerKeys, 4);
   server.on("/", HTTP_GET, handlePortalRoot);
   server.on("/stream", HTTP_GET, handleStreamPortal);
   server.on("/api/status", HTTP_GET, handleStatus);

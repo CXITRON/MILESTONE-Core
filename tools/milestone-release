@@ -227,19 +227,31 @@ source_version_at_ref() {
 find_taildrop_version_anchor() {
   local wanted_version=$1
   local lower_bound=$2
-  local lower_bound_commit commit commit_version
+  local remote_ref=${3:-origin/main}
+  local lower_bound_commit commit commit_version candidate_tree remote_tree fallback=''
   lower_bound_commit=$(git -C "$PROJECT_DIR" rev-list -n1 "$lower_bound") || return 1
+  remote_tree=$(git -C "$PROJECT_DIR" rev-parse "${remote_ref}^{tree}" 2>/dev/null) || return 1
 
   while IFS= read -r commit; do
     [[ -n $commit ]] || continue
     commit_version=$(source_version_at_ref "$commit")
     if [[ $commit_version == "$wanted_version" ]]; then
-      printf '%s\n' "$commit"
-      return 0
+      [[ -n $fallback ]] || fallback=$commit
+      candidate_tree=$(git -C "$PROJECT_DIR" rev-parse "${commit}^{tree}" 2>/dev/null || true)
+      if [[ -n $candidate_tree && $candidate_tree == "$remote_tree" ]]; then
+        printf '%s\n' "$commit"
+        return 0
+      fi
     fi
     [[ $commit == "$lower_bound_commit" ]] && break
   done < <(git -C "$PROJECT_DIR" rev-list main)
-  return 1
+
+  # Older release packages may not contain a byte-identical remote snapshot.
+  # Preserve the previous behavior as a compatibility fallback, but prefer an
+  # exact tree match whenever one exists so same-version documentation/tooling
+  # commits that never reached origin/main are not mistaken for the release base.
+  [[ -n $fallback ]] || return 1
+  printf '%s\n' "$fallback"
 }
 
 reconcile_taildrop_with_remote() {
@@ -253,7 +265,7 @@ reconcile_taildrop_with_remote() {
   remote_version=$(source_version_at_ref origin/main)
   [[ $remote_version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || \
     die "origin/main에서 펌웨어 버전을 확인하지 못했습니다. 자동 병합하지 않습니다."
-  version_anchor=$(find_taildrop_version_anchor "$remote_version" "$base_tag") || \
+  version_anchor=$(find_taildrop_version_anchor "$remote_version" "$base_tag" origin/main) || \
     die "Taildrop 이력에서 origin/main 펌웨어 v${remote_version}에 대응하는 안전한 기준점을 찾지 못했습니다. 자동 병합하지 않습니다."
   [[ $version_anchor != $(git -C "$PROJECT_DIR" rev-parse HEAD) ]] || \
     die "Taildrop과 origin/main이 같은 펌웨어 버전이지만 이력이 다릅니다. 자동 병합하지 않습니다."
