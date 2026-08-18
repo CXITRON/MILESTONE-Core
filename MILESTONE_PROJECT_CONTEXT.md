@@ -1,6 +1,6 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v1.10.7
+> Current baseline: MILESTONE Core v1.10.8
 > Hardware: Waveshare ESP32-S3-Zero + SH1107 128×128 OLED
 > Repository: `CXITRON/MILESTONE-Core`
 
@@ -24,7 +24,7 @@ MILESTONE Core is an ESP32-S3 desktop display firmware with:
 - device diagnostics for memory, network, update, rollback, and thermal state
 - persistent recent Diagnostics & Health event history with portal copy/clear tools
 - browser-converted 128×128 monochrome photos, GIFs, and short local videos
-- isolated `/stream` live playback with browser-side full preconversion, raw binary transport, PSRAM buffering, and stream-specific runtime isolation
+- isolated `/stream` live playback with browser-side full preconversion, RAW/XOR-RLE binary frame-record transport, PSRAM buffering, and stream-specific runtime isolation
 
 It is an embedded application composed of several cooperative state machines. Reliability and recoverability are more important than cosmetic architectural purity.
 
@@ -78,7 +78,7 @@ The `*.inc` runtime files are intentionally included into the sketch as one tran
 Firmware and persistent schema versions are separate concepts.
 
 ```cpp
-FIRMWARE_VERSION = "1.10.7"
+FIRMWARE_VERSION = "1.10.8"
 CONFIG_VERSION = 9
 ```
 
@@ -116,21 +116,21 @@ Application-level rollback cannot recover a candidate that fails before the roll
 
 `CoreRuntime.inc` coordinates the main loop, BOOT-button behavior, screen cycling, temperature protection, and high-level state progression. Preserve cooperative/early-return semantics when modifying state processing.
 
-### Live streaming (v1.10.5+, sender pacing revised in v1.10.7)
+### Live streaming (v1.10.5+, buffering/render pacing revised in v1.10.8)
 
-Live streaming is intentionally isolated from the normal cooperative runtime. `/stream` serves a dedicated lightweight browser page. The browser pre-converts the full source into 128×128 one-bit frames before playback, then sends paced `application/octet-stream` bodies. The ESP32 stores only a bounded PSRAM ring; live frames are never written to LittleFS.
+Live streaming is intentionally isolated from the normal cooperative runtime. `/stream` serves a dedicated lightweight browser page. The browser pre-converts the full source into 128×128 one-bit frames before playback, then sends paced `application/octet-stream` frame-record bodies. The first source frame is RAW and later frames use bounded XOR-RLE deltas only when smaller; the ESP32 reconstructs every accepted record into a raw PSRAM ring before playback. Live frames are never written to LittleFS.
 
-While `mediaStreamActive` is true, `loopFirmware()` enters `processMediaStreamMode()` and returns before normal OTA, diagnostics, cycle, display, LED, NTP/reconnect scheduling, or stored-media work can run. The stream loop services only captive-portal networking, the raw frame transport, PSRAM queue/OLED timing, BOOT-stop input, resource guards, and low-rate thermal checks. A stream started inside `processNetwork()` is detected immediately and also returns before any normal background subsystem runs.
+While `mediaStreamActive` is true, `loopFirmware()` enters `processMediaStreamMode()` and returns before normal OTA, diagnostics, cycle, display, LED, NTP/reconnect scheduling, or stored-media work can run. The stream loop services only captive-portal networking, the binary frame-record transport, PSRAM queue/OLED timing, BOOT-stop input, resource guards, and low-rate thermal checks. A stream started inside `processNetwork()` is detected immediately and also returns before any normal background subsystem runs.
 
 Important stream contracts:
 
-- PSRAM is required; the ring capacity is 32 frames.
-- Initial playback starts after 8 queued frames and recovers from underrun after 4 frames.
-- Raw pushes carry at most 8 frames and receive a compact binary ACK; steady playback normally paces two frames per request, and transport-loss retries reuse the same idempotent sequence/body.
-- On Arduino-ESP32 3.3.11, raw-body routes do not expose URL query metadata through `server.arg()` during `RAW_START`; live raw pushes therefore carry session, sequence, and frame-count metadata in explicitly collected `X-MILESTONE-*` request headers. Do not move these fields back into the push URL.
+- PSRAM is required; the live ring capacity is 240 raw frames (480 KiB).
+- Initial playback starts after 96 queued frames and recovers from underrun after 48 frames, giving the sender several seconds of jitter margin.
+- Pushes carry at most 8 RAW/XOR-RLE frame records and receive a compact binary ACK; the browser refills by queue watermarks, and transport-loss retries reuse the same idempotent sequence/header/body.
+- On Arduino-ESP32 3.3.11, raw-body routes do not expose URL query metadata through `server.arg()` during `RAW_START`; live pushes therefore carry session, sequence, frame-count, and encoded-byte length in explicitly collected `X-MILESTONE-*` request headers. Do not move these fields back into the push URL.
 - Duplicate committed sequence numbers are consumed and ACKed without enqueueing frames twice.
-- 20fps is the normal high-performance target; 24fps is experimental. The renderer preserves the media timebase by dropping stale frames rather than accumulating latency.
-- The SH1107 path may update a changed tile span instead of flushing all 2048 bytes when that is cheaper.
+- 20fps is the normal source-timebase target; 24fps is experimental. The OLED service clock adapts to measured flush cost and reserves a network-service slice; stale source frames are dropped rather than accumulating latency.
+- The SH1107 path detects changed tiles on both X and Y axes and uses row spans/bounding rectangles before falling back to a full 2048-byte flush.
 - Stream thermal policy is 75°C warning, 80°C controlled stream stop, 85°C emergency thermal-safe entry.
 - End-of-source is explicit: `/api/stream/finish` marks EOF and the device drains the real queue before leaving STREAM_MODE, including short sources below the normal prebuffer threshold.
 - The OTA 2KiB transfer scratch buffer is allocated only during an OTA download instead of permanently occupying internal SRAM while streaming.
@@ -274,7 +274,7 @@ cd /tmp && milestone-release --dry-run taildrop X.Y.Z "short release note"
 
 Use `--yes` only when an unattended final publish is explicitly desired.
 
-## 8. Areas intentionally not refactored through v1.10.7
+## 8. Areas intentionally not refactored through v1.10.8
 
 The following broad refactors were deliberately rejected because their regression risk exceeded their immediate value:
 
@@ -313,4 +313,4 @@ The agent should select the mode according to whether the source was edited dire
 For recovery or automation, `milestone-release --zip /path/to/MILESTONE_Core_X.Y.Z.zip taildrop X.Y.Z "notes"` runs the same staging/reconciliation/release pipeline without fetching another Taildrop file. Normal user-facing usage remains `milestone-release taildrop ...`.
 
 
-v1.10.3 was the last incremental live-stream implementation. v1.10.5 replaces that hot path: browser-side full preconversion, a dedicated `/stream` page, raw binary transport, a 32-frame PSRAM queue, isolated STREAM_MODE execution, partial SH1107 updates, stream-specific thermal policy, and explicit resource/sequence recovery. v1.10.6 fixes the Arduino-ESP32 3.3.11 raw `WebServer` metadata incompatibility by carrying session/sequence/frame-count in explicitly collected headers instead of URL query arguments. v1.10.7 then removes the two-frame ACK-locked sender cadence: the browser fills 20 frames before playback, refills when the queue falls to 12, and drives it back toward 22–24 frames with batches of up to 8 while the ESP32 remains the sole playback clock. Do not reintroduce the v1.10.3 multipart/burst sender, query-based raw metadata, or a tiny browser lead buffer into the live path.
+v1.10.3 was the last incremental live-stream implementation. v1.10.5 replaces that hot path: browser-side full preconversion, a dedicated `/stream` page, raw binary transport, a PSRAM stream queue, isolated STREAM_MODE execution, partial SH1107 updates, stream-specific thermal policy, and explicit resource/sequence recovery. v1.10.6 fixes the Arduino-ESP32 3.3.11 raw `WebServer` metadata incompatibility by carrying session/sequence/frame-count in explicitly collected headers instead of URL query arguments. v1.10.7 then removes the two-frame ACK-locked sender cadence. v1.10.8 expands the PSRAM ring to 240 frames, starts after a 96-frame jitter buffer, uses bounded RAW/XOR-RLE live frame records, separates the source timeline from an adaptive OLED service clock that reserves network time after each flush, and adds X/Y dirty-tile partial refresh. Do not reintroduce the v1.10.3 multipart/burst sender, query-based raw metadata, or a tiny browser lead buffer into the live path.

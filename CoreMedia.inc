@@ -23,10 +23,19 @@ constexpr char MEDIA_UPLOAD_TEMP[] = "/media/upload.tmp";
 // Live streaming is an isolated runtime mode. The browser pre-converts the
 // whole source; the ESP32 only receives paced 128x128 one-bit frames into a
 // PSRAM ring and flushes them to the SH1107. No live frame is written to flash.
-constexpr uint8_t MEDIA_STREAM_QUEUE_FRAMES = 32;
+constexpr uint8_t MEDIA_STREAM_QUEUE_FRAMES = 240;
 constexpr uint8_t MEDIA_STREAM_MAX_PUSH_FRAMES = 8;
-constexpr uint8_t MEDIA_STREAM_PREBUFFER_FRAMES = 20;
-constexpr uint8_t MEDIA_STREAM_REBUFFER_FRAMES = 12;
+constexpr uint8_t MEDIA_STREAM_PREBUFFER_FRAMES = 96;
+constexpr uint8_t MEDIA_STREAM_REBUFFER_FRAMES = 48;
+constexpr size_t MEDIA_STREAM_PACKET_MAX_BYTES =
+    static_cast<size_t>(MEDIA_STREAM_MAX_PUSH_FRAMES) *
+    (MilestoneMedia::FRAME_HEADER_BYTES + MilestoneMedia::MAX_ENCODED_FRAME_BYTES);
+// Full-screen SH1107 I2C flushes consume most of a 20 fps frame period.
+// Reserve an explicit service window after each OLED transaction so the HTTP
+// server can drain incoming frame batches instead of being starved by display
+// work. The media timeline is still preserved by dropping stale source frames.
+constexpr uint16_t MEDIA_STREAM_NETWORK_SLICE_MS = 12;
+constexpr uint16_t MEDIA_STREAM_MAX_RENDER_INTERVAL_MS = 250;
 constexpr uint16_t MEDIA_STREAM_MIN_FPS = 5;
 constexpr uint16_t MEDIA_STREAM_MAX_FPS = 24;
 constexpr uint32_t MEDIA_STREAM_STALE_MS = 5000UL;
@@ -87,6 +96,8 @@ String mediaUploadName;
 String mediaUploadError;
 
 uint8_t *mediaStreamQueue = nullptr;
+uint8_t *mediaStreamRawPacket = nullptr;
+uint8_t *mediaStreamDecodeFrame = nullptr;
 bool mediaStreamActive = false;
 MediaStreamPhase mediaStreamPhase = MediaStreamPhase::INACTIVE;
 bool mediaStreamRawActive = false;
@@ -97,7 +108,11 @@ const char *mediaStreamRawError = "idle";
 uint32_t mediaStreamSessionId = 0;
 uint32_t mediaStreamLastPushMs = 0;
 uint32_t mediaStreamNextFrameMs = 0;
+uint32_t mediaStreamNextRenderMs = 0;
 uint32_t mediaStreamLastPushSeq = 0;
+uint8_t mediaStreamLastPushFrameCount = 0;
+size_t mediaStreamLastPushEncodedBytes = 0;
+uint32_t mediaStreamEncodedBytes = 0;
 uint32_t mediaStreamReceivedFrames = 0;
 uint32_t mediaStreamDisplayedFrames = 0;
 uint32_t mediaStreamDroppedFrames = 0;
@@ -118,6 +133,8 @@ uint32_t mediaStreamMinLargestHeapBlock = 0xFFFFFFFFUL;
 uint32_t mediaStreamMinStackFree = 0xFFFFFFFFUL;
 uint32_t mediaStreamLastFlushUs = 0;
 uint32_t mediaStreamFlushEmaUs = 0;
+uint16_t mediaStreamRenderIntervalMs = 0;
+uint16_t mediaStreamLastDirtyTiles = 0;
 uint32_t mediaStreamFpsWindowStartedMs = 0;
 uint16_t mediaStreamFpsWindowFrames = 0;
 uint16_t mediaStreamActualFpsX10 = 0;
@@ -746,10 +763,17 @@ bool deleteMediaEntry(uint32_t id, String &detail) {
 bool allocateMediaStreamBuffer() {
   if (mediaStreamQueue) return true;
   if (!psramFound()) return false;
+  const size_t queueBytes =
+      static_cast<size_t>(MEDIA_STREAM_QUEUE_FRAMES) * MilestoneMedia::FRAME_BYTES;
+  const size_t allocationBytes =
+      queueBytes + MEDIA_STREAM_PACKET_MAX_BYTES + MilestoneMedia::FRAME_BYTES;
   mediaStreamQueue = static_cast<uint8_t *>(heap_caps_malloc(
-      static_cast<size_t>(MEDIA_STREAM_QUEUE_FRAMES) * MilestoneMedia::FRAME_BYTES,
-      MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-  return mediaStreamQueue != nullptr;
+      allocationBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  if (!mediaStreamQueue) return false;
+  mediaStreamRawPacket = mediaStreamQueue + queueBytes;
+  mediaStreamDecodeFrame = mediaStreamRawPacket + MEDIA_STREAM_PACKET_MAX_BYTES;
+  memset(mediaStreamDecodeFrame, 0, MilestoneMedia::FRAME_BYTES);
+  return true;
 }
 
 void releaseMediaPlaybackBuffersForStream() {
@@ -765,10 +789,10 @@ void releaseMediaPlaybackBuffersForStream() {
 }
 
 void releaseMediaStreamBuffer() {
-  if (mediaStreamQueue) {
-    free(mediaStreamQueue);
-    mediaStreamQueue = nullptr;
-  }
+  if (mediaStreamQueue) free(mediaStreamQueue);
+  mediaStreamQueue = nullptr;
+  mediaStreamRawPacket = nullptr;
+  mediaStreamDecodeFrame = nullptr;
 }
 
 void resetMediaStreamRawState() {
@@ -794,7 +818,11 @@ void stopMediaStream() {
   mediaStreamSessionId = 0;
   mediaStreamLastPushMs = 0;
   mediaStreamNextFrameMs = 0;
+  mediaStreamNextRenderMs = 0;
   mediaStreamLastPushSeq = 0;
+  mediaStreamLastPushFrameCount = 0;
+  mediaStreamLastPushEncodedBytes = 0;
+  mediaStreamEncodedBytes = 0;
   mediaStreamQueueHead = 0;
   mediaStreamQueueTail = 0;
   mediaStreamQueueCount = 0;
@@ -808,16 +836,22 @@ void stopMediaStream() {
 bool startMediaStream(uint16_t fps) {
   if (fps < MEDIA_STREAM_MIN_FPS || fps > MEDIA_STREAM_MAX_FPS) return false;
   if (mediaStreamActive) stopMediaStream();
-  if (!allocateMediaStreamBuffer()) return false;
-
   releaseMediaPlaybackBuffersForStream();
+  if (!allocateMediaStreamBuffer()) {
+    allocateMediaBuffers();
+    return false;
+  }
   mediaStreamFps = fps;
   mediaStreamFrameIntervalMs = static_cast<uint16_t>((1000U + fps / 2U) / fps);
   mediaStreamSessionId = esp_random();
   if (mediaStreamSessionId == 0) mediaStreamSessionId = 1;
   mediaStreamLastPushMs = millis();
   mediaStreamNextFrameMs = 0;
+  mediaStreamNextRenderMs = 0;
   mediaStreamLastPushSeq = 0;
+  mediaStreamLastPushFrameCount = 0;
+  mediaStreamLastPushEncodedBytes = 0;
+  mediaStreamEncodedBytes = 0;
   mediaStreamReceivedFrames = 0;
   mediaStreamDisplayedFrames = 0;
   mediaStreamDroppedFrames = 0;
@@ -831,6 +865,8 @@ bool startMediaStream(uint16_t fps) {
   mediaStreamMinStackFree = uxTaskGetStackHighWaterMark(nullptr);
   mediaStreamLastFlushUs = 0;
   mediaStreamFlushEmaUs = 0;
+  mediaStreamRenderIntervalMs = mediaStreamFrameIntervalMs;
+  mediaStreamLastDirtyTiles = 0;
   mediaStreamFpsWindowStartedMs = mediaStreamLastPushMs;
   mediaStreamFpsWindowFrames = 0;
   mediaStreamActualFpsX10 = 0;
@@ -853,9 +889,11 @@ uint8_t mediaStreamQueueFree() {
   return static_cast<uint8_t>(MEDIA_STREAM_QUEUE_FRAMES - mediaStreamQueueCount);
 }
 
-bool beginMediaStreamRawWrite(uint32_t session, uint32_t seq, uint8_t frameCount) {
+bool beginMediaStreamRawWrite(uint32_t session, uint32_t seq, uint8_t frameCount,
+                              size_t encodedBytes) {
   resetMediaStreamRawState();
-  if (!mediaStreamActive || !mediaStreamQueue || session != mediaStreamSessionId) {
+  if (!mediaStreamActive || !mediaStreamQueue || !mediaStreamRawPacket ||
+      !mediaStreamDecodeFrame || session != mediaStreamSessionId) {
     mediaStreamRawError = "invalid-session";
     mediaStreamRawFailed = true;
     return false;
@@ -865,18 +903,28 @@ bool beginMediaStreamRawWrite(uint32_t session, uint32_t seq, uint8_t frameCount
     mediaStreamRawFailed = true;
     return false;
   }
+  const size_t minimumBytes =
+      static_cast<size_t>(frameCount) * MilestoneMedia::FRAME_HEADER_BYTES;
   if (seq == 0 || seq < mediaStreamLastPushSeq || frameCount == 0 ||
-      frameCount > MEDIA_STREAM_MAX_PUSH_FRAMES) {
+      frameCount > MEDIA_STREAM_MAX_PUSH_FRAMES || encodedBytes < minimumBytes ||
+      encodedBytes > MEDIA_STREAM_PACKET_MAX_BYTES) {
     mediaStreamRawError = "invalid-sequence";
     mediaStreamRawFailed = true;
     return false;
   }
   // A lost HTTP response can make the browser retry a batch that the device
-  // already committed. Consume and validate that body, but never enqueue it a
-  // second time. The completion handler will simply resend the current ACK.
+  // already committed. Consume and validate that same body length, but never
+  // decode or enqueue it a second time. Sequence reuse with different metadata
+  // is rejected so a stale retry cannot silently advance the decoder state.
   if (seq == mediaStreamLastPushSeq && mediaStreamLastPushSeq != 0) {
+    if (frameCount != mediaStreamLastPushFrameCount ||
+        encodedBytes != mediaStreamLastPushEncodedBytes) {
+      mediaStreamRawError = "duplicate-mismatch";
+      mediaStreamRawFailed = true;
+      return false;
+    }
     mediaStreamRawFrameCount = frameCount;
-    mediaStreamRawExpectedBytes = static_cast<size_t>(frameCount) * MilestoneMedia::FRAME_BYTES;
+    mediaStreamRawExpectedBytes = encodedBytes;
     mediaStreamRawWrittenBytes = 0;
     mediaStreamRawSeq = seq;
     mediaStreamRawDuplicate = true;
@@ -890,7 +938,7 @@ bool beginMediaStreamRawWrite(uint32_t session, uint32_t seq, uint8_t frameCount
     return false;
   }
   mediaStreamRawFrameCount = frameCount;
-  mediaStreamRawExpectedBytes = static_cast<size_t>(frameCount) * MilestoneMedia::FRAME_BYTES;
+  mediaStreamRawExpectedBytes = encodedBytes;
   mediaStreamRawWrittenBytes = 0;
   mediaStreamRawSeq = seq;
   mediaStreamRawBaseTail = mediaStreamQueueTail;
@@ -906,23 +954,10 @@ bool writeMediaStreamRawChunk(const uint8_t *data, size_t length) {
     mediaStreamRawFailed = true;
     return false;
   }
-  if (mediaStreamRawDuplicate) {
-    mediaStreamRawWrittenBytes += length;
-    return true;
+  if (!mediaStreamRawDuplicate) {
+    memcpy(mediaStreamRawPacket + mediaStreamRawWrittenBytes, data, length);
   }
-  size_t sourceOffset = 0;
-  while (sourceOffset < length) {
-    const size_t absolute = mediaStreamRawWrittenBytes;
-    const uint8_t frameIndex = static_cast<uint8_t>(absolute / MilestoneMedia::FRAME_BYTES);
-    const size_t frameOffset = absolute % MilestoneMedia::FRAME_BYTES;
-    const uint8_t slot = static_cast<uint8_t>((mediaStreamRawBaseTail + frameIndex) % MEDIA_STREAM_QUEUE_FRAMES);
-    const size_t room = MilestoneMedia::FRAME_BYTES - frameOffset;
-    const size_t chunk = min(room, length - sourceOffset);
-    memcpy(mediaStreamQueue + static_cast<size_t>(slot) * MilestoneMedia::FRAME_BYTES + frameOffset,
-           data + sourceOffset, chunk);
-    mediaStreamRawWrittenBytes += chunk;
-    sourceOffset += chunk;
-  }
+  mediaStreamRawWrittenBytes += length;
   return true;
 }
 
@@ -947,11 +982,60 @@ bool commitMediaStreamRawWrite() {
     resetMediaStreamRawState();
     return true;
   }
+
+  size_t offset = 0;
+  uint8_t lastDecodedSlot = mediaStreamRawBaseTail;
+  for (uint8_t i = 0; i < mediaStreamRawFrameCount; ++i) {
+    const uint8_t slot = static_cast<uint8_t>(
+        (mediaStreamRawBaseTail + i) % MEDIA_STREAM_QUEUE_FRAMES);
+    uint8_t *destination =
+        mediaStreamQueue + static_cast<size_t>(slot) * MilestoneMedia::FRAME_BYTES;
+    const bool firstFrame = mediaStreamReceivedFrames == 0 && i == 0;
+    if (!firstFrame) {
+      if (i == 0) {
+        memcpy(destination, mediaStreamDecodeFrame, MilestoneMedia::FRAME_BYTES);
+      } else {
+        const uint8_t previousSlot = static_cast<uint8_t>(
+            (mediaStreamRawBaseTail + i - 1U) % MEDIA_STREAM_QUEUE_FRAMES);
+        memcpy(destination,
+               mediaStreamQueue + static_cast<size_t>(previousSlot) * MilestoneMedia::FRAME_BYTES,
+               MilestoneMedia::FRAME_BYTES);
+      }
+    }
+    uint16_t delayMs = 0;
+    size_t consumed = 0;
+    MilestoneMedia::Error decodeError = MilestoneMedia::Error::NONE;
+    if (!MilestoneMedia::decodeFrame(
+            mediaStreamRawPacket + offset,
+            mediaStreamRawExpectedBytes - offset,
+            firstFrame, destination, delayMs, consumed, &decodeError) ||
+        delayMs != 0 || consumed == 0) {
+      mediaStreamRawError = "encoded-frame-invalid";
+      mediaStreamRawFailed = true;
+      mediaStreamRawComplete = false;
+      return false;
+    }
+    offset += consumed;
+    lastDecodedSlot = slot;
+  }
+  if (offset != mediaStreamRawExpectedBytes) {
+    mediaStreamRawError = "encoded-body-trailing-data";
+    mediaStreamRawFailed = true;
+    mediaStreamRawComplete = false;
+    return false;
+  }
+
+  memcpy(mediaStreamDecodeFrame,
+         mediaStreamQueue + static_cast<size_t>(lastDecodedSlot) * MilestoneMedia::FRAME_BYTES,
+         MilestoneMedia::FRAME_BYTES);
   mediaStreamQueueTail = static_cast<uint8_t>(
       (mediaStreamQueueTail + mediaStreamRawFrameCount) % MEDIA_STREAM_QUEUE_FRAMES);
   mediaStreamQueueCount = static_cast<uint8_t>(mediaStreamQueueCount + mediaStreamRawFrameCount);
   mediaStreamReceivedFrames += mediaStreamRawFrameCount;
   mediaStreamLastPushSeq = mediaStreamRawSeq;
+  mediaStreamLastPushFrameCount = mediaStreamRawFrameCount;
+  mediaStreamLastPushEncodedBytes = mediaStreamRawExpectedBytes;
+  mediaStreamEncodedBytes += static_cast<uint32_t>(mediaStreamRawExpectedBytes);
   mediaStreamLastPushMs = millis();
   const uint8_t resumeThreshold = mediaStreamDisplayedFrames == 0
       ? MEDIA_STREAM_PREBUFFER_FRAMES : MEDIA_STREAM_REBUFFER_FRAMES;
@@ -959,6 +1043,7 @@ bool commitMediaStreamRawWrite() {
       mediaStreamQueueCount >= resumeThreshold) {
     mediaStreamPhase = MediaStreamPhase::PLAYING;
     mediaStreamNextFrameMs = mediaStreamLastPushMs + mediaStreamFrameIntervalMs;
+    mediaStreamNextRenderMs = mediaStreamNextFrameMs;
     mediaStreamFpsWindowStartedMs = mediaStreamLastPushMs;
     mediaStreamFpsWindowFrames = 0;
   }
@@ -976,6 +1061,7 @@ bool finishMediaStreamSource(uint32_t session) {
   if (mediaStreamPhase == MediaStreamPhase::BUFFERING && mediaStreamQueueCount > 0) {
     mediaStreamPhase = MediaStreamPhase::PLAYING;
     mediaStreamNextFrameMs = mediaStreamLastPushMs + mediaStreamFrameIntervalMs;
+    mediaStreamNextRenderMs = mediaStreamNextFrameMs;
     mediaStreamFpsWindowStartedMs = mediaStreamLastPushMs;
     mediaStreamFpsWindowFrames = 0;
   }
@@ -999,7 +1085,13 @@ void processMediaStreamState(uint32_t now) {
     stopMediaStream();
     return;
   }
-  if (!mediaStreamSourceEnded && elapsed(now, mediaStreamLastPushMs, MEDIA_STREAM_STALE_MS)) {
+  // A deep jitter buffer can legitimately go several seconds without another
+  // POST. Only treat the sender as stale when the device is actually waiting
+  // for data or the remaining queue has fallen into the rebuffer range.
+  if (!mediaStreamSourceEnded &&
+      (mediaStreamPhase == MediaStreamPhase::BUFFERING ||
+       mediaStreamQueueCount <= MEDIA_STREAM_REBUFFER_FRAMES) &&
+      elapsed(now, mediaStreamLastPushMs, MEDIA_STREAM_STALE_MS)) {
     mediaStreamLastStopReason = "source-stale";
     stopMediaStream();
     return;
@@ -1036,51 +1128,108 @@ void updateMediaStreamMeasuredFps(uint32_t now) {
   mediaStreamFpsWindowFrames = 0;
   mediaStreamFpsWindowStartedMs = now;
 }
+uint16_t mediaStreamSafeRenderIntervalMs() {
+  uint32_t intervalMs = mediaStreamFrameIntervalMs;
+  const uint32_t flushBudgetUs = mediaStreamLastFlushUs > mediaStreamFlushEmaUs
+      ? mediaStreamLastFlushUs : mediaStreamFlushEmaUs;
+  if (flushBudgetUs > 0) {
+    const uint32_t flushMs = (flushBudgetUs + 999U) / 1000U;
+    const uint32_t safeMs = flushMs + MEDIA_STREAM_NETWORK_SLICE_MS;
+    if (safeMs > intervalMs) intervalMs = safeMs;
+  }
+  if (intervalMs > MEDIA_STREAM_MAX_RENDER_INTERVAL_MS) {
+    intervalMs = MEDIA_STREAM_MAX_RENDER_INTERVAL_MS;
+  }
+  return static_cast<uint16_t>(intervalMs);
+}
+
 bool flushMediaStreamFrame(const uint8_t *frame) {
   uint8_t *displayBuffer = display.getBufferPtr();
   if (!displayBuffer || !frame) return false;
-  uint8_t firstChanged = 16;
-  uint8_t lastChanged = 0;
+
+  uint8_t rowFirstTile[16];
+  uint8_t rowLastTile[16];
+  memset(rowFirstTile, 0xFF, sizeof(rowFirstTile));
+  memset(rowLastTile, 0, sizeof(rowLastTile));
+  uint8_t firstTileX = 16;
+  uint8_t lastTileX = 0;
+  uint8_t firstTileY = 16;
+  uint8_t lastTileY = 0;
   uint8_t changedRows = 0;
+  uint16_t dirtyTiles = 0;
+  uint16_t rowSpanTiles = 0;
+
   for (uint8_t row = 0; row < 16; ++row) {
-    const size_t offset = static_cast<size_t>(row) * 128U;
-    if (memcmp(displayBuffer + offset, frame + offset, 128U) != 0) {
-      if (firstChanged == 16) firstChanged = row;
-      lastChanged = row;
+    for (uint8_t tileX = 0; tileX < 16; ++tileX) {
+      const size_t offset = static_cast<size_t>(row) * 128U +
+                            static_cast<size_t>(tileX) * 8U;
+      if (memcmp(displayBuffer + offset, frame + offset, 8U) == 0) continue;
+      ++dirtyTiles;
+      if (rowFirstTile[row] == 0xFF) rowFirstTile[row] = tileX;
+      rowLastTile[row] = tileX;
+      if (tileX < firstTileX) firstTileX = tileX;
+      if (tileX > lastTileX) lastTileX = tileX;
+      if (row < firstTileY) firstTileY = row;
+      if (row > lastTileY) lastTileY = row;
+    }
+    if (rowFirstTile[row] != 0xFF) {
       ++changedRows;
+      rowSpanTiles += static_cast<uint16_t>(rowLastTile[row] - rowFirstTile[row] + 1U);
     }
   }
-  if (changedRows == 0) {
+
+  mediaStreamLastDirtyTiles = dirtyTiles;
+  if (dirtyTiles == 0) {
     mediaStreamLastFlushUs = 0;
     return true;
   }
+
   memcpy(displayBuffer, frame, MilestoneMedia::FRAME_BYTES);
   const uint32_t startedUs = micros();
-  const uint8_t span = static_cast<uint8_t>(lastChanged - firstChanged + 1U);
-  if (changedRows <= 10U && span <= 12U) {
-    display.updateDisplayArea(0, firstChanged, 16, span);
+  const uint16_t boundingTiles = static_cast<uint16_t>(lastTileX - firstTileX + 1U) *
+                                 static_cast<uint16_t>(lastTileY - firstTileY + 1U);
+
+  // Small/local motion is cheapest as per-row X spans. Moderately localized
+  // changes use one bounding rectangle. Highly dithered/full-motion frames
+  // still take the controller's optimized full-buffer path.
+  if (changedRows <= 8U && rowSpanTiles <= 112U) {
+    for (uint16_t row = firstTileY; row <= lastTileY; ++row) {
+      if (rowFirstTile[row] == 0xFF) continue;
+      display.updateDisplayArea(rowFirstTile[row], static_cast<uint8_t>(row),
+                                static_cast<uint8_t>(rowLastTile[row] - rowFirstTile[row] + 1U), 1);
+    }
+  } else if (boundingTiles <= 176U) {
+    display.updateDisplayArea(firstTileX, firstTileY,
+                              static_cast<uint8_t>(lastTileX - firstTileX + 1U),
+                              static_cast<uint8_t>(lastTileY - firstTileY + 1U));
   } else {
     display.sendBuffer();
   }
+
   const uint32_t flushUs = micros() - startedUs;
   mediaStreamLastFlushUs = flushUs;
   mediaStreamFlushEmaUs = mediaStreamFlushEmaUs == 0 ? flushUs
       : static_cast<uint32_t>((mediaStreamFlushEmaUs * 7ULL + flushUs) / 8ULL);
+  mediaStreamRenderIntervalMs = mediaStreamSafeRenderIntervalMs();
   return true;
 }
 
 bool renderMediaStreamFrameIfDue(uint32_t now) {
   if (!mediaStreamActive || mediaStreamPhase != MediaStreamPhase::PLAYING ||
       !oledReady || displaySleeping || !mediaStreamQueue || mediaStreamNextFrameMs == 0 ||
-      !deadlineReached(now, mediaStreamNextFrameMs)) return false;
+      mediaStreamNextRenderMs == 0 || !deadlineReached(now, mediaStreamNextRenderMs)) return false;
 
   if (mediaStreamQueueCount == 0) {
     ++mediaStreamUnderruns;
     mediaStreamPhase = MediaStreamPhase::BUFFERING;
     mediaStreamNextFrameMs = 0;
+    mediaStreamNextRenderMs = 0;
     return false;
   }
 
+  // mediaStreamNextFrameMs is the source timeline. mediaStreamNextRenderMs is
+  // the OLED service clock. If OLED/network work cannot sustain the requested
+  // source FPS, consume stale frames here instead of letting latency grow.
   const int32_t behindMs = static_cast<int32_t>(now - mediaStreamNextFrameMs);
   if (behindMs >= static_cast<int32_t>(mediaStreamFrameIntervalMs) && mediaStreamQueueCount > 1) {
     uint32_t stale = static_cast<uint32_t>(behindMs) / mediaStreamFrameIntervalMs;
@@ -1097,14 +1246,22 @@ bool renderMediaStreamFrameIfDue(uint32_t now) {
   mediaStreamQueueHead = static_cast<uint8_t>((mediaStreamQueueHead + 1U) % MEDIA_STREAM_QUEUE_FRAMES);
   --mediaStreamQueueCount;
   ++mediaStreamDisplayedFrames;
-  updateMediaStreamMeasuredFps(now);
+  ++mediaStreamFpsWindowFrames;
+  const uint32_t afterFlush = millis();
+  updateMediaStreamMeasuredFps(afterFlush);
   mediaStreamNextFrameMs += mediaStreamFrameIntervalMs;
-  if (deadlineReached(now, mediaStreamNextFrameMs + mediaStreamFrameIntervalMs * 2U)) {
-    mediaStreamNextFrameMs = now + mediaStreamFrameIntervalMs;
+  mediaStreamRenderIntervalMs = mediaStreamSafeRenderIntervalMs();
+  mediaStreamNextRenderMs = now + mediaStreamRenderIntervalMs;
+
+  if (deadlineReached(afterFlush, mediaStreamNextFrameMs + mediaStreamFrameIntervalMs * 4U)) {
+    // A very long HTTP/I2C stall should not create an ever-growing catch-up
+    // storm. Re-anchor only after stale frames have already been discarded.
+    mediaStreamNextFrameMs = afterFlush + mediaStreamFrameIntervalMs;
   }
   if (mediaStreamQueueCount == 0) {
     mediaStreamPhase = MediaStreamPhase::BUFFERING;
     mediaStreamNextFrameMs = 0;
+    mediaStreamNextRenderMs = 0;
   }
   return true;
 }

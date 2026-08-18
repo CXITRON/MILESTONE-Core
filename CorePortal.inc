@@ -214,7 +214,7 @@ void handleMediaList() {
 
 String mediaStreamStatusJson() {
   String json;
-  json.reserve(420);
+  json.reserve(500);
   json = "{";
   json += "\"active\":" + String(mediaStreamActive ? "true" : "false") + ",";
   json += "\"phase\":\"" + String(mediaStreamPhaseName()) + "\",";
@@ -226,10 +226,13 @@ String mediaStreamStatusJson() {
   json += "\"source_ended\":" + String(mediaStreamSourceEnded ? "true" : "false") + ",";
   json += "\"push_max\":" + String(MEDIA_STREAM_MAX_PUSH_FRAMES) + ",";
   json += "\"received\":" + String(mediaStreamReceivedFrames) + ",";
+  json += "\"encoded_bytes\":" + String(mediaStreamEncodedBytes) + ",";
   json += "\"displayed\":" + String(mediaStreamDisplayedFrames) + ",";
   json += "\"dropped\":" + String(mediaStreamDroppedFrames) + ",";
   json += "\"underruns\":" + String(mediaStreamUnderruns) + ",";
   json += "\"flush_us\":" + String(mediaStreamFlushEmaUs) + ",";
+  json += "\"render_interval_ms\":" + String(mediaStreamRenderIntervalMs) + ",";
+  json += "\"dirty_tiles\":" + String(mediaStreamLastDirtyTiles) + ",";
   json += "\"temperature_c\":" + String(isnan(chipTemperatureC) ? 0.0f : chipTemperatureC, 1) + ",";
   json += "\"heap_min\":" + String(mediaStreamMinFreeHeap == 0xFFFFFFFFUL ? 0 : mediaStreamMinFreeHeap) + ",";
   json += "\"stack_min\":" + String(mediaStreamMinStackFree == 0xFFFFFFFFUL ? 0 : mediaStreamMinStackFree) + ",";
@@ -302,10 +305,11 @@ void handleMediaStreamPushRaw() {
     // Arduino-ESP32 WebServer 3.3.11 does not parse URL query arguments on
     // routes that use the raw-body callback. Stream metadata therefore travels
     // in explicitly collected headers while the request body stays frame-only.
-    uint32_t session = 0, seq = 0, count = 0;
+    uint32_t session = 0, seq = 0, count = 0, encodedBytes = 0;
     if (!parseUintHeader("X-MILESTONE-Session", session) ||
         !parseUintHeader("X-MILESTONE-Seq", seq) ||
-        !parseUintHeader("X-MILESTONE-Count", count)) {
+        !parseUintHeader("X-MILESTONE-Count", count) ||
+        !parseUintHeader("X-MILESTONE-Bytes", encodedBytes)) {
       mediaStreamRawFailed = true;
       mediaStreamRawError = "invalid-stream-metadata";
       return;
@@ -315,7 +319,8 @@ void handleMediaStreamPushRaw() {
       mediaStreamRawError = "invalid-frame-count";
       return;
     }
-    beginMediaStreamRawWrite(session, seq, static_cast<uint8_t>(count));
+    beginMediaStreamRawWrite(session, seq, static_cast<uint8_t>(count),
+                             static_cast<size_t>(encodedBytes));
     return;
   }
   if (raw.status == RAW_WRITE) {
@@ -1074,8 +1079,9 @@ void registerPortalRoutes() {
   if (registered) return;
   registered = true;
   static const char *headerKeys[] = {
-      "Cookie", "X-MILESTONE-Session", "X-MILESTONE-Seq", "X-MILESTONE-Count"};
-  server.collectHeaders(headerKeys, 4);
+      "Cookie", "X-MILESTONE-Session", "X-MILESTONE-Seq", "X-MILESTONE-Count",
+      "X-MILESTONE-Bytes"};
+  server.collectHeaders(headerKeys, 5);
   server.on("/", HTTP_GET, handlePortalRoot);
   server.on("/stream", HTTP_GET, handleStreamPortal);
   server.on("/api/status", HTTP_GET, handleStatus);
