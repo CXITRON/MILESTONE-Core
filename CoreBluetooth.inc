@@ -31,6 +31,10 @@ static const ble_uuid128_t AMS_ENTITY_UPDATE_UUID = BLE_UUID128_INIT(
 static const ble_uuid128_t AMS_ENTITY_ATTRIBUTE_UUID = BLE_UUID128_INIT(
     0xd7, 0xd5, 0xbb, 0x70, 0xa8, 0xa3, 0xab, 0xa6,
     0xd8, 0x46, 0xab, 0x23, 0x8c, 0xf3, 0xb2, 0xc6);
+// Keep the CCCD UUID in stable storage. NimBLE's convenience declaration
+// macro expands to a C compound literal; taking its address is rejected by the
+// C++ compiler used by Arduino-ESP32 3.3.11.
+static const ble_uuid16_t BLE_CCCD_UUID = BLE_UUID16_INIT(BLE_GATT_DSC_CLT_CFG_UUID16);
 
 struct BluetoothNowPlayingState {
   bool initialized = false;
@@ -68,9 +72,13 @@ BLEServer *bluetoothServer = nullptr;
 BLEAdvertising *bluetoothAdvertising = nullptr;
 portMUX_TYPE amsNotificationMux = portMUX_INITIALIZER_UNLOCKED;
 AmsNotificationPacket amsNotificationQueue[AMS_NOTIFICATION_QUEUE];
-volatile uint8_t amsNotificationHead = 0;
-volatile uint8_t amsNotificationTail = 0;
-volatile uint8_t amsNotificationCount = 0;
+// Queue indices are accessed only while amsNotificationMux is held. volatile
+// does not provide inter-core synchronization and causes deprecated volatile
+// ++/-- diagnostics under the ESP32-S3 C++ toolchain, so keep them ordinary
+// objects protected by the critical section.
+uint8_t amsNotificationHead = 0;
+uint8_t amsNotificationTail = 0;
+uint8_t amsNotificationCount = 0;
 volatile bool bluetoothConnectedEvent = false;
 volatile bool bluetoothDisconnectedEvent = false;
 volatile bool bluetoothEncryptedEvent = false;
@@ -105,16 +113,22 @@ void queueAmsNotification(const os_mbuf *om) {
   const uint32_t rawLen = OS_MBUF_PKTLEN(om);
   const uint16_t packetLen = static_cast<uint16_t>(rawLen > AMS_NOTIFICATION_MAX ? AMS_NOTIFICATION_MAX : rawLen);
   if (packetLen < 3) return;
+
+  // Copy the mbuf before entering the critical section. The GAP callback is a
+  // task context, not an ISR; keeping the lock limited to queue bookkeeping
+  // avoids holding off the other core while NimBLE walks an mbuf chain.
+  AmsNotificationPacket incoming;
+  incoming.len = packetLen;
+  if (os_mbuf_copydata(const_cast<os_mbuf *>(om), 0, packetLen, incoming.data) != 0) return;
+
   portENTER_CRITICAL(&amsNotificationMux);
   if (amsNotificationCount == AMS_NOTIFICATION_QUEUE) {
     amsNotificationTail = (amsNotificationTail + 1U) % AMS_NOTIFICATION_QUEUE;
-    --amsNotificationCount;
+    amsNotificationCount -= 1U;
   }
-  AmsNotificationPacket &packet = amsNotificationQueue[amsNotificationHead];
-  packet.len = packetLen;
-  os_mbuf_copydata(const_cast<os_mbuf *>(om), 0, packetLen, packet.data);
+  amsNotificationQueue[amsNotificationHead] = incoming;
   amsNotificationHead = (amsNotificationHead + 1U) % AMS_NOTIFICATION_QUEUE;
-  ++amsNotificationCount;
+  amsNotificationCount += 1U;
   portEXIT_CRITICAL(&amsNotificationMux);
 }
 
@@ -124,7 +138,7 @@ bool popAmsNotification(AmsNotificationPacket &packet) {
   if (amsNotificationCount > 0) {
     packet = amsNotificationQueue[amsNotificationTail];
     amsNotificationTail = (amsNotificationTail + 1U) % AMS_NOTIFICATION_QUEUE;
-    --amsNotificationCount;
+    amsNotificationCount -= 1U;
     available = true;
   }
   portEXIT_CRITICAL(&amsNotificationMux);
@@ -239,7 +253,7 @@ int amsDescriptorDiscoveryCallback(uint16_t connHandle, const ble_gatt_error *er
   if (connHandle != bluetoothNowPlaying.connHandle || !error) return 0;
   if (error->status == 0 && descriptor) {
     if (chrValHandle == bluetoothNowPlaying.entityUpdateHandle &&
-        ble_uuid_cmp(&descriptor->uuid.u, BLE_UUID16_DECLARE(BLE_GATT_DSC_CLT_CFG_UUID16)) == 0) {
+        ble_uuid_cmp(&descriptor->uuid.u, &BLE_CCCD_UUID.u) == 0) {
       bluetoothNowPlaying.entityUpdateCccdHandle = descriptor->handle;
     }
     return 0;
@@ -372,7 +386,11 @@ void shutdownBluetoothNowPlaying() {
   bluetoothServer = nullptr;
   bluetoothAdvertising = nullptr;
   bluetoothNowPlaying = BluetoothNowPlayingState();
-  amsNotificationHead = amsNotificationTail = amsNotificationCount = 0;
+  portENTER_CRITICAL(&amsNotificationMux);
+  amsNotificationHead = 0;
+  amsNotificationTail = 0;
+  amsNotificationCount = 0;
+  portEXIT_CRITICAL(&amsNotificationMux);
   logLine("BLE Now Playing stopped");
 }
 
