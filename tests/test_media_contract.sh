@@ -19,7 +19,7 @@ reject() {
   fi
 }
 
-require 'CONFIG_VERSION = 9' MILESTONE_Core.ino 'config schema is not 9'
+require 'CONFIG_VERSION = 10' MILESTONE_Core.ino 'config schema is not 10'
 require 'CUSTOM_MEDIA = 7' MILESTONE_Core.ino 'custom media view must preserve IDs 0-6'
 require 'CUSTOM_MEDIA = 8' MILESTONE_Core.ino 'custom media top mode must preserve IDs 0-7'
 require 'storedCycleLimit = migrateToV6 \? 0x3F : \(migrateToV9 \? 0x7F : 0xFF\)' CoreConfig.inc 'v8 cycle mask migration must leave media disabled'

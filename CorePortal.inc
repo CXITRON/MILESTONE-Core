@@ -38,6 +38,10 @@ void handleStatus() {
   json += "\"nvs_ready\":" + String(prefsReady ? "true" : "false") + ",";
   json += "\"nvs_free_entries\":" + String(prefsReady ? prefs.freeEntries() : 0) + ",";
   json += "\"time_valid\":" + String(timeIsValid() ? "true" : "false") + ",";
+  json += "\"bluetooth_enabled\":" + String(config.bluetoothNowPlaying ? "true" : "false") + ",";
+  json += "\"bluetooth_active\":" + String(bluetoothNowPlayingRuntimeActive() ? "true" : "false") + ",";
+  json += "\"bluetooth_connected\":" + String(bluetoothNowPlayingConnected() ? "true" : "false") + ",";
+  json += "\"bluetooth_ams_ready\":" + String(bluetoothNowPlayingAmsReady() ? "true" : "false") + ",";
   json += "\"last_sync\":\"" + jsonEscape(formatEpoch(config.lastSync)) + "\",";
   json += "\"wifi_test\":\"" + String(wifiTestStateName(wifiTestState)) + "\",";
   json += "\"wifi_error\":\"" + jsonEscape(wifiTestError) + "\",";
@@ -574,6 +578,87 @@ void handleMediaRepair() {
   sendJson(200, "{\"ok\":true}");
 }
 
+void handleGetRadioConfig() {
+  if (!requireSetupApRequest()) return;
+  if (rejectPortalWorkDuringStream()) return;
+  String json = "{";
+  json += "\"fixed_ap\":" + String(config.fixedApSecurity ? "true" : "false") + ",";
+  json += "\"ap_password_set\":" + String(config.fixedApPassword.length() > 0 ? "true" : "false") + ",";
+  json += "\"bluetooth_now_playing\":" + String(config.bluetoothNowPlaying ? "true" : "false") + ",";
+#if defined(CONFIG_NIMBLE_ENABLED)
+  json += "\"bluetooth_supported\":true";
+#else
+  json += "\"bluetooth_supported\":false";
+#endif
+  json += "}";
+  sendJson(200, json);
+}
+
+void handlePostRadioConfig() {
+  if (!authorizePortalRequest()) return;
+  if (rejectPortalWorkDuringStream()) return;
+
+  const bool hasApUpdate = server.hasArg("fixed_ap") || server.hasArg("ap_password");
+  const bool hasBluetoothUpdate = server.hasArg("bluetooth_now_playing");
+  if (!hasApUpdate && !hasBluetoothUpdate) {
+    return sendJson(400, "{\"error\":\"변경할 AP 또는 Bluetooth 설정 값이 없습니다.\"}");
+  }
+
+  bool fixedAp = config.fixedApSecurity;
+  String password = config.fixedApPassword;
+  if (hasApUpdate) {
+    if (!server.hasArg("fixed_ap") || !server.hasArg("ap_password") || !parseBoolArg("fixed_ap", fixedAp)) {
+      return sendJson(400, "{\"error\":\"AP 보안 설정 값이 누락되었습니다.\"}");
+    }
+    password = server.arg("ap_password");
+    if (fixedAp && password.length() > 0 && (password.length() < 8 || password.length() > 63)) {
+      return sendJson(400, "{\"error\":\"고정 AP 비밀번호는 비워 두거나 8~63자로 입력하세요.\"}");
+    }
+  }
+
+  bool bluetoothEnabled = config.bluetoothNowPlaying;
+  if (hasBluetoothUpdate && !parseBoolArg("bluetooth_now_playing", bluetoothEnabled)) {
+    return sendJson(400, "{\"error\":\"Bluetooth 설정 값이 올바르지 않습니다.\"}");
+  }
+#if !defined(CONFIG_NIMBLE_ENABLED)
+  if (hasBluetoothUpdate && bluetoothEnabled) {
+    return sendJson(501, "{\"error\":\"현재 BLE 빌드에서는 iPhone Now Playing을 지원하지 않습니다. NimBLE 빌드가 필요합니다.\"}");
+  }
+#endif
+
+  const Config previous = config;
+  if (hasApUpdate) {
+    config.fixedApSecurity = fixedAp;
+    // A blank password while fixed mode is enabled explicitly means an open AP.
+    // Turning fixed mode off also removes the dormant saved secret.
+    config.fixedApPassword = fixedAp ? password : "";
+  }
+  if (hasBluetoothUpdate) config.bluetoothNowPlaying = bluetoothEnabled;
+
+  if (!saveGeneralConfig()) {
+    config = previous;
+    if (!saveGeneralConfig()) logLine("radio/AP configuration rollback could not be persisted");
+    return sendJson(500, "{\"error\":\"AP/블루투스 설정을 저장하지 못했습니다.\"}");
+  }
+
+  const bool bluetoothChanged = previous.bluetoothNowPlaying != config.bluetoothNowPlaying;
+  bool bluetoothActive = bluetoothNowPlayingRuntimeActive();
+  if (bluetoothChanged) {
+    if (config.bluetoothNowPlaying) bluetoothActive = initializeBluetoothNowPlaying();
+    else {
+      shutdownBluetoothNowPlaying();
+      bluetoothActive = false;
+    }
+  }
+  String result = "{\"ok\":true,\"ap_updated\":";
+  result += hasApUpdate ? "true" : "false";
+  result += ",\"ap_applies_next_start\":";
+  result += hasApUpdate ? "true" : "false";
+  result += ",\"bluetooth_active\":";
+  result += bluetoothActive ? "true}" : "false}";
+  sendJson(200, result);
+}
+
 void handleGetConfig() {
   if (!requireSetupApRequest()) return;
   if (rejectPortalWorkDuringStream()) return;
@@ -635,8 +720,12 @@ void handleGetConfig() {
 }
 
 void handleWifiScan() {
-  if (!requireSetupApRequest()) return;
+  if (!authorizePortalRequest()) return;
   if (rejectPortalWorkDuringStream()) return;
+  if (wifiTestState == WifiTestState::CONNECTING || wifiTestState == WifiTestState::TIME_SYNCING) {
+    sendJson(409, "{\"error\":\"Wi-Fi 연결 시험이 진행 중입니다. 완료 후 검색하세요.\"}");
+    return;
+  }
   if (savedWifiScanActive) {
     sendJson(409, "{\"error\":\"저장된 Wi-Fi 자동 검색이 진행 중입니다. 잠시 후 다시 시도하세요.\"}");
     return;
@@ -648,15 +737,15 @@ void handleWifiScan() {
       portalWifiScanDeadlineMs = millis() + WIFI_SCAN_TIMEOUT_MS;
     } else if (deadlineReached(millis(), portalWifiScanDeadlineMs)) {
       cancelPortalWifiScan();
-      sendJson(504, "{\"error\":\"Wi-Fi 검색 시간이 초과되었습니다. 다시 시도하세요.\"}");
+      sendJson(504, "{\"error\":\"Wi-Fi 검색 시간이 초과되었습니다. 설정 AP는 유지됩니다. 다시 시도하세요.\"}");
       return;
     }
     sendJson(202, "{\"state\":\"scanning\"}");
     return;
   }
   if (count == WIFI_SCAN_FAILED) {
-    WiFi.scanDelete();
-    int started = WiFi.scanNetworks(true, true, false, 300, 0);
+    stopWifiScanBestEffort();
+    int started = WiFi.scanNetworks(true, false, false, PORTAL_WIFI_SCAN_DWELL_MS, 0);
     if (started == WIFI_SCAN_FAILED) {
       sendJson(500, "{\"error\":\"Wi-Fi 검색을 시작하지 못했습니다.\"}");
       return;
@@ -889,8 +978,10 @@ void handleWifiTest() {
   pendingWifiIdentity = identity;
   wifiTestError = "";
   wifiTestState = WifiTestState::CONNECTING;
+  const uint32_t testTimeoutMs = pendingWifiSecurity == WifiSecurityType::ENTERPRISE_PEAP
+                                   ? WIFI_CONNECT_TIMEOUT_MS : WIFI_PORTAL_TEST_CONNECT_TIMEOUT_MS;
   beginStationConnection(pendingSsid, pendingPass, pendingWifiSecurity,
-                         pendingWifiUsername, pendingWifiIdentity, true);
+                         pendingWifiUsername, pendingWifiIdentity, true, testTimeoutMs);
   sendJson(202, "{\"ok\":true,\"state\":\"connecting\"}");
 }
 
@@ -950,6 +1041,7 @@ void handleSettingsReset() {
     return sendJson(500, "{\"error\":\"기본 설정을 저장하지 못했습니다.\"}");
   }
 
+  if (previous.bluetoothNowPlaying && !config.bluetoothNowPlaying) shutdownBluetoothNowPlaying();
   currentView = View::DDAY_TIME;
   currentCycleIndex = 0;
   scrollStartedMs = millis();
@@ -960,7 +1052,7 @@ void handleSettingsReset() {
   appliedLedColor = UINT32_MAX;
   wakeDisplay();
   updateContrast();
-  logLine("display, time, and LED settings restored to defaults; saved Wi-Fi retained");
+  logLine("display, time, LED, AP security, and Bluetooth settings restored to defaults; saved Wi-Fi retained");
   sendJson(200, "{\"ok\":true,\"wifi_retained\":true}");
 }
 
@@ -1101,8 +1193,10 @@ void registerPortalRoutes() {
   server.on("/api/stream/finish", HTTP_POST, handleMediaStreamFinish);
   server.on("/api/stream/stop", HTTP_POST, handleMediaStreamStop);
   server.on("/api/config", HTTP_GET, handleGetConfig);
+  server.on("/api/radio-config", HTTP_GET, handleGetRadioConfig);
   server.on("/api/wifi/scan", HTTP_GET, handleWifiScan);
   server.on("/api/config", HTTP_POST, handlePostConfig);
+  server.on("/api/radio-config", HTTP_POST, handlePostRadioConfig);
   server.on("/api/wifi/test", HTTP_POST, handleWifiTest);
   server.on("/api/wifi/delete", HTTP_POST, handleDeleteSavedWifi);
   server.on("/api/time/sync", HTTP_POST, handleTimeSync);
@@ -1123,11 +1217,20 @@ void registerPortalRoutes() {
   });
 }
 
-void restoreConfiguredWifiAfterFailedTest() {
-  if (config.savedNetworkCount == 0) return;
+void stabilizePortalAfterFailedWifiTest() {
+  // Do not immediately start another saved-network connection under the setup
+  // AP. When the requested AP is absent this used to chain one channel search
+  // into another and made the captive portal appear to disappear. Keep the STA
+  // idle until the user retries explicitly or exits setup; stopPortal() will
+  // resume the normal saved-network sequence.
   WiFi.disconnect(false, false);
-  beginSavedWifiConnection(0, true);
-  logLine("restoring the previously saved Wi-Fi");
+  delay(30);
+  stopWifiScanBestEffort();
+  resetEnterpriseStationAuth();
+  wifiNetworkReadySinceMs = 0;
+  wifiDeadlineMs = 0;
+  activeWifiIndex = NO_WIFI_INDEX;
+  logLine("Wi-Fi test failed; STA paused to keep setup AP stable");
 }
 
 void failWifiTest(const String &reason);
@@ -1172,7 +1275,7 @@ void failWifiTest(const String &reason) {
   pendingWifiUsername = "";
   pendingWifiIdentity = "";
   setRuntimeState(RuntimeState::SETUP_AP);
-  restoreConfiguredWifiAfterFailedTest();
+  stabilizePortalAfterFailedWifiTest();
   recordDiagnostic(MilestoneDiagnostics::Event::WIFI_TEST_FAILED);
   logLine(String("Wi-Fi test failed: ") + reason);
 }

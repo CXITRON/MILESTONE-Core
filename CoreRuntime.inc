@@ -146,18 +146,20 @@ void processNetwork() {
       if (!finishSavedWifiScanAndConnect()) {
         initialStationAttempt = false;
         setRuntimeState(RuntimeState::RUNNING_OFFLINE);
-        scheduleRetry(true);
+        scheduleRetry();
+        parkDisconnectedWifiUntilRetry();
         recordDiagnostic(MilestoneDiagnostics::Event::WIFI_CONNECT_TIMEOUT);
-        logLine("no reachable saved Wi-Fi network found; offline mode");
+        logLine("no reachable saved Wi-Fi network found; offline mode with normal retry backoff");
       }
     } else if (deadlineReached(now, wifiDeadlineMs)) {
       if (tryNextSavedWifiCandidate()) return;
       initialStationAttempt = false;
       setRuntimeState(RuntimeState::RUNNING_OFFLINE);
-      scheduleRetry(true);
+      scheduleRetry();
+      parkDisconnectedWifiUntilRetry();
       recordDiagnostic(MilestoneDiagnostics::Event::WIFI_CONNECT_TIMEOUT,
                        static_cast<int16_t>(lastWifiDisconnectReason));
-      logLine("Wi-Fi connection timed out; offline mode");
+      logLine("Wi-Fi connection timed out; offline mode with normal retry backoff");
     }
     return;
   }
@@ -728,6 +730,7 @@ bool mediaStreamButtonPressed = false;
 bool mediaStreamSntpWasEnabled = false;
 
 void enterMediaStreamPerformanceMode() {
+  suspendBluetoothNowPlaying();
   mediaStreamPreviousCpuMhz = getCpuFrequencyMhz();
   portalClosingAfterSuccess = false;
   portalStartedMs = millis();
@@ -777,6 +780,7 @@ void leaveMediaStreamPerformanceMode() {
   appliedLedColor = UINT32_MAX;
   lastDisplayMs = 0;
   wakeDisplay();
+  if (!thermalSafeMode) resumeBluetoothNowPlaying();
 }
 
 void processMediaStreamNetworkOnly() {
@@ -931,6 +935,11 @@ void setupFirmware() {
   if (!oledReady) setRuntimeState(RuntimeState::ERROR_DISPLAY);
   initializeMediaStorage();
   initializeView();
+  if (config.bluetoothNowPlaying) {
+    if (!initializeBluetoothNowPlaying()) {
+      logLine("Bluetooth Now Playing initialization failed; continuing without BLE");
+    }
+  }
   lastInteractionMs = millis();
 
   if (provisioned) {
@@ -958,6 +967,7 @@ void loopFirmware() {
     return;
   }
   processFirmwareUpdate();
+  processBluetoothNowPlaying();
   processDiagnostics();
   processCycle();
   processDisplay();

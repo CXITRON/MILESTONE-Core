@@ -198,6 +198,9 @@ bool saveGeneralConfig() {
   if (prefs.putUInt("dday_sec", config.ddayPeriodSec) != sizeof(uint32_t)) success = false;
   if (prefs.putUInt("retry_sec", config.retryPeriodSec) != sizeof(uint32_t)) success = false;
   if (prefs.putBool("wifi_sleep", config.wifiSleep) != sizeof(bool)) success = false;
+  if (prefs.putBool("ap_fixed", config.fixedApSecurity) != sizeof(bool)) success = false;
+  if (!putStringVerified("ap_pass", config.fixedApPassword)) success = false;
+  if (prefs.putBool("ble_media", config.bluetoothNowPlaying) != sizeof(bool)) success = false;
   if (prefs.putUChar("bright", config.brightness) != sizeof(uint8_t)) success = false;
   if (prefs.putUChar("night_lvl", config.nightLevel) != sizeof(uint8_t)) success = false;
   if (prefs.putBool("led_en", config.ledEnabled) != sizeof(bool)) success = false;
@@ -258,6 +261,7 @@ bool loadConfig() {
   const bool migrateToV7 = version < 7;
   const bool migrateToV8 = version < 8;
   const bool migrateToV9 = version < 9;
+  const bool migrateToV10 = version < 10;
   config.version = CONFIG_VERSION;
   if (migrateToV4) {
     String legacySsid = prefs.getString("wifi_ssid", "");
@@ -331,6 +335,21 @@ bool loadConfig() {
   config.retryPeriodSec = prefs.getUInt("retry_sec", 300);
   if (!allowedValue(config.retryPeriodSec, ALLOWED_RETRY_PERIODS)) config.retryPeriodSec = 300;
   config.wifiSleep = prefs.getBool("wifi_sleep", false);
+  if (migrateToV10) {
+    // Schema 10 features are opt-in.  An upgraded device must preserve the
+    // pre-1.11 setup-AP behavior and must not initialize BLE unexpectedly.
+    config.fixedApSecurity = false;
+    config.fixedApPassword = "";
+    config.bluetoothNowPlaying = false;
+  } else {
+    config.fixedApSecurity = prefs.getBool("ap_fixed", false);
+    config.fixedApPassword = prefs.getString("ap_pass", "");
+    if (config.fixedApPassword.length() > 63 || (config.fixedApPassword.length() > 0 && config.fixedApPassword.length() < 8)) {
+      config.fixedApSecurity = false;
+      config.fixedApPassword = "";
+    }
+    config.bluetoothNowPlaying = prefs.getBool("ble_media", false);
+  }
   config.brightness = clampInt(prefs.getUChar("bright", 180), 1, 255);
   config.nightLevel = clampInt(prefs.getUChar("night_lvl", 45), 1, 255);
   config.ledEnabled = prefs.getBool("led_en", true);
@@ -380,7 +399,7 @@ bool loadConfig() {
   config.lastDday = prefs.getInt("last_dday", 0);
   int y, m, d;
   if (!parseDate(config.target, y, m, d)) config.target = "2026-11-19";
-  if (migrateToV3 || migrateToV4 || migrateToV5 || migrateToV6 || migrateToV7 || migrateToV8 || migrateToV9) {
+  if (migrateToV3 || migrateToV4 || migrateToV5 || migrateToV6 || migrateToV7 || migrateToV8 || migrateToV9 || migrateToV10) {
     if (saveGeneralConfig()) {
       logLine(String("configuration migrated from schema ") + String(version) + " to " + String(CONFIG_VERSION));
     } else {

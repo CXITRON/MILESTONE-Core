@@ -876,7 +876,8 @@ void drawPortalScreen() {
   display.setFont(u8g2_font_6x10_tf);
   display.drawStr(2, 65, "Password:");
   display.setFont(u8g2_font_7x14B_tf);
-  display.drawStr(15, 83, apPassword.c_str());
+  if (apPassword.length() == 0) drawCenteredStr("OPEN NETWORK", 83);
+  else display.drawStr(15, 83, apPassword.c_str());
   display.setFont(u8g2_font_6x10_tf);
   display.drawStr(13, 104, "192.168.4.1");
   uint32_t secondsLeft = AP_TIMEOUT_MS > millis() - portalStartedMs ? (AP_TIMEOUT_MS - (millis() - portalStartedMs)) / 1000 : 0;
@@ -984,6 +985,47 @@ void drawUpdateScreen() {
   display.sendBuffer();
 }
 
+void drawBluetoothNowPlayingScreen() {
+  if (!oledReady) return;
+  display.clearBuffer();
+  display.setFont(u8g2_font_6x10_tf);
+  drawCenteredStr(bluetoothNowPlayingIsPlaying() ? "NOW PLAYING" : "PAUSED", 10);
+  display.drawHLine(0, 14, 128);
+
+  display.setFont(u8g2_font_unifont_t_korean2);
+  drawScrollingUtf8(String(bluetoothNowPlayingTitle()), 37, 2, 124, true);
+  display.setFont(u8g2_font_unifont_t_korean2);
+  drawScrollingUtf8(String(bluetoothNowPlayingArtist()), 62, 2, 124, true);
+
+  String album = bluetoothNowPlayingAlbum();
+  if (album.length()) {
+    display.setFont(u8g2_font_5x8_tf);
+    addEllipsisToFit(album, 122);
+    drawCenteredStr(album.c_str(), 79);
+  }
+
+  const float duration = bluetoothNowPlayingDurationSeconds();
+  const float elapsedSeconds = bluetoothCurrentElapsedSeconds();
+  display.drawFrame(7, 91, 114, 8);
+  if (duration > 0.0f) {
+    int progress = static_cast<int>((elapsedSeconds / duration) * 110.0f);
+    progress = clampInt(progress, 0, 110);
+    if (progress > 0) display.drawBox(9, 93, progress, 4);
+  }
+  const int elapsedWhole = static_cast<int>(elapsedSeconds);
+  const int durationWhole = static_cast<int>(duration);
+  char footer[28];
+  if (durationWhole > 0) {
+    snprintf(footer, sizeof(footer), "%d:%02d / %d:%02d",
+             elapsedWhole / 60, elapsedWhole % 60, durationWhole / 60, durationWhole % 60);
+  } else {
+    snprintf(footer, sizeof(footer), "%d:%02d", elapsedWhole / 60, elapsedWhole % 60);
+  }
+  display.setFont(u8g2_font_6x10_tf);
+  drawCenteredStr(footer, 118);
+  display.sendBuffer();
+}
+
 void drawMainScreen() {
   if (!oledReady || displaySleeping) return;
   if (thermalSafeMode) {
@@ -1008,6 +1050,10 @@ void drawMainScreen() {
   }
   if (resetConfirmation) {
     drawResetConfirmation();
+    return;
+  }
+  if (bluetoothNowPlayingVisible()) {
+    drawBluetoothNowPlayingScreen();
     return;
   }
   int8_t ox, oy;

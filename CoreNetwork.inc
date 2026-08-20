@@ -69,9 +69,18 @@ void markNtpSuccess() {
   logLine("NTP synchronized");
 }
 
+void stopWifiScanBestEffort() {
+  const esp_err_t result = esp_wifi_scan_stop();
+  if (result != ESP_OK && result != ESP_ERR_WIFI_NOT_INIT && result != ESP_ERR_WIFI_NOT_STARTED &&
+      result != ESP_ERR_WIFI_STATE) {
+    logLine(String("Wi-Fi scan stop failed: ") + esp_err_to_name(result));
+  }
+  WiFi.scanDelete();
+}
+
 void cancelPortalWifiScan() {
   if (!portalWifiScanActive) return;
-  WiFi.scanDelete();
+  stopWifiScanBestEffort();
   portalWifiScanActive = false;
   portalWifiScanDeadlineMs = 0;
 }
@@ -90,7 +99,8 @@ void resetEnterpriseStationAuth() {
 }
 
 void beginStationConnection(const String &ssid, const String &password, WifiSecurityType security,
-                            const String &username, const String &identity, bool preserveAp) {
+                            const String &username, const String &identity, bool preserveAp,
+                            uint32_t connectTimeoutMs = WIFI_CONNECT_TIMEOUT_MS) {
   cancelPortalWifiScan();
   stopMdns();
   internetVerified = false;
@@ -121,20 +131,27 @@ void beginStationConnection(const String &ssid, const String &password, WifiSecu
   wifiNetworkReadySinceMs = 0;
   lastWifiDisconnectReason = 0;
   wifiConnectionStartedMs = millis();
-  wifiDeadlineMs = beginResult == WL_CONNECT_FAILED ? wifiConnectionStartedMs : wifiConnectionStartedMs + WIFI_CONNECT_TIMEOUT_MS;
+  wifiDeadlineMs = beginResult == WL_CONNECT_FAILED ? wifiConnectionStartedMs : wifiConnectionStartedMs + connectTimeoutMs;
   if (wifiTestState == WifiTestState::IDLE) setRuntimeState(RuntimeState::CONNECTING);
-  logLine(String("Wi-Fi connection started: security=") + wifiSecurityName(security));
+  logLine(String("Wi-Fi connection started: security=") + wifiSecurityName(security) +
+          " timeout=" + String(connectTimeoutMs) + "ms");
 }
 
 void beginSavedWifiConnection(uint8_t index, bool preserveAp) {
   if (index >= config.savedNetworkCount) return;
   activeWifiIndex = index;
+  const WifiSecurityType security = config.savedNetworks[index].security;
+  const bool firstDirectAttempt = !savedWifiScanCompleted && index == 0;
+  const uint32_t timeoutMs = security == WifiSecurityType::ENTERPRISE_PEAP
+                               ? WIFI_CONNECT_TIMEOUT_MS
+                               : (firstDirectAttempt ? WIFI_PRIMARY_CONNECT_TIMEOUT_MS
+                                                     : WIFI_FALLBACK_CONNECT_TIMEOUT_MS);
   beginStationConnection(config.savedNetworks[index].ssid,
                          config.savedNetworks[index].password,
-                         config.savedNetworks[index].security,
+                         security,
                          config.savedNetworks[index].username,
                          config.savedNetworks[index].identity,
-                         preserveAp);
+                         preserveAp, timeoutMs);
 }
 
 void startSavedWifiSequence(bool preserveAp) {
@@ -155,13 +172,19 @@ void startSavedWifiSequence(bool preserveAp) {
 }
 
 bool startSavedWifiScan() {
-  WiFi.scanDelete();
-  int started = WiFi.scanNetworks(true, true, false, 300, 0);
+  // A timed-out WiFi.begin() can still leave the station driver in its own
+  // connection scan. Explicitly stop that attempt before starting our ranked
+  // saved-network scan; otherwise scanNetworks() can fail with WIFI_STATE.
+  WiFi.disconnect(false, false);
+  delay(40);
+  stopWifiScanBestEffort();
+  const uint32_t dwellMs = savedWifiPreserveAp ? PORTAL_WIFI_SCAN_DWELL_MS : SAVED_WIFI_SCAN_DWELL_MS;
+  int started = WiFi.scanNetworks(true, false, false, dwellMs, 0);
   if (started == WIFI_SCAN_FAILED) return false;
   savedWifiScanActive = true;
   savedWifiScanCompleted = true;
   savedWifiScanDeadlineMs = millis() + WIFI_SCAN_TIMEOUT_MS;
-  logLine("scanning for other saved Wi-Fi networks");
+  logLine(String("scanning for other saved Wi-Fi networks; dwell=") + String(dwellMs) + "ms");
   return true;
 }
 
@@ -169,6 +192,11 @@ bool finishSavedWifiScanAndConnect() {
   int count = WiFi.scanComplete();
   if (count == WIFI_SCAN_RUNNING && !deadlineReached(millis(), savedWifiScanDeadlineMs)) return true;
   savedWifiScanActive = false;
+  if (count == WIFI_SCAN_RUNNING) {
+    stopWifiScanBestEffort();
+    logLine("saved Wi-Fi scan timed out");
+    return false;
+  }
   if (count < 0) {
     WiFi.scanDelete();
     return false;
@@ -178,7 +206,7 @@ bool finishSavedWifiScanAndConnect() {
   for (uint8_t i = 0; i < MAX_SAVED_NETWORKS; ++i) bestRssi[i] = -1000;
   for (int scanIndex = 0; scanIndex < count; ++scanIndex) {
     int savedIndex = findSavedNetwork(WiFi.SSID(scanIndex));
-    if (savedIndex <= 0) continue;  // The most recent network was already tried.
+    if (savedIndex <= 0) continue;  // The most recent network was already tried directly.
     bestRssi[savedIndex] = max(bestRssi[savedIndex], WiFi.RSSI(scanIndex));
   }
   WiFi.scanDelete();
@@ -200,13 +228,11 @@ bool finishSavedWifiScanAndConnect() {
     wifiCandidateOrder[wifiCandidateCount++] = static_cast<uint8_t>(bestIndex);
   }
 
-  // Hidden networks cannot always be identified by SSID in scan results.
-  // Append every unseen saved entry after the RSSI-ranked candidates so each
-  // network still receives a direct connection attempt.
-  for (uint8_t i = 1; i < config.savedNetworkCount; ++i) {
-    if (!selected[i]) wifiCandidateOrder[wifiCandidateCount++] = i;
-  }
-
+  // Do not blindly direct-connect every saved SSID that was absent from the
+  // scan. In a no-Wi-Fi environment that kept the radio busy for minutes and
+  // repeated the same expensive search. A hidden network still works when it
+  // is the preferred (index 0) entry; secondary hidden networks become
+  // preferred after a successful manual setup test.
   wifiCandidatePosition = 1;
   if (wifiCandidatePosition >= wifiCandidateCount) return false;
   beginSavedWifiConnection(wifiCandidateOrder[wifiCandidatePosition], savedWifiPreserveAp);
@@ -230,6 +256,17 @@ void scheduleRetry(bool quick = false) {
   nextRetryMs = millis() + retrySeconds * 1000UL;
 }
 
+void parkDisconnectedWifiUntilRetry() {
+  if (portalActive || WiFi.status() == WL_CONNECTED) return;
+  stopWifiScanBestEffort();
+  stopMdns();
+  WiFi.disconnect(true, false);
+  WiFi.mode(WIFI_OFF);
+  wifiNetworkReadySinceMs = 0;
+  wifiDeadlineMs = 0;
+  logLine("Wi-Fi radio parked until the next retry");
+}
+
 void stopPortal();
 void registerPortalRoutes();
 void selectFirstEnabledCycleView();
@@ -239,17 +276,60 @@ void requestFirmwareUpdateCheck(UpdateCheckReason reason);
 void processFirmwareUpdate();
 bool stationNetworkReady();
 
+void prepareStablePortalRadio() {
+  cancelPortalWifiScan();
+  if (savedWifiScanActive) {
+    // Entering setup while the background saved-network scan is running used
+    // to leave that off-channel scan alive underneath the SoftAP. Stop it
+    // explicitly before the user-facing AP is started.
+    WiFi.disconnect(false, false);
+    delay(30);
+    stopWifiScanBestEffort();
+    savedWifiScanActive = false;
+    savedWifiScanCompleted = false;
+    savedWifiScanDeadlineMs = 0;
+  }
+  if (runtimeState == RuntimeState::CONNECTING && WiFi.status() != WL_CONNECTED) {
+    WiFi.disconnect(false, false);
+    delay(30);
+    resetEnterpriseStationAuth();
+  }
+  wifiNetworkReadySinceMs = 0;
+  wifiDeadlineMs = 0;
+  activeWifiIndex = NO_WIFI_INDEX;
+}
+
 void startPortal() {
   if (thermalSafeMode) return;
   if (portalActive) {
     portalStartedMs = millis();
     return;
   }
-  apPassword = randomHex(8);
+  prepareStablePortalRadio();
+  if (config.fixedApSecurity) apPassword = config.fixedApPassword;
+  else apPassword = randomHex(8);
   sessionToken = randomHex(20);
   WiFi.mode(WIFI_AP_STA);
-  if (!WiFi.softAP(AP_SSID, apPassword.c_str())) {
-    logLine("SoftAP start failed");
+  WiFi.setAutoReconnect(false);
+  WiFi.setSleep(false);
+  delay(WIFI_DRIVER_SETTLE_MS);
+  auto startSoftAp = []() {
+    return config.fixedApSecurity && apPassword.length() == 0
+             ? WiFi.softAP(AP_SSID)
+             : WiFi.softAP(AP_SSID, apPassword.c_str());
+  };
+  bool apStarted = startSoftAp();
+  if (!apStarted) {
+    // Driver transitions after a cancelled STA scan/connection can rarely make
+    // the first softAP() call fail. Reset only the AP side and retry once.
+    WiFi.softAPdisconnect(true);
+    delay(80);
+    WiFi.mode(WIFI_AP_STA);
+    WiFi.setSleep(false);
+    apStarted = startSoftAp();
+  }
+  if (!apStarted) {
+    logLine("SoftAP start failed after retry");
     return;
   }
   dnsServer.start(53, "*", WiFi.softAPIP());
@@ -333,7 +413,12 @@ void sendJson(int status, const String &json) {
 
 bool authorizePortalRequest() {
   if (!requireSetupApRequest()) return false;
-  if (validToken()) return true;
+  if (validToken()) {
+    // Treat authenticated browser traffic as setup activity so the 10-minute
+    // portal timeout is idle-based instead of closing during an active session.
+    portalStartedMs = millis();
+    return true;
+  }
   sendJson(403, "{\"error\":\"유효하지 않은 세션 토큰입니다.\"}");
   return false;
 }

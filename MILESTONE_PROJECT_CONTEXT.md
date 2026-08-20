@@ -1,6 +1,6 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v1.10.8
+> Current baseline: MILESTONE Core v1.11.1
 > Hardware: Waveshare ESP32-S3-Zero + SH1107 128×128 OLED
 > Repository: `CXITRON/MILESTONE-Core`
 
@@ -13,7 +13,7 @@ MILESTONE Core is an ESP32-S3 desktop display firmware with:
 - D-day, date, time, and message views
 - selectable/automatic screen cycling
 - BOOT-button interaction
-- local captive configuration portal
+- local captive configuration portal with optional fixed/open setup-AP security
 - multiple remembered Wi-Fi networks
 - WPA2-Enterprise PEAP support
 - NTP time synchronization and offline fallback
@@ -25,6 +25,7 @@ MILESTONE Core is an ESP32-S3 desktop display firmware with:
 - persistent recent Diagnostics & Health event history with portal copy/clear tools
 - browser-converted 128×128 monochrome photos, GIFs, and short local videos
 - isolated `/stream` live playback with browser-side full preconversion, RAW/XOR-RLE binary frame-record transport, PSRAM buffering, and stream-specific runtime isolation
+- optional iPhone/iPad BLE Now Playing metadata overlay via Apple Media Service (AMS), disabled by default
 
 It is an embedded application composed of several cooperative state machines. Reliability and recoverability are more important than cosmetic architectural purity.
 
@@ -36,6 +37,7 @@ MILESTONE_Core/
 ├── MILESTONE_PROJECT_CONTEXT.md
 ├── MILESTONE_Core.ino
 ├── CoreConfig.inc
+├── CoreBluetooth.inc
 ├── CoreDiagnostics.inc
 ├── CoreMedia.inc
 ├── CoreRollback.inc
@@ -60,6 +62,7 @@ MILESTONE_Core/
 │   ├── test_core_media.cpp
 │   ├── test_diagnostics_contract.sh
 │   ├── test_media_contract.sh
+│   ├── test_radio_bluetooth_contract.sh
 │   ├── test_stream_page.js
 │   ├── test_release_reconcile.sh
 │   └── test_release_manifest.sh
@@ -78,13 +81,13 @@ The `*.inc` runtime files are intentionally included into the sketch as one tran
 Firmware and persistent schema versions are separate concepts.
 
 ```cpp
-FIRMWARE_VERSION = "1.10.8"
-CONFIG_VERSION = 9
+FIRMWARE_VERSION = "1.11.1"
+CONFIG_VERSION = 10
 ```
 
 Increment `CONFIG_VERSION` only when persistent NVS layout/meaning changes and implement a migration path. A firmware version change by itself must not force a schema reset.
 
-Schema 9 appends `CUSTOM_MEDIA` as View 7 and TopMode 8 without renumbering the existing values. The v8→v9 migration appends View 7 to the saved order but leaves cycle-mask bit 7 off, preserving the user's previous visible cycle until explicitly enabled.
+Schema 9 appends `CUSTOM_MEDIA` as View 7 and TopMode 8 without renumbering the existing values. The v8→v9 migration appends View 7 to the saved order but leaves cycle-mask bit 7 off, preserving the user's previous visible cycle until explicitly enabled. Schema 10 adds `ap_fixed`, `ap_pass`, and `ble_media`. The v9→v10 migration defaults fixed AP security and BLE Now Playing to off, so existing devices keep the previous random 8-character setup-AP password behavior until the user explicitly changes it.
 
 ## 4. Runtime architecture
 
@@ -98,7 +101,27 @@ Schema 9 appends `CUSTOM_MEDIA` as View 7 and TopMode 8 without renumbering the 
 
 ### Network and time
 
-`CoreNetwork.inc` manages Wi-Fi connection, Enterprise PEAP, setup AP behavior, DHCP stabilization, NTP synchronization, retries, and Wi-Fi sleep behavior. Cold-boot sequencing was hardened because setup-mode connectivity and autonomous reboot connectivity previously behaved differently.
+`CoreNetwork.inc` manages Wi-Fi connection, Enterprise PEAP, setup AP behavior, DHCP stabilization, NTP synchronization, retries, and Wi-Fi sleep behavior. Cold-boot sequencing was hardened because setup-mode connectivity and autonomous reboot connectivity previously behaved differently. In schema 10, fixed AP security is opt-in: the default path still generates a fresh 8-character setup-AP password, while fixed mode uses a persisted 8–63 character password or an explicitly blank password for an open AP.
+
+
+### Bluetooth Now Playing and setup-AP security (v1.11.0)
+
+`CoreBluetooth.inc` implements optional iPhone/iPad Now Playing metadata through Apple Media Service (AMS) when the Arduino-ESP32 build exposes NimBLE. The feature is disabled by default and the BLE stack is not initialized until `bluetoothNowPlaying` is enabled. MILESTONE advertises an AMS service solicitation, bonds with the iOS device, discovers the iPhone-hosted AMS service on the same connection, subscribes to Player/Track Entity Update attributes, and renders title, artist, album, playback state, and progress as a temporary overlay. It does not add a ninth persistent `View`, so the existing 8-bit cycle mask and saved screen-order contract remain unchanged.
+
+The current implementation parses complete AMS Entity Update notifications and safely displays the received prefix when iOS marks a value as truncated. A later revision may add asynchronous Entity Attribute reads for the full value; do not block the main loop waiting for a GATT read. Pairing and AMS interoperability must be validated on the physical ESP32-S3/iPhone combination before treating the feature as hardware-certified.
+
+BLE and live streaming intentionally do not compete for the ESP32-S3 radio/runtime hot path. `enterMediaStreamPerformanceMode()` suspends BLE advertising/connections before STREAM_MODE work starts, and `leaveMediaStreamPerformanceMode()` resumes BLE only after normal runtime is restored. Preserve that isolation.
+
+Setup-AP security is stored in schema 10 but preserves old behavior by default. `fixedApSecurity=false` uses the existing fresh random 8-character password. When explicitly enabled, `fixedApPassword` accepts either 8–63 characters or an empty string; empty means an open AP and the portal must display an explicit security warning/confirmation. The GET API exposes only whether a password exists, never the saved secret. AP security and Bluetooth have independent save actions so changing Bluetooth cannot accidentally overwrite a hidden AP password. Turning fixed mode off clears the dormant fixed password and returns the next AP start to the legacy random-password path.
+
+
+### Network/AP stabilization (v1.11.1)
+
+v1.11.1 treats the setup AP as a user-facing radio session that must take priority over autonomous STA discovery. Entering the portal cancels any in-flight saved-network scan or incomplete STA connection before SoftAP startup. Failed portal Wi-Fi tests leave STA idle instead of immediately launching a second saved-network connection underneath the AP; the normal saved-network sequence resumes only when setup closes or the user explicitly requests another network operation.
+
+Portal scans remain asynchronous but use an 120ms active-scan dwell per channel, while non-portal saved-network scans use 120ms. `esp_wifi_scan_stop()` is used during cancellation/timeouts rather than relying only on deleting scan results. The preferred saved network gets one bounded direct attempt; after that, only saved SSIDs actually observed by the scan are tried. This avoids minutes of repeated direct attempts when no Wi-Fi exists nearby. Confirmed no-network states use the normal configured retry period instead of the 15-second quick retry, and park Wi-Fi in `WIFI_OFF` until that retry becomes due.
+
+The portal UI tolerates transient HTTP loss while the single ESP32-S3 radio is off-channel for scanning, blocks scans while a connection test is active, and explicitly reports that the setup AP remains available when zero networks are found. Authenticated portal traffic refreshes the AP idle timeout so active configuration work is not terminated by the fixed 10-minute timer.
 
 ### OTA update
 
@@ -147,7 +170,7 @@ Important write-policy invariants:
 - write only significant boot, Wi-Fi, NTP, OTA, rollback, thermal, or isolated media-failure events
 - suppress the same event/detail for 60 seconds unless the event is explicitly forced
 - never persist every loop, ordinary screen transitions, or RSSI fluctuations
-- keep `CONFIG_VERSION` independent; diagnostics storage is not part of schema 9 migration
+- keep `CONFIG_VERSION` independent; diagnostics storage is not part of schema 10 migration
 - diagnostics hooks observe existing state-transition outcomes and must not reorder the underlying state machine
 - clearing diagnostics must not clear Wi-Fi/settings/rollback state; factory reset may clear the separate diagnostics namespace as part of a full wipe
 
@@ -274,7 +297,7 @@ cd /tmp && milestone-release --dry-run taildrop X.Y.Z "short release note"
 
 Use `--yes` only when an unattended final publish is explicitly desired.
 
-## 8. Areas intentionally not refactored through v1.10.8
+## 8. Areas intentionally not refactored through v1.11.1
 
 The following broad refactors were deliberately rejected because their regression risk exceeded their immediate value:
 
@@ -313,4 +336,4 @@ The agent should select the mode according to whether the source was edited dire
 For recovery or automation, `milestone-release --zip /path/to/MILESTONE_Core_X.Y.Z.zip taildrop X.Y.Z "notes"` runs the same staging/reconciliation/release pipeline without fetching another Taildrop file. Normal user-facing usage remains `milestone-release taildrop ...`.
 
 
-v1.10.3 was the last incremental live-stream implementation. v1.10.5 replaces that hot path: browser-side full preconversion, a dedicated `/stream` page, raw binary transport, a PSRAM stream queue, isolated STREAM_MODE execution, partial SH1107 updates, stream-specific thermal policy, and explicit resource/sequence recovery. v1.10.6 fixes the Arduino-ESP32 3.3.11 raw `WebServer` metadata incompatibility by carrying session/sequence/frame-count in explicitly collected headers instead of URL query arguments. v1.10.7 then removes the two-frame ACK-locked sender cadence. v1.10.8 expands the PSRAM ring to 240 frames, starts after a 96-frame jitter buffer, uses bounded RAW/XOR-RLE live frame records, separates the source timeline from an adaptive OLED service clock that reserves network time after each flush, and adds X/Y dirty-tile partial refresh. Do not reintroduce the v1.10.3 multipart/burst sender, query-based raw metadata, or a tiny browser lead buffer into the live path.
+v1.10.3 was the last incremental live-stream implementation. v1.10.5 replaces that hot path: browser-side full preconversion, a dedicated `/stream` page, raw binary transport, a PSRAM stream queue, isolated STREAM_MODE execution, partial SH1107 updates, stream-specific thermal policy, and explicit resource/sequence recovery. v1.10.6 fixes the Arduino-ESP32 3.3.11 raw `WebServer` metadata incompatibility by carrying session/sequence/frame-count in explicitly collected headers instead of URL query arguments. v1.10.7 then removes the two-frame ACK-locked sender cadence. v1.10.8 expands the PSRAM ring to 240 frames, starts after a 96-frame jitter buffer, uses bounded RAW/XOR-RLE live frame records, separates the source timeline from an adaptive OLED service clock that reserves network time after each flush, and adds X/Y dirty-tile partial refresh. v1.11.0 leaves that transport/render contract unchanged and only suspends optional BLE around STREAM_MODE. v1.11.1 changes only normal Wi-Fi/AP discovery and retry behavior; STREAM_MODE transport/render contracts remain unchanged. Do not reintroduce the v1.10.3 multipart/burst sender, query-based raw metadata, or a tiny browser lead buffer into the live path.

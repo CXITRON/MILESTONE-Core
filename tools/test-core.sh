@@ -48,6 +48,8 @@ trap cleanup EXIT
 bash "$project_dir/tests/test_release_manifest.sh"
 bash "$project_dir/tests/test_diagnostics_contract.sh"
 bash "$project_dir/tests/test_media_contract.sh"
+bash "$project_dir/tests/test_radio_bluetooth_contract.sh"
+bash "$project_dir/tests/test_network_stability_contract.sh"
 bash "$project_dir/tests/test_docs_contract.sh"
 node "$project_dir/tests/test_media_picker.js" "$project_dir/PortalPage.h"
 bash "$project_dir/tests/test_release_reconcile.sh"

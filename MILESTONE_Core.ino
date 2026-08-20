@@ -14,6 +14,7 @@
 #include <mbedtls/sha256.h>
 #include <esp_timer.h>
 #include <esp_err.h>
+#include <esp_wifi.h>
 #include <esp_heap_caps.h>
 #include <time.h>
 #include "driver/temperature_sensor.h"
@@ -22,6 +23,16 @@
 #include "esp_app_desc.h"
 #include "esp_sntp.h"
 #include "esp_system.h"
+#include <BLEDevice.h>
+#include <BLEServer.h>
+#include <BLEAdvertising.h>
+#include <BLESecurity.h>
+#if defined(CONFIG_NIMBLE_ENABLED)
+#include <host/ble_gap.h>
+#include <host/ble_gatt.h>
+#include <host/ble_uuid.h>
+#include <os/os_mbuf.h>
+#endif
 #if CONFIG_ESP_WIFI_ENTERPRISE_SUPPORT
 #if __has_include("esp_eap_client.h")
 #include "esp_eap_client.h"
@@ -50,7 +61,7 @@ SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 
 namespace Milestone {
 
-constexpr char FIRMWARE_VERSION[] = "1.10.8";
+constexpr char FIRMWARE_VERSION[] = "1.11.1";
 constexpr char AP_SSID[] = "MILESTONE-D1-SETUP";
 constexpr char HOSTNAME[] = "milestone-d1";
 constexpr char PREFS_NS[] = "milestone";
@@ -58,7 +69,7 @@ constexpr char DIAGNOSTICS_PREFS_NS[] = "milestone_diag";
 constexpr char UPDATE_MANIFEST_URL[] = "https://github.com/CXITRON/MILESTONE-Core/releases/latest/download/MILESTONE_Core.json";
 constexpr char UPDATE_RELEASE_BASE_URL[] = "https://github.com/CXITRON/MILESTONE-Core/releases/download/v";
 constexpr char UPDATE_ASSET_NAME[] = "MILESTONE_Core.bin";
-constexpr uint16_t CONFIG_VERSION = 9;
+constexpr uint16_t CONFIG_VERSION = 10;
 constexpr uint8_t VIEW_COUNT = 8;
 constexpr uint8_t MAX_SAVED_NETWORKS = 8;
 constexpr uint8_t NO_WIFI_INDEX = 0xFF;
@@ -72,6 +83,9 @@ constexpr uint8_t OLED_ADDR_SECONDARY = 0x3D;
 
 constexpr uint32_t AP_TIMEOUT_MS = 10UL * 60UL * 1000UL;
 constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 30UL * 1000UL;
+constexpr uint32_t WIFI_PRIMARY_CONNECT_TIMEOUT_MS = 12UL * 1000UL;
+constexpr uint32_t WIFI_FALLBACK_CONNECT_TIMEOUT_MS = 15UL * 1000UL;
+constexpr uint32_t WIFI_PORTAL_TEST_CONNECT_TIMEOUT_MS = 15UL * 1000UL;
 constexpr uint32_t WIFI_DRIVER_SETTLE_MS = 100UL;
 constexpr uint32_t WIFI_IP_STABLE_MS = 750UL;
 constexpr uint32_t WIFI_QUICK_RETRY_MS = 15UL * 1000UL;
@@ -88,7 +102,9 @@ constexpr uint32_t VIEW_SAVE_DELAY_MS = 1500UL;
 constexpr uint32_t RESET_CONFIRM_WINDOW_MS = 5000UL;
 constexpr uint32_t RESET_CONFIRM_HOLD_MS = 3000UL;
 constexpr uint32_t LED_REFRESH_MS = 20UL;
-constexpr uint32_t WIFI_SCAN_TIMEOUT_MS = 12UL * 1000UL;
+constexpr uint32_t WIFI_SCAN_TIMEOUT_MS = 6UL * 1000UL;
+constexpr uint32_t PORTAL_WIFI_SCAN_DWELL_MS = 120UL;
+constexpr uint32_t SAVED_WIFI_SCAN_DWELL_MS = 120UL;
 constexpr uint32_t TEMPERATURE_REFRESH_MS = 5UL * 1000UL;
 constexpr uint32_t THERMAL_CRITICAL_HOLD_MS = 10UL * 1000UL;
 constexpr uint32_t THERMAL_THROTTLE_RECOVERY_HOLD_MS = 30UL * 1000UL;
@@ -258,6 +274,9 @@ struct Config {
   uint32_t ddayPeriodSec = 0;  // 0 = recalculate at local midnight.
   uint32_t retryPeriodSec = 300;
   bool wifiSleep = false;
+  bool fixedApSecurity = false;
+  String fixedApPassword;
+  bool bluetoothNowPlaying = false;
   uint8_t brightness = 180;
   uint8_t nightLevel = 45;
   bool ledEnabled = true;
@@ -551,6 +570,7 @@ void leaveMediaStreamPerformanceMode();
 #include "CoreMedia.inc"
 #include "CoreDiagnostics.inc"
 #include "CoreRollback.inc"
+#include "CoreBluetooth.inc"
 #include "CoreDisplay.inc"
 #include "CoreNetwork.inc"
 #include "CoreUpdate.inc"
