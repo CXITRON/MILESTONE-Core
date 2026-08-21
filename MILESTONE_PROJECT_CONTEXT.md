@@ -1,6 +1,6 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v1.11.1
+> Current baseline: MILESTONE Core v1.11.2
 > Hardware: Waveshare ESP32-S3-Zero + SH1107 128×128 OLED
 > Repository: `CXITRON/MILESTONE-Core`
 
@@ -81,7 +81,7 @@ The `*.inc` runtime files are intentionally included into the sketch as one tran
 Firmware and persistent schema versions are separate concepts.
 
 ```cpp
-FIRMWARE_VERSION = "1.11.1"
+FIRMWARE_VERSION = "1.11.2"
 CONFIG_VERSION = 10
 ```
 
@@ -122,6 +122,10 @@ v1.11.1 treats the setup AP as a user-facing radio session that must take priori
 Portal scans remain asynchronous but use an 120ms active-scan dwell per channel, while non-portal saved-network scans use 120ms. `esp_wifi_scan_stop()` is used during cancellation/timeouts rather than relying only on deleting scan results. The preferred saved network gets one bounded direct attempt; after that, only saved SSIDs actually observed by the scan are tried. This avoids minutes of repeated direct attempts when no Wi-Fi exists nearby. Confirmed no-network states use the normal configured retry period instead of the 15-second quick retry, and park Wi-Fi in `WIFI_OFF` until that retry becomes due.
 
 The portal UI tolerates transient HTTP loss while the single ESP32-S3 radio is off-channel for scanning, blocks scans while a connection test is active, and explicitly reports that the setup AP remains available when zero networks are found. Authenticated portal traffic refreshes the AP idle timeout so active configuration work is not terminated by the fixed 10-minute timer.
+
+### Bluetooth advertising recovery and diagnostics (v1.11.2)
+
+BLE stack initialization is not treated as proof that the device is advertising. Advertising payload and scan-response registration, advertising start, connection attempts, pairing/encryption, AMS discovery, CCCD discovery, and subscription writes have distinct runtime stages and error codes. A failed or unexpectedly stopped advertisement is retried on a bounded five-second cadence outside STREAM_MODE. Failed connection and security attempts are disconnected cleanly so advertising can resume instead of leaving the device in a permanently connected-but-unsecured state. `/api/status` exposes the active stage, actual advertising state, last BLE error, and numeric stack status for hardware diagnosis.
 
 ### OTA update
 
@@ -297,7 +301,7 @@ cd /tmp && milestone-release --dry-run taildrop X.Y.Z "short release note"
 
 Use `--yes` only when an unattended final publish is explicitly desired.
 
-## 8. Areas intentionally not refactored through v1.11.1
+## 8. Areas intentionally not refactored through v1.11.2
 
 The following broad refactors were deliberately rejected because their regression risk exceeded their immediate value:
 

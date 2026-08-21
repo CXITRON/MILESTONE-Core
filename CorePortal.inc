@@ -42,6 +42,10 @@ void handleStatus() {
   json += "\"bluetooth_active\":" + String(bluetoothNowPlayingRuntimeActive() ? "true" : "false") + ",";
   json += "\"bluetooth_connected\":" + String(bluetoothNowPlayingConnected() ? "true" : "false") + ",";
   json += "\"bluetooth_ams_ready\":" + String(bluetoothNowPlayingAmsReady() ? "true" : "false") + ",";
+  json += "\"bluetooth_advertising\":" + String(bluetoothNowPlayingAdvertising() ? "true" : "false") + ",";
+  json += "\"bluetooth_stage\":\"" + jsonEscape(bluetoothNowPlayingStage()) + "\",";
+  json += "\"bluetooth_error\":\"" + jsonEscape(bluetoothNowPlayingError()) + "\",";
+  json += "\"bluetooth_error_code\":" + String(bluetoothNowPlayingErrorCode()) + ",";
   json += "\"last_sync\":\"" + jsonEscape(formatEpoch(config.lastSync)) + "\",";
   json += "\"wifi_test\":\"" + String(wifiTestStateName(wifiTestState)) + "\",";
   json += "\"wifi_error\":\"" + jsonEscape(wifiTestError) + "\",";

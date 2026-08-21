@@ -21,6 +21,19 @@ constexpr uint16_t AMS_CONN_LATENCY = 3;
 constexpr uint16_t AMS_CONN_TIMEOUT = 600;       // 6 seconds in 10 ms units.
 constexpr size_t AMS_NOTIFICATION_MAX = 244;
 constexpr uint8_t AMS_NOTIFICATION_QUEUE = 6;
+constexpr uint32_t BLE_ADVERTISING_RETRY_MS = 5000UL;
+
+enum class BluetoothRuntimeStage : uint8_t {
+  OFF,
+  INITIALIZING,
+  ADVERTISING,
+  CONNECTED,
+  SECURING,
+  DISCOVERING,
+  READY,
+  SUSPENDED,
+  ERROR
+};
 
 static const ble_uuid128_t AMS_SERVICE_UUID = BLE_UUID128_INIT(
     0xdc, 0xf8, 0x55, 0xad, 0x02, 0xc5, 0xf4, 0x8e,
@@ -50,6 +63,11 @@ struct BluetoothNowPlayingState {
   uint16_t entityAttributeHandle = 0;
   uint16_t entityUpdateCccdHandle = 0;
   uint32_t nextDiscoveryMs = 0;
+  uint32_t nextAdvertisingRetryMs = 0;
+  uint32_t nextInitializationRetryMs = 0;
+  BluetoothRuntimeStage stage = BluetoothRuntimeStage::OFF;
+  const char *lastError = "";
+  int lastErrorCode = 0;
   String playerName;
   String title;
   String artist;
@@ -82,8 +100,40 @@ uint8_t amsNotificationCount = 0;
 volatile bool bluetoothConnectedEvent = false;
 volatile bool bluetoothDisconnectedEvent = false;
 volatile bool bluetoothEncryptedEvent = false;
+volatile bool bluetoothConnectFailedEvent = false;
 volatile uint16_t bluetoothEventConnHandle = BLE_HS_CONN_HANDLE_NONE;
 volatile int bluetoothEncryptionStatus = 0;
+volatile int bluetoothConnectFailureStatus = 0;
+
+const char *bluetoothRuntimeStageName(BluetoothRuntimeStage stage) {
+  switch (stage) {
+    case BluetoothRuntimeStage::OFF: return "off";
+    case BluetoothRuntimeStage::INITIALIZING: return "initializing";
+    case BluetoothRuntimeStage::ADVERTISING: return "advertising";
+    case BluetoothRuntimeStage::CONNECTED: return "connected";
+    case BluetoothRuntimeStage::SECURING: return "securing";
+    case BluetoothRuntimeStage::DISCOVERING: return "discovering";
+    case BluetoothRuntimeStage::READY: return "ready";
+    case BluetoothRuntimeStage::SUSPENDED: return "suspended";
+    case BluetoothRuntimeStage::ERROR: return "error";
+  }
+  return "unknown";
+}
+
+void setBluetoothError(const char *message, int code = 0) {
+  bluetoothNowPlaying.lastError = message ? message : "unknown";
+  bluetoothNowPlaying.lastErrorCode = code;
+  bluetoothNowPlaying.stage = BluetoothRuntimeStage::ERROR;
+}
+
+void clearBluetoothError() {
+  bluetoothNowPlaying.lastError = "";
+  bluetoothNowPlaying.lastErrorCode = 0;
+}
+
+void scheduleBluetoothInitializationRetry() {
+  bluetoothNowPlaying.nextInitializationRetryMs = millis() + BLE_ADVERTISING_RETRY_MS;
+}
 
 void resetAmsHandles() {
   bluetoothNowPlaying.amsReady = false;
@@ -152,6 +202,9 @@ int milestoneBluetoothGapEvent(struct ble_gap_event *event, void *) {
       if (event->connect.status == 0) {
         bluetoothEventConnHandle = event->connect.conn_handle;
         bluetoothConnectedEvent = true;
+      } else {
+        bluetoothConnectFailureStatus = event->connect.status;
+        bluetoothConnectFailedEvent = true;
       }
       break;
     case BLE_GAP_EVENT_DISCONNECT:
@@ -197,10 +250,12 @@ bool beginAmsDiscovery() {
   }
   resetAmsHandles();
   bluetoothNowPlaying.discoveryActive = true;
+  bluetoothNowPlaying.stage = BluetoothRuntimeStage::DISCOVERING;
   const int rc = ble_gattc_disc_svc_by_uuid(bluetoothNowPlaying.connHandle,
                                              &AMS_SERVICE_UUID.u,
                                              amsServiceDiscoveryCallback, nullptr);
   if (rc != 0) {
+    setBluetoothError("ams-service-discovery-start-failed", rc);
     scheduleAmsDiscoveryRetry();
     return false;
   }
@@ -221,6 +276,9 @@ int amsServiceDiscoveryCallback(uint16_t connHandle, const ble_gatt_error *error
                                             bluetoothNowPlaying.serviceEnd,
                                             amsCharacteristicDiscoveryCallback, nullptr);
     if (rc == 0) return 0;
+  }
+  if (error->status != BLE_HS_EDONE || bluetoothNowPlaying.serviceStart == 0) {
+    setBluetoothError("ams-service-not-found", error->status);
   }
   scheduleAmsDiscoveryRetry();
   return 0;
@@ -244,6 +302,9 @@ int amsCharacteristicDiscoveryCallback(uint16_t connHandle, const ble_gatt_error
                                             amsDescriptorDiscoveryCallback, nullptr);
     if (rc == 0) return 0;
   }
+  if (error->status != BLE_HS_EDONE || bluetoothNowPlaying.entityUpdateHandle == 0) {
+    setBluetoothError("ams-characteristic-not-found", error->status);
+  }
   scheduleAmsDiscoveryRetry();
   return 0;
 }
@@ -266,6 +327,9 @@ int amsDescriptorDiscoveryCallback(uint16_t connHandle, const ble_gatt_error *er
                                          reinterpret_cast<void *>(static_cast<uintptr_t>(0)));
     if (rc == 0) return 0;
   }
+  if (error->status != BLE_HS_EDONE || bluetoothNowPlaying.entityUpdateCccdHandle == 0) {
+    setBluetoothError("ams-cccd-not-found", error->status);
+  }
   scheduleAmsDiscoveryRetry();
   return 0;
 }
@@ -274,6 +338,7 @@ int amsSubscriptionWriteCallback(uint16_t connHandle, const ble_gatt_error *erro
                                  ble_gatt_attr *, void *arg) {
   if (connHandle != bluetoothNowPlaying.connHandle || !error) return 0;
   if (error->status != 0) {
+    setBluetoothError("ams-subscription-write-failed", error->status);
     scheduleAmsDiscoveryRetry();
     return 0;
   }
@@ -299,21 +364,39 @@ int amsSubscriptionWriteCallback(uint16_t connHandle, const ble_gatt_error *erro
     bluetoothNowPlaying.amsReady = true;
     bluetoothNowPlaying.discoveryActive = false;
     bluetoothNowPlaying.nextDiscoveryMs = 0;
+    bluetoothNowPlaying.stage = BluetoothRuntimeStage::READY;
+    clearBluetoothError();
     return 0;
   }
+  setBluetoothError("ams-subscription-command-failed");
   scheduleAmsDiscoveryRetry();
   return 0;
 }
 
-void startBluetoothAdvertising() {
+bool startBluetoothAdvertising() {
   if (!bluetoothNowPlaying.initialized || bluetoothNowPlaying.suspended ||
-      !config.bluetoothNowPlaying || bluetoothNowPlaying.connected || !bluetoothAdvertising) return;
-  if (bluetoothAdvertising->isAdvertising()) return;
-  bluetoothAdvertising->start();
+      !config.bluetoothNowPlaying || bluetoothNowPlaying.connected || !bluetoothAdvertising) return false;
+  if (bluetoothAdvertising->isAdvertising()) {
+    bluetoothNowPlaying.stage = BluetoothRuntimeStage::ADVERTISING;
+    return true;
+  }
+  if (!bluetoothAdvertising->start()) {
+    setBluetoothError("advertising-start-failed");
+    bluetoothNowPlaying.nextAdvertisingRetryMs = millis() + BLE_ADVERTISING_RETRY_MS;
+    logLine("BLE advertising start failed; retry scheduled");
+    return false;
+  }
+  bluetoothNowPlaying.stage = BluetoothRuntimeStage::ADVERTISING;
+  bluetoothNowPlaying.nextAdvertisingRetryMs = 0;
+  logLine("BLE advertising active as MILESTONE");
+  return true;
 }
 
-void configureBluetoothAdvertising() {
-  if (!bluetoothAdvertising) return;
+bool configureBluetoothAdvertising() {
+  if (!bluetoothAdvertising) {
+    setBluetoothError("advertising-object-missing");
+    return false;
+  }
   BLEAdvertisementData advertisementData;
   advertisementData.setFlags(ESP_BLE_ADV_FLAG_GEN_DISC | ESP_BLE_ADV_FLAG_BREDR_NOT_SPT);
   // Complete list of 128-bit service solicitation UUIDs (AD type 0x15).
@@ -326,23 +409,42 @@ void configureBluetoothAdvertising() {
   advertisementData.addData(solicitation, sizeof(solicitation));
   BLEAdvertisementData scanResponse;
   scanResponse.setName("MILESTONE");
-  bluetoothAdvertising->setAdvertisementData(advertisementData);
-  bluetoothAdvertising->setScanResponseData(scanResponse);
+  const bool advertisementDataReady = bluetoothAdvertising->setAdvertisementData(advertisementData);
+  const bool scanResponseReady = bluetoothAdvertising->setScanResponseData(scanResponse);
+  // Service solicitation is useful only when iOS can actively scan and open a
+  // connection. Do not rely on library defaults that may change by board core.
+  bluetoothAdvertising->setAdvertisementType(BLE_GAP_CONN_MODE_UND);
+  bluetoothAdvertising->setScanFilter(false, false);
   // 160-240 ms advertising interval reduces idle RF duty while remaining easy
   // to discover when the user enables the feature.
   bluetoothAdvertising->setMinInterval(256);
   bluetoothAdvertising->setMaxInterval(384);
+  if (!advertisementDataReady) {
+    setBluetoothError("advertising-data-rejected");
+    return false;
+  }
+  if (!scanResponseReady) {
+    setBluetoothError("scan-response-rejected");
+    return false;
+  }
+  return true;
 }
 
 bool initializeBluetoothNowPlaying() {
   if (!config.bluetoothNowPlaying || mediaStreamActive || bluetoothNowPlaying.initialized) {
     return bluetoothNowPlaying.initialized;
   }
+  bluetoothNowPlaying.stage = BluetoothRuntimeStage::INITIALIZING;
+  clearBluetoothError();
   if (!BLEDevice::init("MILESTONE")) {
+    setBluetoothError("stack-initialization-failed");
+    scheduleBluetoothInitializationRetry();
     logLine("BLE initialization failed");
     return false;
   }
   if (BLEDevice::getBLEStack() != BLEStack::NIMBLE) {
+    setBluetoothError("nimble-stack-required");
+    scheduleBluetoothInitializationRetry();
     logLine("BLE Now Playing requires NimBLE on this build");
     BLEDevice::deinit(false);
     return false;
@@ -357,18 +459,28 @@ bool initializeBluetoothNowPlaying() {
 
   bluetoothServer = BLEDevice::createServer();
   if (!bluetoothServer) {
+    setBluetoothError("server-creation-failed");
+    scheduleBluetoothInitializationRetry();
     logLine("BLE server creation failed");
     BLEDevice::deinit(false);
     return false;
   }
   bluetoothServer->start();
   bluetoothAdvertising = BLEDevice::getAdvertising();
-  configureBluetoothAdvertising();
+  if (!configureBluetoothAdvertising()) {
+    scheduleBluetoothInitializationRetry();
+    logLine(String("BLE advertising configuration failed: ") + bluetoothNowPlaying.lastError);
+    BLEDevice::deinit(false);
+    bluetoothServer = nullptr;
+    bluetoothAdvertising = nullptr;
+    return false;
+  }
   bluetoothNowPlaying.initialized = true;
+  bluetoothNowPlaying.nextInitializationRetryMs = 0;
   bluetoothNowPlaying.suspended = false;
   resetAmsHandles();
   clearBluetoothNowPlayingMetadata();
-  startBluetoothAdvertising();
+  if (!startBluetoothAdvertising()) return false;
   logLine(String("BLE Now Playing ready via ") + BLEDevice::getBLEStackString());
   return true;
 }
@@ -376,6 +488,7 @@ bool initializeBluetoothNowPlaying() {
 void shutdownBluetoothNowPlaying() {
   if (!bluetoothNowPlaying.initialized) return;
   bluetoothNowPlaying.suspended = true;
+  bluetoothNowPlaying.stage = BluetoothRuntimeStage::SUSPENDED;
   if (bluetoothAdvertising) bluetoothAdvertising->stop();
   if (bluetoothNowPlaying.connected && bluetoothServer &&
       bluetoothNowPlaying.connHandle != BLE_HS_CONN_HANDLE_NONE) {
@@ -397,6 +510,7 @@ void shutdownBluetoothNowPlaying() {
 void suspendBluetoothNowPlaying() {
   if (!bluetoothNowPlaying.initialized || bluetoothNowPlaying.suspended) return;
   bluetoothNowPlaying.suspended = true;
+  bluetoothNowPlaying.stage = BluetoothRuntimeStage::SUSPENDED;
   if (bluetoothAdvertising) bluetoothAdvertising->stop();
   if (bluetoothNowPlaying.connected && bluetoothServer &&
       bluetoothNowPlaying.connHandle != BLE_HS_CONN_HANDLE_NONE) {
@@ -410,7 +524,9 @@ void suspendBluetoothNowPlaying() {
 void resumeBluetoothNowPlaying() {
   if (!config.bluetoothNowPlaying) return;
   if (!bluetoothNowPlaying.initialized) {
-    initializeBluetoothNowPlaying();
+    if (deadlineReached(millis(), bluetoothNowPlaying.nextInitializationRetryMs)) {
+      initializeBluetoothNowPlaying();
+    }
     return;
   }
   bluetoothNowPlaying.suspended = false;
@@ -468,11 +584,22 @@ void processBluetoothNowPlaying() {
     initializeBluetoothNowPlaying();
     return;
   }
+  if (bluetoothConnectFailedEvent) {
+    bluetoothConnectFailedEvent = false;
+    setBluetoothError("connection-attempt-failed", bluetoothConnectFailureStatus);
+    bluetoothNowPlaying.nextAdvertisingRetryMs = millis() + BLE_ADVERTISING_RETRY_MS;
+    if (bluetoothAdvertising && bluetoothAdvertising->isAdvertising()) {
+      bluetoothNowPlaying.stage = BluetoothRuntimeStage::ADVERTISING;
+    }
+    logLine(String("BLE connection attempt failed status=") + bluetoothConnectFailureStatus);
+  }
   if (bluetoothConnectedEvent) {
     bluetoothConnectedEvent = false;
     bluetoothNowPlaying.connHandle = bluetoothEventConnHandle;
     bluetoothNowPlaying.connected = true;
     bluetoothNowPlaying.secured = false;
+    bluetoothNowPlaying.stage = BluetoothRuntimeStage::CONNECTED;
+    clearBluetoothError();
     resetAmsHandles();
     clearBluetoothNowPlayingMetadata();
     if (bluetoothServer) {
@@ -481,8 +608,10 @@ void processBluetoothNowPlaying() {
                                           AMS_CONN_LATENCY, AMS_CONN_TIMEOUT);
     }
     int securityRc = 0;
+    bluetoothNowPlaying.stage = BluetoothRuntimeStage::SECURING;
     if (!BLESecurity::startSecurity(bluetoothNowPlaying.connHandle, &securityRc) && securityRc != BLE_HS_EALREADY) {
-      bluetoothNowPlaying.nextDiscoveryMs = millis() + AMS_DISCOVERY_RETRY_MS;
+      setBluetoothError("security-start-failed", securityRc);
+      if (bluetoothServer) bluetoothServer->disconnect(bluetoothNowPlaying.connHandle);
     }
     logLine("BLE iPhone connected; securing AMS session");
   }
@@ -494,6 +623,10 @@ void processBluetoothNowPlaying() {
         ble_gattc_exchange_mtu(bluetoothNowPlaying.connHandle, nullptr, nullptr);
         bluetoothNowPlaying.nextDiscoveryMs = millis();
         logLine("BLE bond/encryption ready; AMS discovery queued");
+      } else {
+        setBluetoothError("pairing-encryption-failed", bluetoothEncryptionStatus);
+        logLine(String("BLE pairing/encryption failed status=") + bluetoothEncryptionStatus);
+        if (bluetoothServer) bluetoothServer->disconnect(bluetoothNowPlaying.connHandle);
       }
     }
   }
@@ -511,6 +644,12 @@ void processBluetoothNowPlaying() {
   AmsNotificationPacket packet;
   while (popAmsNotification(packet)) applyAmsNotification(packet);
 
+  if (!bluetoothNowPlaying.connected && !bluetoothNowPlaying.suspended &&
+      bluetoothAdvertising && !bluetoothAdvertising->isAdvertising() &&
+      deadlineReached(millis(), bluetoothNowPlaying.nextAdvertisingRetryMs)) {
+    startBluetoothAdvertising();
+  }
+
   if (bluetoothNowPlaying.connected && bluetoothNowPlaying.secured &&
       !bluetoothNowPlaying.amsReady && !bluetoothNowPlaying.discoveryActive &&
       deadlineReached(millis(), bluetoothNowPlaying.nextDiscoveryMs)) {
@@ -527,6 +666,13 @@ bool bluetoothNowPlayingVisible() {
 bool bluetoothNowPlayingRuntimeActive() { return bluetoothNowPlaying.initialized && !bluetoothNowPlaying.suspended; }
 bool bluetoothNowPlayingConnected() { return bluetoothNowPlaying.connected; }
 bool bluetoothNowPlayingAmsReady() { return bluetoothNowPlaying.amsReady; }
+bool bluetoothNowPlayingAdvertising() {
+  return bluetoothNowPlaying.initialized && !bluetoothNowPlaying.suspended &&
+         bluetoothAdvertising && bluetoothAdvertising->isAdvertising();
+}
+const char *bluetoothNowPlayingStage() { return bluetoothRuntimeStageName(bluetoothNowPlaying.stage); }
+const char *bluetoothNowPlayingError() { return bluetoothNowPlaying.lastError; }
+int bluetoothNowPlayingErrorCode() { return bluetoothNowPlaying.lastErrorCode; }
 
 const char *bluetoothNowPlayingTitle() { return bluetoothNowPlaying.title.c_str(); }
 const char *bluetoothNowPlayingArtist() { return bluetoothNowPlaying.artist.c_str(); }
@@ -560,6 +706,10 @@ bool bluetoothNowPlayingVisible() { return false; }
 bool bluetoothNowPlayingRuntimeActive() { return false; }
 bool bluetoothNowPlayingConnected() { return false; }
 bool bluetoothNowPlayingAmsReady() { return false; }
+bool bluetoothNowPlayingAdvertising() { return false; }
+const char *bluetoothNowPlayingStage() { return "unsupported"; }
+const char *bluetoothNowPlayingError() { return "nimble-build-required"; }
+int bluetoothNowPlayingErrorCode() { return 0; }
 const char *bluetoothNowPlayingTitle() { return ""; }
 const char *bluetoothNowPlayingArtist() { return ""; }
 const char *bluetoothNowPlayingAlbum() { return ""; }

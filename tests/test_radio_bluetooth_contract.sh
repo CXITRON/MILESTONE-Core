@@ -18,7 +18,7 @@ reject() {
   fi
 }
 
-require 'FIRMWARE_VERSION\[\] = "1\.11\.1"' MILESTONE_Core.ino 'firmware version is not 1.11.1'
+require 'FIRMWARE_VERSION\[\] = "1\.11\.2"' MILESTONE_Core.ino 'firmware version is not 1.11.2'
 require 'CONFIG_VERSION = 10' MILESTONE_Core.ino 'configuration schema is not 10'
 require 'bool fixedApSecurity = false;' MILESTONE_Core.ino 'fixed AP security must default off'
 require 'String fixedApPassword;' MILESTONE_Core.ino 'fixed AP password setting missing'
@@ -50,6 +50,10 @@ body = s[start:end]
 assert body.count('value += static_cast<char>(packet.data[i])') == 1, 'AMS notification payload must be appended exactly once'
 PY_AMS_PARSE
 require 'initializeBluetoothNowPlaying\(\)' CoreBluetooth.inc 'Bluetooth initialization missing'
+require 'setAdvertisementType\(BLE_GAP_CONN_MODE_UND\)' CoreBluetooth.inc 'AMS advertising must be explicitly connectable'
+require 'setScanFilter\(false, false\)' CoreBluetooth.inc 'AMS advertising must accept iPhone scan and connection requests'
+require 'BLE_ADVERTISING_RETRY_MS' CoreBluetooth.inc 'Bluetooth advertising retry cadence missing'
+require 'bluetoothNowPlayingAdvertising\(\)' CoreBluetooth.inc 'actual Bluetooth advertising state missing'
 require 'shutdownBluetoothNowPlaying\(\)' CoreBluetooth.inc 'Bluetooth shutdown missing'
 require 'suspendBluetoothNowPlaying\(\)' CoreBluetooth.inc 'Bluetooth stream suspension missing'
 require 'resumeBluetoothNowPlaying\(\)' CoreBluetooth.inc 'Bluetooth stream resume missing'
@@ -80,6 +84,9 @@ require 'config\.fixedApPassword = fixedAp \? password : "";' CorePortal.inc 'tu
 require 'hasApUpdate' CorePortal.inc 'AP settings must be independently updateable'
 require 'hasBluetoothUpdate' CorePortal.inc 'Bluetooth settings must be independently updateable'
 require 'bluetooth_ams_ready' CorePortal.inc 'status API must expose AMS readiness'
+require 'bluetooth_advertising' CorePortal.inc 'status API must expose actual advertising state'
+require 'bluetooth_stage' CorePortal.inc 'status API must expose the Bluetooth runtime stage'
+require 'bluetooth_error_code' CorePortal.inc 'status API must expose the Bluetooth stack error code'
 
 require 'id="fixed_ap"' PortalPage.h 'fixed AP toggle missing from portal'
 require 'id="ap_password" type="password"' PortalPage.h 'fixed AP password input missing from portal'
