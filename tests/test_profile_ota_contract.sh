@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+project_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+cd "$project_dir"
+
+require_fixed() {
+  local file=$1 text=$2 message=$3
+  grep -Fq -- "$text" "$file" || { echo "Profile OTA contract: $message" >&2; exit 1; }
+}
+
+require_fixed FirmwareProfile.h '#define MILESTONE_FIRMWARE_PROFILE "core"' 'CORE profile identity is missing'
+require_fixed FirmwareProfile.h '#define MILESTONE_FIRMWARE_PROFILE "media"' 'MEDIA profile identity is missing'
+require_fixed FirmwareProfile.h '#define MILESTONE_FIRMWARE_ASSET "MILESTONE_Core.bin"' 'CORE asset mapping is missing'
+require_fixed FirmwareProfile.h '#define MILESTONE_FIRMWARE_ASSET "MILESTONE_Media.bin"' 'MEDIA asset mapping is missing'
+require_fixed CoreUpdate.inc 'profile != requestedUpdateProfile' 'manifest profile is not validated'
+require_fixed CoreUpdate.inc 'asset != firmwareAssetForProfile(profile)' 'manifest asset is not validated'
+require_fixed CoreUpdate.inc 'latestFirmwareProfile != FIRMWARE_PROFILE' 'same-version profile switching is not enabled'
+require_fixed CoreUpdate.inc 'target profile release is older than running firmware' 'cross-profile downgrade guard is missing'
+require_fixed CoreUpdate.inc 'prepareRollbackRecord(targetIdentity)' 'rollback target is not profile-qualified'
+require_fixed CoreRollback.inc 'otaTargetMatchesCurrent(previousOtaTarget)' 'legacy/profile OTA boot matching is missing'
+require_fixed CorePortal.inc 'server.on("/api/profile/switch", HTTP_POST, handleProfileSwitch);' 'profile switch API is not registered'
+require_fixed CoreRuntime.inc 'if (MILESTONE_HAS_MEDIA) initializeMediaStorage();' 'CORE media runtime gate is missing'
+require_fixed CoreRuntime.inc 'if (MILESTONE_HAS_BLUETOOTH) processBluetoothNowPlaying();' 'MEDIA Bluetooth runtime gate is missing'
+require_fixed tools/make-release.sh 'profiles=(core media)' 'release builder does not build both profiles'
+require_fixed tools/milestone-release 'MILESTONE_Media.bin' 'unified release command does not publish MEDIA BIN'
+require_fixed tools/milestone-release 'MILESTONE_Media.json' 'unified release command does not publish MEDIA manifest'
+
+bash -n tools/make-release.sh
+bash -n tools/milestone-release
+
+echo 'Profile/OTA split contract test passed'

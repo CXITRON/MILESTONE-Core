@@ -265,9 +265,17 @@ UpdateCheckAttemptResult readManifestBody(HTTPClient &http, String &body, String
   return UpdateCheckAttemptResult::SUCCESS;
 }
 
-void requestFirmwareUpdateCheck(UpdateCheckReason reason) {
+void requestFirmwareUpdateCheck(UpdateCheckReason reason, const String &profile) {
   if (pendingUpdateCheckReason != UpdateCheckReason::NONE || firmwareUpdateBusy() ||
       updateState == UpdateState::CURRENT) return;
+  if (!validFirmwareProfile(profile)) return;
+  requestedUpdateProfile = profile;
+  latestFirmwareVersion = "";
+  latestFirmwareProfile = "";
+  latestFirmwareAsset = "";
+  latestFirmwareSha256 = "";
+  latestFirmwareNotes = "";
+  latestFirmwareSize = 0;
   pendingUpdateCheckReason = reason;
   updateCheckAttempt = 0;
   updateCheckIndicatorRendered = false;
@@ -309,8 +317,9 @@ UpdateCheckAttemptResult checkFirmwareManifestAttempt(UpdateCheckReason reason, 
   http.setRedirectLimit(UPDATE_REDIRECT_LIMIT);
   http.setReuse(false);
   http.setAcceptEncoding("identity");
-  http.setUserAgent(String("MILESTONE-Core/") + FIRMWARE_VERSION);
-  if (!http.begin(secureClient, UPDATE_MANIFEST_URL)) {
+  http.setUserAgent(String("MILESTONE-") + FIRMWARE_PROFILE_LABEL + '/' + FIRMWARE_VERSION);
+  const String manifestUrl = String(UPDATE_LATEST_BASE_URL) + manifestAssetForProfile(requestedUpdateProfile);
+  if (!http.begin(secureClient, manifestUrl)) {
     failure = "manifest request setup failed";
     return UpdateCheckAttemptResult::FATAL_FAILURE;
   }
@@ -329,10 +338,12 @@ UpdateCheckAttemptResult checkFirmwareManifestAttempt(UpdateCheckReason reason, 
   http.end();
   if (bodyResult != UpdateCheckAttemptResult::SUCCESS) return bodyResult;
 
-  String version, sha256, notes;
+  String version, profile, asset, sha256, notes;
   uint32_t size = 0;
   uint16_t versionParts[3];
   if (!parseJsonStringField(manifest, "version", version) || !parseSemanticVersion(version, versionParts) ||
+      !parseJsonStringField(manifest, "profile", profile) || profile != requestedUpdateProfile ||
+      !parseJsonStringField(manifest, "asset", asset) || asset != firmwareAssetForProfile(profile) ||
       !parseJsonUintField(manifest, "size", size) || size == 0 ||
       !parseJsonStringField(manifest, "sha256", sha256) || !validSha256(sha256)) {
     failure = "invalid release manifest";
@@ -341,6 +352,8 @@ UpdateCheckAttemptResult checkFirmwareManifestAttempt(UpdateCheckReason reason, 
   parseJsonStringField(manifest, "notes", notes);
   sha256.toLowerCase();
   latestFirmwareVersion = version;
+  latestFirmwareProfile = profile;
+  latestFirmwareAsset = asset;
   latestFirmwareSize = size;
   latestFirmwareSha256 = sha256;
   latestFirmwareNotes = notes;
@@ -354,7 +367,13 @@ UpdateCheckAttemptResult checkFirmwareManifestAttempt(UpdateCheckReason reason, 
   nextUpdateRetryMs = 0;
   updateError = "";
 
-  if (compareSemanticVersions(FIRMWARE_VERSION, latestFirmwareVersion) < 0) {
+  const bool profileSwitch = latestFirmwareProfile != FIRMWARE_PROFILE;
+  const int versionComparison = compareSemanticVersions(FIRMWARE_VERSION, latestFirmwareVersion);
+  if (profileSwitch && versionComparison > 0) {
+    failure = "target profile release is older than running firmware";
+    return UpdateCheckAttemptResult::FATAL_FAILURE;
+  }
+  if (profileSwitch || versionComparison < 0) {
     // An available release is one of the two update-check outcomes that should
     // deliberately interrupt the OLED (the other is a check error). Do this for
     // both automatic and portal-initiated checks so a manual check cannot hide
@@ -362,7 +381,9 @@ UpdateCheckAttemptResult checkFirmwareManifestAttempt(UpdateCheckReason reason, 
     updatePromptVisible = true;
     updatePromptStartedMs = millis();
     setUpdateState(UpdateState::AVAILABLE);
-    logLine(String("firmware update available: ") + FIRMWARE_VERSION + " -> " + latestFirmwareVersion);
+    logLine(String(profileSwitch ? "firmware profile switch available: " : "firmware update available: ") +
+            currentFirmwareIdentity() + " -> " +
+            firmwareIdentity(latestFirmwareVersion, latestFirmwareProfile));
     failure = "";
     return UpdateCheckAttemptResult::SUCCESS;
   }
@@ -370,13 +391,14 @@ UpdateCheckAttemptResult checkFirmwareManifestAttempt(UpdateCheckReason reason, 
   updatePromptVisible = false;
   setUpdateState(UpdateState::CURRENT);
   updateCurrentVisibleMs = millis();
-  logLine(String("firmware is current: ") + FIRMWARE_VERSION);
+  logLine(String("firmware is current: ") + currentFirmwareIdentity());
   failure = "";
   return UpdateCheckAttemptResult::SUCCESS;
 }
 
 bool installFirmwareUpdate() {
   if (updateState != UpdateState::AVAILABLE || latestFirmwareVersion.length() == 0 ||
+      latestFirmwareProfile.length() == 0 || latestFirmwareAsset.length() == 0 ||
       latestFirmwareSize == 0 || !validSha256(latestFirmwareSha256)) {
     failFirmwareUpdate("release metadata unavailable");
     return false;
@@ -414,13 +436,14 @@ bool installFirmwareUpdate() {
   WiFi.setSleep(false);
   updatePromptVisible = false;
   updateDownloadedBytes = 0;
-  if (!prepareRollbackRecord(latestFirmwareVersion)) {
+  const String targetIdentity = firmwareIdentity(latestFirmwareVersion, latestFirmwareProfile);
+  if (!prepareRollbackRecord(targetIdentity)) {
     deferFirmwareInstall("rollback source preparation failed");
     return false;
   }
   lastOtaResult = "installing";
   if (!putStringVerified("ota_result", lastOtaResult) ||
-      !putStringVerified("ota_target", latestFirmwareVersion) ||
+      !putStringVerified("ota_target", targetIdentity) ||
       !recordOtaStage("starting")) {
     failFirmwareUpdate("OTA state save failed");
     return false;
@@ -430,7 +453,7 @@ bool installFirmwareUpdate() {
   setUpdateState(UpdateState::DOWNLOADING);
   drawUpdateScreen();
 
-  const String firmwareUrl = String(UPDATE_RELEASE_BASE_URL) + latestFirmwareVersion + '/' + UPDATE_ASSET_NAME;
+  const String firmwareUrl = String(UPDATE_RELEASE_BASE_URL) + latestFirmwareVersion + '/' + latestFirmwareAsset;
   NetworkClientSecure secureClient;
   secureClient.setCACert(MILESTONE_UPDATE_ROOT_CA);
   secureClient.setHandshakeTimeout(UPDATE_TLS_HANDSHAKE_TIMEOUT_SEC);
@@ -441,7 +464,7 @@ bool installFirmwareUpdate() {
   http.setRedirectLimit(UPDATE_REDIRECT_LIMIT);
   http.setReuse(false);
   http.setAcceptEncoding("identity");
-  http.setUserAgent(String("MILESTONE-Core/") + FIRMWARE_VERSION);
+  http.setUserAgent(String("MILESTONE-") + FIRMWARE_PROFILE_LABEL + '/' + FIRMWARE_VERSION);
   if (!http.begin(secureClient, firmwareUrl)) {
     failFirmwareUpdate("firmware request setup failed");
     return false;
@@ -575,9 +598,8 @@ bool installFirmwareUpdate() {
   setUpdateState(UpdateState::READY_TO_REBOOT);
   drawUpdateScreen();
   processLed();
-  logLine(String("firmware verified; rebooting into ") + latestFirmwareVersion);
+  logLine(String("firmware verified; rebooting into ") + targetIdentity);
   delay(1200);
   ESP.restart();
   return true;
 }
-

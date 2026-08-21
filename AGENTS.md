@@ -7,12 +7,12 @@ The source code is always the final authority when documentation and implementat
 ## 1. Project baseline
 
 - Product: MILESTONE Core
-- Current firmware baseline: `1.11.2`
+- Current firmware baseline: `2.0.0`
 - Persistent config schema: `10`
 - Hardware: Waveshare ESP32-S3-Zero + SH1107 128×128 OLED
 - Main branch: `main`
 - Repository: `CXITRON/MILESTONE-Core`
-- Release transport: GitHub Releases + `MILESTONE_Core.json` manifest + `MILESTONE_Core.bin`
+- Release transport: GitHub Releases + CORE/MEDIA profile manifests and BIN assets
 - Build/release source of truth: `tools/make-release.sh`
 - Unified operator command: `milestone-release`
 
@@ -70,20 +70,20 @@ The installer copies the command to `~/.local/bin/milestone-release`.
 - host regression tests pass, including documentation/version synchronization checks
 - `AGENTS.md` and `MILESTONE_PROJECT_CONTEXT.md` baseline versions match `FIRMWARE_VERSION`
 - `README.md` contains the current version entry and keeps version history in newest-to-oldest semantic-version order
-- the fixed Arduino release build passes
-- generated BIN/manifest exist and version/size/SHA-256 agree
+- both fixed Arduino profile builds pass (`CORE` and `MEDIA`)
+- both generated BIN/manifest pairs exist and profile/asset/version/size/SHA-256 agree
 - new commits covered by the current commit-hygiene policy use the expected Author and Committer identity
 - those new commit messages contain no AI-tool attribution such as Codex/OpenAI/ChatGPT/etc.; historical commits are not rewritten solely for this check
 - an existing version tag must point to the current HEAD or release stops
 - `main` and the version tag are pushed atomically
-- the GitHub Release contains `MILESTONE_Core.bin` and `MILESTONE_Core.json`
+- the GitHub Release contains `MILESTONE_Core.bin`, `MILESTONE_Core.json`, `MILESTONE_Media.bin`, and `MILESTONE_Media.json`
 
 Do not bypass these checks merely to make a release succeed.
 
 ## 4. Versioning
 
 Use patch releases (`1.8.2` → `1.8.3`) for bug fixes, validation hardening, contained backwards-compatible observability/diagnostics additions, small internal changes, documentation/tooling that accompanies a firmware correction, and other narrowly scoped compatible changes.
-Use minor releases (`1.8.x` → `1.9.0`) for broad primary-product capabilities, incompatible behavior changes, or substantial firmware architecture changes.
+Use minor releases (`1.8.x` → `1.9.0`) for broad compatible primary-product capabilities. Use a major release for a deliberately incompatible or product-wide architecture boundary such as the v2 multi-firmware profile split.
 Do not increment `CONFIG_VERSION` unless the persistent NVS schema actually changes and a migration path is implemented.
 
 A tooling/documentation-only commit that does not change the firmware binary does not require a firmware version bump by itself.

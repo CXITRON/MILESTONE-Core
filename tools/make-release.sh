@@ -3,7 +3,7 @@ set -euo pipefail
 
 if (( $# < 1 || $# > 2 )); then
   echo "사용법: $0 VERSION [NOTES]" >&2
-  echo "예: $0 1.8.3 'Harden diagnostics persistence and validation'" >&2
+  echo "예: $0 2.0.0 'Split CORE and MEDIA firmware profiles'" >&2
   exit 2
 fi
 
@@ -18,7 +18,7 @@ release_dir="$project_dir/release"
 source "$script_dir/release-json.sh"
 
 if [[ ! $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "오류: VERSION은 1.8.3과 같은 형식이어야 합니다." >&2
+  echo "오류: VERSION은 2.0.0과 같은 형식이어야 합니다." >&2
   exit 2
 fi
 
@@ -28,7 +28,7 @@ if [[ $source_version != "$version" ]]; then
   exit 2
 fi
 
-echo "호스트 순수 로직 테스트 실행"
+echo "호스트 순수 로직 및 프로필 계약 테스트 실행"
 bash "$project_dir/tools/test-core.sh"
 
 if ! notes=$(milestone_escape_json_string "$notes"); then
@@ -49,53 +49,83 @@ if [[ -z $arduino_cli || ! -x $arduino_cli ]]; then
 fi
 
 mkdir -p -- "$release_dir"
-build_dir=$(mktemp -d /tmp/milestone-release-build.XXXXXX)
+build_root=$(mktemp -d /tmp/milestone-release-build.XXXXXX)
 stage_dir=$(mktemp -d "$release_dir/.release-stage.XXXXXX")
 cleanup() {
-  rm -rf -- "$build_dir" "$stage_dir"
+  rm -rf -- "$build_root" "$stage_dir"
 }
 trap cleanup EXIT
 
+profiles=(core media)
+profile_ids=(1 2)
+asset_stems=(MILESTONE_Core MILESTONE_Media)
+markers=(MILESTONE_PROFILE_CORE MILESTONE_PROFILE_MEDIA)
+
 echo "고정 빌드 설정: $fqbn"
-"$arduino_cli" compile --fqbn "$fqbn" --build-path "$build_dir" --warnings all "$project_dir"
+for index in "${!profiles[@]}"; do
+  profile=${profiles[$index]}
+  profile_id=${profile_ids[$index]}
+  asset_stem=${asset_stems[$index]}
+  marker=${markers[$index]}
+  build_dir="$build_root/$profile"
+  mkdir -p -- "$build_dir"
 
-source_bin="$build_dir/MILESTONE_Core.ino.bin"
-if [[ ! -f $source_bin ]]; then
-  echo "오류: 컴파일은 끝났지만 애플리케이션 BIN을 찾지 못했습니다: $source_bin" >&2
-  exit 2
-fi
-first_byte=$(od -An -tx1 -N1 -- "$source_bin" | tr -d '[:space:]')
-if [[ $first_byte != e9 ]]; then
-  echo "오류: ESP32 애플리케이션 BIN이 아닙니다(시작 바이트가 0xE9가 아님)." >&2
-  exit 2
-fi
-if ! strings -a -- "$source_bin" | grep -Fx -- "$version" >/dev/null; then
-  echo "오류: BIN 내부에서 펌웨어 버전 $version을 확인하지 못했습니다." >&2
-  exit 2
-fi
+  echo "[$profile] 펌웨어 컴파일"
+  "$arduino_cli" compile \
+    --fqbn "$fqbn" \
+    --build-path "$build_dir" \
+    --build-property "compiler.cpp.extra_flags=-DMILESTONE_BUILD_PROFILE=$profile_id" \
+    --warnings all \
+    "$project_dir"
 
-staged_bin="$stage_dir/MILESTONE_Core.bin"
-staged_manifest="$stage_dir/MILESTONE_Core.json"
-cp -- "$source_bin" "$staged_bin"
-size=$(stat -c '%s' -- "$staged_bin")
-sha256=$(sha256sum -- "$staged_bin" | awk '{print $1}')
-printf '{\n  "version": "%s",\n  "size": %s,\n  "sha256": "%s",\n  "notes": "%s"\n}\n' \
-  "$version" "$size" "$sha256" "$notes" > "$staged_manifest"
+  source_bin="$build_dir/MILESTONE_Core.ino.bin"
+  if [[ ! -f $source_bin ]]; then
+    echo "오류: [$profile] 애플리케이션 BIN을 찾지 못했습니다: $source_bin" >&2
+    exit 2
+  fi
+  first_byte=$(od -An -tx1 -N1 -- "$source_bin" | tr -d '[:space:]')
+  if [[ $first_byte != e9 ]]; then
+    echo "오류: [$profile] ESP32 애플리케이션 BIN이 아닙니다." >&2
+    exit 2
+  fi
+  if ! strings -a -- "$source_bin" | grep -Fx -- "$version" >/dev/null; then
+    echo "오류: [$profile] BIN 내부에서 펌웨어 버전 $version을 확인하지 못했습니다." >&2
+    exit 2
+  fi
+  if ! strings -a -- "$source_bin" | grep -Fq -- "$marker"; then
+    echo "오류: [$profile] BIN 내부에서 프로필 표식을 확인하지 못했습니다." >&2
+    exit 2
+  fi
 
-if [[ $(stat -c '%s' -- "$staged_bin") != "$size" ]] ||
-   [[ $(sha256sum -- "$staged_bin" | awk '{print $1}') != "$sha256" ]]; then
-  echo "오류: 스테이징된 릴리스 BIN 검증에 실패했습니다." >&2
-  exit 2
-fi
+  staged_bin="$stage_dir/$asset_stem.bin"
+  staged_manifest="$stage_dir/$asset_stem.json"
+  cp -- "$source_bin" "$staged_bin"
+  size=$(stat -c '%s' -- "$staged_bin")
+  sha256=$(sha256sum -- "$staged_bin" | awk '{print $1}')
+  printf '{\n  "version": "%s",\n  "profile": "%s",\n  "asset": "%s.bin",\n  "size": %s,\n  "sha256": "%s",\n  "notes": "%s"\n}\n' \
+    "$version" "$profile" "$asset_stem" "$size" "$sha256" "$notes" > "$staged_manifest"
 
-# All validation and compilation has succeeded. Replace public artifacts only now.
-mv -- "$staged_bin" "$release_dir/MILESTONE_Core.bin"
-mv -- "$staged_manifest" "$release_dir/MILESTONE_Core.json"
+  if [[ $(stat -c '%s' -- "$staged_bin") != "$size" ]] ||
+     [[ $(sha256sum -- "$staged_bin" | awk '{print $1}') != "$sha256" ]]; then
+    echo "오류: [$profile] 스테이징된 릴리스 BIN 검증에 실패했습니다." >&2
+    exit 2
+  fi
+done
+
+# 두 프로필이 모두 검증된 뒤에만 공개 릴리스 산출물을 교체합니다.
+for asset_stem in "${asset_stems[@]}"; do
+  mv -- "$stage_dir/$asset_stem.bin" "$release_dir/$asset_stem.bin"
+  mv -- "$stage_dir/$asset_stem.json" "$release_dir/$asset_stem.json"
+done
 
 echo "Release 파일 생성 완료"
-echo "  BIN:      $release_dir/MILESTONE_Core.bin"
-echo "  Manifest: $release_dir/MILESTONE_Core.json"
-echo "  Size:     $size bytes"
-echo "  SHA-256:  $sha256"
+for index in "${!profiles[@]}"; do
+  profile=${profiles[$index]}
+  asset_stem=${asset_stems[$index]}
+  size=$(stat -c '%s' -- "$release_dir/$asset_stem.bin")
+  sha256=$(sha256sum -- "$release_dir/$asset_stem.bin" | awk '{print $1}')
+  echo "  [$profile] $asset_stem.bin / $asset_stem.json"
+  echo "           $size bytes / $sha256"
+done
 echo
-echo "GitHub 태그 v${version}의 정식 Release에 위 두 파일을 첨부하세요."
+echo "GitHub 태그 v${version}의 정식 Release에 위 네 파일을 함께 첨부하세요."

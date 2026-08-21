@@ -272,7 +272,7 @@ void registerPortalRoutes();
 void selectFirstEnabledCycleView();
 void sendJson(int status, const String &json);
 void enterWifiSleep();
-void requestFirmwareUpdateCheck(UpdateCheckReason reason);
+void requestFirmwareUpdateCheck(UpdateCheckReason reason, const String &profile = FIRMWARE_PROFILE);
 void processFirmwareUpdate();
 bool stationNetworkReady();
 
@@ -422,4 +422,3 @@ bool authorizePortalRequest() {
   sendJson(403, "{\"error\":\"유효하지 않은 세션 토큰입니다.\"}");
   return false;
 }
-

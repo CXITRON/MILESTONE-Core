@@ -523,7 +523,7 @@ void processThermalProtection() {
 }
 
 bool viewEnabled(View view) {
-  if (view == View::CUSTOM_MEDIA && !mediaHasEnabledItems()) return false;
+  if (view == View::CUSTOM_MEDIA && (!MILESTONE_HAS_MEDIA || !mediaHasEnabledItems())) return false;
   return (config.cycleMask & (1U << static_cast<uint8_t>(view))) != 0;
 }
 
@@ -554,7 +554,9 @@ void advanceView(bool persist) {
       }
     }
   } else {
-    currentView = static_cast<View>((static_cast<uint8_t>(currentView) + 1) % VIEW_COUNT);
+    do {
+      currentView = static_cast<View>((static_cast<uint8_t>(currentView) + 1) % VIEW_COUNT);
+    } while (currentView == View::CUSTOM_MEDIA && !MILESTONE_HAS_MEDIA);
   }
   if (previousView == View::CUSTOM_MEDIA && currentView != View::CUSTOM_MEDIA) closeMediaPlayback();
   if (currentView == View::CUSTOM_MEDIA && previousView != View::CUSTOM_MEDIA) selectNextMediaItem();
@@ -875,7 +877,7 @@ void setupFirmware() {
   statusLed.show();
   writeStatusLed(40, 255, 180);
   delay(250);
-  logLine(String("booting firmware ") + FIRMWARE_VERSION);
+  logLine(String("booting firmware ") + currentFirmwareIdentity() + " [" + FIRMWARE_PROFILE_MARKER + "]");
   Serial.printf("[MILESTONE] reset=%s (%d), heap=%lu, min_heap=%lu, largest=%lu\n",
                 resetReasonName(esp_reset_reason()), static_cast<int>(esp_reset_reason()),
                 static_cast<unsigned long>(ESP.getFreeHeap()),
@@ -917,7 +919,7 @@ void setupFirmware() {
   const String previousOtaTarget = prefsReady ? prefs.getString("ota_target", "") : "";
   initializeRollbackProtection(previousOtaStage, previousOtaTarget);
   if (previousOtaStage.length() && !otaBootConfirmationPending) {
-    if (!(previousOtaStage == "rebooting" && previousOtaTarget == FIRMWARE_VERSION)) {
+    if (!(previousOtaStage == "rebooting" && otaTargetMatchesCurrent(previousOtaTarget))) {
       lastOtaResult = String("interrupted-") + previousOtaStage;
       logLine(String("previous OTA interrupted at ") + previousOtaStage +
               " target=" + previousOtaTarget + " reset=" + resetReasonName(esp_reset_reason()));
@@ -933,11 +935,13 @@ void setupFirmware() {
   oledReady = initDisplay();
   if (oledReady) bootSplashStartedMs = millis();
   if (!oledReady) setRuntimeState(RuntimeState::ERROR_DISPLAY);
-  initializeMediaStorage();
+  if (MILESTONE_HAS_MEDIA) initializeMediaStorage();
   initializeView();
-  if (config.bluetoothNowPlaying) {
-    if (!initializeBluetoothNowPlaying()) {
-      logLine("Bluetooth Now Playing initialization failed; continuing without BLE");
+  if (MILESTONE_HAS_BLUETOOTH) {
+    if (config.bluetoothNowPlaying) {
+      if (!initializeBluetoothNowPlaying()) {
+        logLine("Bluetooth Now Playing initialization failed; continuing without BLE");
+      }
     }
   }
   lastInteractionMs = millis();
@@ -967,7 +971,7 @@ void loopFirmware() {
     return;
   }
   processFirmwareUpdate();
-  processBluetoothNowPlaying();
+  if (MILESTONE_HAS_BLUETOOTH) processBluetoothNowPlaying();
   processDiagnostics();
   processCycle();
   processDisplay();

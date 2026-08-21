@@ -18,6 +18,10 @@ void handleStatus() {
   String json = "{";
   json.reserve(1024);
   json += "\"firmware\":\"" + String(FIRMWARE_VERSION) + "\",";
+  json += "\"profile\":\"" + String(FIRMWARE_PROFILE) + "\",";
+  json += "\"profile_label\":\"" + String(FIRMWARE_PROFILE_LABEL) + "\",";
+  json += "\"media_supported\":" + String(MILESTONE_HAS_MEDIA ? "true" : "false") + ",";
+  json += "\"bluetooth_supported\":" + String(MILESTONE_HAS_BLUETOOTH ? "true" : "false") + ",";
   json += "\"state\":\"" + String(runtimeStateName(runtimeState)) + "\",";
   json += "\"wifi\":\"" + jsonEscape(wifiLabel) + "\",";
   json += "\"ip\":\"" + jsonEscape(ip) + "\",";
@@ -51,8 +55,10 @@ void handleStatus() {
   json += "\"wifi_error\":\"" + jsonEscape(wifiTestError) + "\",";
   json += "\"update_state\":\"" + String(updateStateName(updateState)) + "\",";
   json += "\"latest_firmware\":\"" + jsonEscape(latestFirmwareVersion) + "\",";
+  json += "\"latest_profile\":\"" + jsonEscape(latestFirmwareProfile) + "\",";
   json += "\"update_available\":" + String(updateState == UpdateState::AVAILABLE ? "true" : "false") + ",";
   const bool updateInstallReady = updateState == UpdateState::AVAILABLE && latestFirmwareVersion.length() > 0 &&
+                                  validFirmwareProfile(latestFirmwareProfile) && latestFirmwareAsset.length() > 0 &&
                                   latestFirmwareSize > 0 && validSha256(latestFirmwareSha256);
   json += "\"update_install_ready\":" + String(updateInstallReady ? "true" : "false") + ",";
   json += "\"update_install_pending\":" + String(updateInstallRequested ? "true" : "false") + ",";
@@ -168,6 +174,10 @@ void refreshMediaViewAfterCatalogChange() {
 
 bool authorizeMediaMutation() {
   if (!authorizePortalRequest()) return false;
+  if (!MILESTONE_HAS_MEDIA) {
+    sendJson(409, "{\"error\":\"MEDIA 펌웨어로 전환한 뒤 사용할 수 있습니다.\"}");
+    return false;
+  }
   if (firmwareUpdateBusy() || mediaTransferBusy()) {
     sendJson(409, "{\"error\":\"다른 저장 작업이 진행 중입니다.\"}");
     return false;
@@ -186,6 +196,7 @@ void handleMediaStatus() {
   const size_t used = mediaStorageReady ? LittleFS.usedBytes() : 0;
   String json = "{";
   json.reserve(1024);
+  json += "\"supported\":" + String(MILESTONE_HAS_MEDIA ? "true" : "false") + ",";
   json += "\"ready\":" + String(mediaStorageReady ? "true" : "false") + ",";
   json += "\"psram\":" + String(psramFound() ? "true" : "false") + ",";
   json += "\"total_bytes\":" + String(total) + ",";
@@ -272,6 +283,9 @@ void handleMediaStreamStatus() {
 
 void handleMediaStreamStart() {
   if (!authorizePortalRequest()) return;
+  if (!MILESTONE_HAS_MEDIA) {
+    return sendJson(409, "{\"error\":\"MEDIA 펌웨어로 전환한 뒤 사용할 수 있습니다.\"}");
+  }
   if (mediaStreamActive) {
     return sendJson(409, "{\"error\":\"이미 다른 스트리밍 세션이 실행 중입니다.\"}");
   }
@@ -589,7 +603,7 @@ void handleGetRadioConfig() {
   json += "\"fixed_ap\":" + String(config.fixedApSecurity ? "true" : "false") + ",";
   json += "\"ap_password_set\":" + String(config.fixedApPassword.length() > 0 ? "true" : "false") + ",";
   json += "\"bluetooth_now_playing\":" + String(config.bluetoothNowPlaying ? "true" : "false") + ",";
-#if defined(CONFIG_NIMBLE_ENABLED)
+#if MILESTONE_HAS_BLUETOOTH && defined(CONFIG_NIMBLE_ENABLED)
   json += "\"bluetooth_supported\":true";
 #else
   json += "\"bluetooth_supported\":false";
@@ -623,6 +637,9 @@ void handlePostRadioConfig() {
   bool bluetoothEnabled = config.bluetoothNowPlaying;
   if (hasBluetoothUpdate && !parseBoolArg("bluetooth_now_playing", bluetoothEnabled)) {
     return sendJson(400, "{\"error\":\"Bluetooth 설정 값이 올바르지 않습니다.\"}");
+  }
+  if (hasBluetoothUpdate && bluetoothEnabled && !MILESTONE_HAS_BLUETOOTH) {
+    return sendJson(409, "{\"error\":\"CORE 펌웨어로 전환한 뒤 Bluetooth를 켤 수 있습니다.\"}");
   }
 #if !defined(CONFIG_NIMBLE_ENABLED)
   if (hasBluetoothUpdate && bluetoothEnabled) {
@@ -1109,8 +1126,38 @@ void handleUpdateCheck() {
     return sendJson(202, "{\"ok\":true,\"state\":\"time_syncing\"}");
   }
   updateCheckNotBeforeMs = millis() + UPDATE_NETWORK_SETTLE_MS;
-  requestFirmwareUpdateCheck(UpdateCheckReason::MANUAL);
+  requestFirmwareUpdateCheck(UpdateCheckReason::MANUAL, FIRMWARE_PROFILE);
   sendJson(202, "{\"ok\":true,\"state\":\"queued\"}");
+}
+
+void handleProfileSwitch() {
+  if (!authorizePortalRequest()) return;
+  if (rejectPortalWorkDuringStream()) return;
+  const String profile = server.arg("profile");
+  if (!validFirmwareProfile(profile)) {
+    return sendJson(400, "{\"error\":\"지원하지 않는 펌웨어 프로필입니다.\"}");
+  }
+  if (profile == FIRMWARE_PROFILE) {
+    return sendJson(409, "{\"error\":\"이미 선택한 프로필을 실행 중입니다.\"}");
+  }
+  if (mediaTransferBusy() || firmwareUpdateBusy() || updateInstallRequested) {
+    return sendJson(409, "{\"error\":\"저장 또는 펌웨어 작업이 끝난 뒤 전환하세요.\"}");
+  }
+  if (thermalSafeMode || temperatureSensorFault || thermalWarning) {
+    return sendJson(409, "{\"error\":\"온도 보호 상태에서는 프로필을 전환할 수 없습니다.\"}");
+  }
+  if (!stationNetworkReady()) {
+    return sendJson(409, "{\"error\":\"인터넷에 연결된 Wi-Fi가 필요합니다.\"}");
+  }
+  if (!timeIsValid() || !freshNtpSinceBoot) {
+    return sendJson(409, "{\"error\":\"먼저 시간 동기화를 완료한 뒤 다시 시도하세요.\"}");
+  }
+  if (updateState == UpdateState::CURRENT || updateState == UpdateState::ERROR_STATE) {
+    setUpdateState(UpdateState::IDLE);
+  }
+  updateCheckNotBeforeMs = millis() + UPDATE_NETWORK_SETTLE_MS;
+  requestFirmwareUpdateCheck(UpdateCheckReason::MANUAL, profile);
+  sendJson(202, String("{\"ok\":true,\"state\":\"queued\",\"profile\":\"") + profile + "\"}");
 }
 
 void handleUpdateInstall() {
@@ -1123,6 +1170,7 @@ void handleUpdateInstall() {
     return sendJson(409, "{\"error\":\"업데이트 설치가 이미 진행 중입니다.\"}");
   }
   if (updateState != UpdateState::AVAILABLE || latestFirmwareVersion.length() == 0 ||
+      !validFirmwareProfile(latestFirmwareProfile) || latestFirmwareAsset.length() == 0 ||
       latestFirmwareSize == 0 || !validSha256(latestFirmwareSha256)) {
     return sendJson(409, "{\"error\":\"설치할 새 펌웨어가 확인되지 않았습니다.\"}");
   }
@@ -1205,6 +1253,7 @@ void registerPortalRoutes() {
   server.on("/api/wifi/delete", HTTP_POST, handleDeleteSavedWifi);
   server.on("/api/time/sync", HTTP_POST, handleTimeSync);
   server.on("/api/update/check", HTTP_POST, handleUpdateCheck);
+  server.on("/api/profile/switch", HTTP_POST, handleProfileSwitch);
   server.on("/api/update/install", HTTP_POST, handleUpdateInstall);
   server.on("/api/settings/reset", HTTP_POST, handleSettingsReset);
   server.on("/api/reset", HTTP_POST, handleFactoryReset);

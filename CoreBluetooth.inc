@@ -3,7 +3,7 @@
 // peripheral for pairing/advertising and uses NimBLE's GATT client procedures
 // on the same connection to subscribe to the iPhone-hosted AMS service.
 
-#if defined(CONFIG_NIMBLE_ENABLED)
+#if MILESTONE_HAS_BLUETOOTH && defined(CONFIG_NIMBLE_ENABLED)
 
 constexpr uint8_t AMS_ENTITY_PLAYER = 0;
 constexpr uint8_t AMS_ENTITY_TRACK = 2;
@@ -695,7 +695,7 @@ float bluetoothCurrentElapsedSeconds() {
 #else
 
 bool initializeBluetoothNowPlaying() {
-  if (config.bluetoothNowPlaying) logLine("BLE Now Playing unavailable: firmware BLE stack is not NimBLE");
+  if (config.bluetoothNowPlaying) logLine("BLE Now Playing unavailable in this firmware profile/build");
   return false;
 }
 void shutdownBluetoothNowPlaying() {}
@@ -708,7 +708,13 @@ bool bluetoothNowPlayingConnected() { return false; }
 bool bluetoothNowPlayingAmsReady() { return false; }
 bool bluetoothNowPlayingAdvertising() { return false; }
 const char *bluetoothNowPlayingStage() { return "unsupported"; }
-const char *bluetoothNowPlayingError() { return "nimble-build-required"; }
+const char *bluetoothNowPlayingError() {
+#if MILESTONE_HAS_BLUETOOTH
+  return "nimble-build-required";
+#else
+  return "switch-to-core-profile";
+#endif
+}
 int bluetoothNowPlayingErrorCode() { return 0; }
 const char *bluetoothNowPlayingTitle() { return ""; }
 const char *bluetoothNowPlayingArtist() { return ""; }

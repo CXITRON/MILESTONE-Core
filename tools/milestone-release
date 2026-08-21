@@ -45,9 +45,9 @@ Options:
 
 Examples:
   cd /run/media/citron/T7/Documents/Dev/MILESTONE_Core
-  milestone-release local 1.8.3 "Harden diagnostics persistence"
+  milestone-release local 2.0.0 "Split CORE and MEDIA firmware profiles"
 
-  cd /tmp && milestone-release taildrop 1.8.3 "Harden diagnostics persistence"
+  cd /tmp && milestone-release taildrop 2.0.0 "Split CORE and MEDIA firmware profiles"
 USAGE
 }
 
@@ -304,30 +304,40 @@ refresh_remote() {
 }
 
 build_release() {
-  log "호스트 테스트 + ESP32 릴리즈 빌드"
+  log "호스트 테스트 + CORE/MEDIA ESP32 릴리즈 빌드"
   (
     cd "$PROJECT_DIR"
     bash ./tools/make-release.sh "$VERSION" "$NOTES"
   )
 
-  local manifest="$PROJECT_DIR/release/MILESTONE_Core.json"
-  local bin="$PROJECT_DIR/release/MILESTONE_Core.bin"
-  [[ -s $bin ]] || die "릴리즈 BIN이 생성되지 않았습니다."
-  [[ -s $manifest ]] || die "릴리즈 manifest가 생성되지 않았습니다."
+  local profiles=(core media)
+  local stems=(MILESTONE_Core MILESTONE_Media)
+  local index profile stem manifest bin manifest_version manifest_profile
+  local manifest_asset manifest_size actual_size manifest_sha actual_sha
+  for index in "${!profiles[@]}"; do
+    profile=${profiles[$index]}
+    stem=${stems[$index]}
+    manifest="$PROJECT_DIR/release/$stem.json"
+    bin="$PROJECT_DIR/release/$stem.bin"
+    [[ -s $bin ]] || die "[$profile] 릴리즈 BIN이 생성되지 않았습니다."
+    [[ -s $manifest ]] || die "[$profile] 릴리즈 manifest가 생성되지 않았습니다."
 
-  local manifest_version manifest_size actual_size manifest_sha actual_sha
-  manifest_version=$(sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' "$manifest")
-  manifest_size=$(sed -n 's/^[[:space:]]*"size":[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$manifest")
-  manifest_sha=$(sed -n 's/^[[:space:]]*"sha256":[[:space:]]*"\([0-9a-fA-F]*\)".*/\1/p' "$manifest")
-  actual_size=$(stat -c '%s' -- "$bin")
-  actual_sha=$(sha256sum -- "$bin" | awk '{print $1}')
+    manifest_version=$(sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' "$manifest")
+    manifest_profile=$(sed -n 's/^[[:space:]]*"profile":[[:space:]]*"\([^"]*\)".*/\1/p' "$manifest")
+    manifest_asset=$(sed -n 's/^[[:space:]]*"asset":[[:space:]]*"\([^"]*\)".*/\1/p' "$manifest")
+    manifest_size=$(sed -n 's/^[[:space:]]*"size":[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$manifest")
+    manifest_sha=$(sed -n 's/^[[:space:]]*"sha256":[[:space:]]*"\([0-9a-fA-F]*\)".*/\1/p' "$manifest")
+    actual_size=$(stat -c '%s' -- "$bin")
+    actual_sha=$(sha256sum -- "$bin" | awk '{print $1}')
 
-  [[ $manifest_version == "$VERSION" ]] || die "manifest 버전이 다릅니다: $manifest_version"
-  [[ $manifest_size == "$actual_size" ]] || die "manifest size와 BIN 크기가 다릅니다."
-  [[ ${manifest_sha,,} == "$actual_sha" ]] || die "manifest SHA-256과 BIN SHA-256이 다릅니다."
+    [[ $manifest_version == "$VERSION" ]] || die "[$profile] manifest 버전이 다릅니다: $manifest_version"
+    [[ $manifest_profile == "$profile" ]] || die "[$profile] manifest profile이 다릅니다."
+    [[ $manifest_asset == "$stem.bin" ]] || die "[$profile] manifest asset이 다릅니다."
+    [[ $manifest_size == "$actual_size" ]] || die "[$profile] manifest size와 BIN 크기가 다릅니다."
+    [[ ${manifest_sha,,} == "$actual_sha" ]] || die "[$profile] manifest SHA-256과 BIN SHA-256이 다릅니다."
 
-  printf 'BIN:      %s bytes\n' "$actual_size"
-  printf 'SHA-256:  %s\n' "$actual_sha"
+    printf '[%s] %s bytes / %s\n' "$profile" "$actual_size" "$actual_sha"
+  done
 }
 
 commit_local_changes_if_needed() {
@@ -446,8 +456,8 @@ make_release_notes() {
       git -C "$PROJECT_DIR" log -n 10 --format='- %s'
     fi
     printf '\n## Assets\n'
-    printf -- '- `MILESTONE_Core.bin` — OTA firmware image\n'
-    printf -- '- `MILESTONE_Core.json` — OTA manifest\n'
+    printf -- '- `MILESTONE_Core.bin` / `MILESTONE_Core.json` — CORE OTA firmware and manifest\n'
+    printf -- '- `MILESTONE_Media.bin` / `MILESTONE_Media.json` — MEDIA OTA firmware and manifest\n'
   } > "$outfile"
 }
 
@@ -481,6 +491,8 @@ publish_release() {
   gh release create "$TAG" \
     "$PROJECT_DIR/release/MILESTONE_Core.bin" \
     "$PROJECT_DIR/release/MILESTONE_Core.json" \
+    "$PROJECT_DIR/release/MILESTONE_Media.bin" \
+    "$PROJECT_DIR/release/MILESTONE_Media.json" \
     --repo "$EXPECTED_REPO" \
     --verify-tag \
     --title "MILESTONE Core $TAG" \

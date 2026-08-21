@@ -1,6 +1,6 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v1.11.2
+> Current baseline: MILESTONE Core v2.0.0
 > Hardware: Waveshare ESP32-S3-Zero + SH1107 128×128 OLED
 > Repository: `CXITRON/MILESTONE-Core`
 
@@ -9,6 +9,8 @@ This document gives coding agents and maintainers the architectural context need
 ## 1. Product scope
 
 MILESTONE Core is an ESP32-S3 desktop display firmware with:
+
+- two OTA-switchable application profiles: CORE (general display + BLE Now Playing) and MEDIA (stored/live media)
 
 - D-day, date, time, and message views
 - selectable/automatic screen cycling
@@ -36,6 +38,7 @@ MILESTONE_Core/
 ├── AGENTS.md
 ├── MILESTONE_PROJECT_CONTEXT.md
 ├── MILESTONE_Core.ino
+├── FirmwareProfile.h
 ├── CoreConfig.inc
 ├── CoreBluetooth.inc
 ├── CoreDiagnostics.inc
@@ -63,6 +66,7 @@ MILESTONE_Core/
 │   ├── test_diagnostics_contract.sh
 │   ├── test_media_contract.sh
 │   ├── test_radio_bluetooth_contract.sh
+│   ├── test_profile_ota_contract.sh
 │   ├── test_stream_page.js
 │   ├── test_release_reconcile.sh
 │   └── test_release_manifest.sh
@@ -81,7 +85,7 @@ The `*.inc` runtime files are intentionally included into the sketch as one tran
 Firmware and persistent schema versions are separate concepts.
 
 ```cpp
-FIRMWARE_VERSION = "1.11.2"
+FIRMWARE_VERSION = "2.0.0"
 CONFIG_VERSION = 10
 ```
 
@@ -246,9 +250,11 @@ A successful build produces:
 ```text
 release/MILESTONE_Core.bin
 release/MILESTONE_Core.json
+release/MILESTONE_Media.bin
+release/MILESTONE_Media.json
 ```
 
-The manifest records the firmware version, exact binary size, SHA-256, and release note.
+Each manifest records the firmware version, profile, matching asset name, exact binary size, SHA-256, and release note.
 
 ## 7. Unified release command
 
@@ -290,7 +296,7 @@ cd /tmp && milestone-release taildrop X.Y.Z "short release note"
 
 The tool receives the archive into a staging directory, verifies it, runs tests and the firmware build before replacing the live project, and restores the previous project if a pre-publish failure occurs.
 
-The tool also verifies Git identity, repository/branch, version consistency, generated manifest size/SHA-256, commit attribution, tag safety, and GitHub authentication. It pushes `main` and the release tag atomically and publishes both OTA assets with GitHub CLI.
+The tool also verifies Git identity, repository/branch, version consistency, both generated manifest/BIN pairs, commit attribution, tag safety, and GitHub authentication. It pushes `main` and the release tag atomically and publishes all four OTA assets with GitHub CLI.
 
 Use `--dry-run` to validate/test/build without committing, replacing the live project, tagging, pushing, or publishing:
 
@@ -301,7 +307,7 @@ cd /tmp && milestone-release --dry-run taildrop X.Y.Z "short release note"
 
 Use `--yes` only when an unattended final publish is explicitly desired.
 
-## 8. Areas intentionally not refactored through v1.11.2
+## 8. Areas intentionally not refactored through v2.0.0
 
 The following broad refactors were deliberately rejected because their regression risk exceeded their immediate value:
 

@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include "FirmwareProfile.h"
 #include <Wire.h>
 #include <U8g2lib.h>
 #include <WiFi.h>
@@ -23,6 +24,7 @@
 #include "esp_app_desc.h"
 #include "esp_sntp.h"
 #include "esp_system.h"
+#if MILESTONE_HAS_BLUETOOTH
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLEAdvertising.h>
@@ -32,6 +34,7 @@
 #include <host/ble_gatt.h>
 #include <host/ble_uuid.h>
 #include <os/os_mbuf.h>
+#endif
 #endif
 #if CONFIG_ESP_WIFI_ENTERPRISE_SUPPORT
 #if __has_include("esp_eap_client.h")
@@ -61,14 +64,18 @@ SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 
 namespace Milestone {
 
-constexpr char FIRMWARE_VERSION[] = "1.11.2";
+constexpr char FIRMWARE_VERSION[] = "2.0.0";
+constexpr char FIRMWARE_PROFILE[] = MILESTONE_FIRMWARE_PROFILE;
+constexpr char FIRMWARE_PROFILE_LABEL[] = MILESTONE_FIRMWARE_PROFILE_LABEL;
+constexpr char FIRMWARE_PROFILE_MARKER[] = MILESTONE_PROFILE_MARKER;
 constexpr char AP_SSID[] = "MILESTONE-D1-SETUP";
 constexpr char HOSTNAME[] = "milestone-d1";
 constexpr char PREFS_NS[] = "milestone";
 constexpr char DIAGNOSTICS_PREFS_NS[] = "milestone_diag";
-constexpr char UPDATE_MANIFEST_URL[] = "https://github.com/CXITRON/MILESTONE-Core/releases/latest/download/MILESTONE_Core.json";
+constexpr char UPDATE_LATEST_BASE_URL[] = "https://github.com/CXITRON/MILESTONE-Core/releases/latest/download/";
 constexpr char UPDATE_RELEASE_BASE_URL[] = "https://github.com/CXITRON/MILESTONE-Core/releases/download/v";
-constexpr char UPDATE_ASSET_NAME[] = "MILESTONE_Core.bin";
+constexpr char UPDATE_ASSET_NAME[] = MILESTONE_FIRMWARE_ASSET;
+constexpr char UPDATE_MANIFEST_ASSET[] = MILESTONE_MANIFEST_ASSET;
 constexpr uint16_t CONFIG_VERSION = 10;
 constexpr uint8_t VIEW_COUNT = 8;
 constexpr uint8_t MAX_SAVED_NETWORKS = 8;
@@ -343,6 +350,8 @@ uint8_t wifiCandidatePosition = 0;
 UpdateState updateState = UpdateState::IDLE;
 UpdateCheckReason pendingUpdateCheckReason = UpdateCheckReason::NONE;
 String latestFirmwareVersion;
+String latestFirmwareProfile;
+String latestFirmwareAsset;
 String latestFirmwareSha256;
 String latestFirmwareNotes;
 String updateError;
@@ -363,6 +372,7 @@ bool updateInstallRequested = false;
 uint32_t updateInstallNotBeforeMs = 0;
 bool updateCheckIndicatorRendered = false;
 bool wifiSleepDeferredForUpdate = false;
+String requestedUpdateProfile = FIRMWARE_PROFILE;
 bool otaBootConfirmationPending = false;
 uint32_t otaBootConfirmationStartedMs = 0;
 bool otaRollbackArmed = false;
@@ -470,6 +480,34 @@ bool deadlineReached(uint32_t now, uint32_t deadline) {
 
 uint64_t uptimeSeconds() {
   return static_cast<uint64_t>(esp_timer_get_time()) / 1000000ULL;
+}
+
+bool validFirmwareProfile(const String &profile) {
+  return profile == "core" || profile == "media";
+}
+
+const char *manifestAssetForProfile(const String &profile) {
+  if (profile == FIRMWARE_PROFILE) return UPDATE_MANIFEST_ASSET;
+  return profile == "media" ? "MILESTONE_Media.json" : "MILESTONE_Core.json";
+}
+
+const char *firmwareAssetForProfile(const String &profile) {
+  if (profile == FIRMWARE_PROFILE) return UPDATE_ASSET_NAME;
+  return profile == "media" ? "MILESTONE_Media.bin" : "MILESTONE_Core.bin";
+}
+
+String firmwareIdentity(const String &version, const String &profile) {
+  return version + '@' + profile;
+}
+
+String currentFirmwareIdentity() {
+  return firmwareIdentity(FIRMWARE_VERSION, FIRMWARE_PROFILE);
+}
+
+bool otaTargetMatchesCurrent(const String &target) {
+  // v1.x stored a version-only target. Accept it once during the 1.x -> 2.x
+  // migration; all v2 transactions use the profile-qualified identity.
+  return target == FIRMWARE_VERSION || target == currentFirmwareIdentity();
 }
 
 int clampInt(int value, int low, int high) {

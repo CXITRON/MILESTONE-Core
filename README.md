@@ -46,7 +46,7 @@ Arduino IDE의 `Tools > Manage Libraries…`에서 다음 라이브러리를 설
 
 1.7.0부터 `MILESTONE_Core.ino`는 공통 선언과 Arduino 진입점만 유지하고, 구현부를 같은 translation unit에 포함되는 `CoreConfig.inc`, `CoreDiagnostics.inc`, `CoreRollback.inc`, `CoreBluetooth.inc`, `CoreDisplay.inc`, `CoreNetwork.inc`, `CoreUpdate.inc`, `CorePortal.inc`, `CoreRuntime.inc`로 기계적으로 분리합니다. Arduino IDE에서는 이전과 동일하게 `MILESTONE_Core.ino`만 열면 됩니다.
 
-1.3.1에서 1.5.0으로 넘어갈 때는 파티션 테이블도 OTA용으로 바뀌어야 하므로 **Arduino IDE의 일반 업로드**를 사용해야 합니다. 앱 BIN 하나만 `0x10000` 주소에 기록하는 방식으로 최초 설치하지 마십시오. 1.5.0이 정상 설치된 뒤부터 Release의 `MILESTONE_Core.bin`만으로 인터넷 업데이트할 수 있습니다.
+1.3.1에서 1.5.0으로 넘어갈 때는 파티션 테이블도 OTA용으로 바뀌어야 하므로 **Arduino IDE의 일반 업로드**를 사용해야 합니다. 앱 BIN 하나만 `0x10000` 주소에 기록하는 방식으로 최초 설치하지 마십시오. 1.5.0이 정상 설치된 뒤부터 Release의 OTA BIN으로 인터넷 업데이트할 수 있습니다. v2.0.0부터 CORE는 `MILESTONE_Core.bin`, MEDIA는 `MILESTONE_Media.bin`을 사용합니다.
 
 업로드가 포트 대기 상태에서 실패할 때만 다음 순서로 수동 다운로드 모드에 진입합니다.
 
@@ -278,13 +278,13 @@ PC의 현재 프로젝트를 직접 수정한 경우에는 **MILESTONE_Core 프�
 
 ```bash
 cd /run/media/citron/T7/Documents/Dev/MILESTONE_Core
-milestone-release local 1.10.6 "Fix raw stream request metadata"
+milestone-release local 2.0.0 "Split CORE and MEDIA firmware profiles"
 ```
 
 Tailscale Taildrop으로 `MILESTONE_Core_1.10.6.zip`을 받은 경우에는 교체 대상 프로젝트 디렉터리 밖의 정상적으로 존재하는 디렉터리에서 실행합니다. 기존 프로젝트가 교체될 때 현재 셸 경로가 사라지는 문제를 방지하기 위해 `/tmp`로 이동하는 방식을 권장합니다.
 
 ```bash
-cd /tmp && milestone-release taildrop 1.10.6 "Fix raw stream request metadata"
+cd /tmp && milestone-release taildrop 2.0.0 "Split CORE and MEDIA firmware profiles"
 ```
 
 Taildrop 모드는 ZIP을 라이브 프로젝트에 바로 덮어쓰지 않습니다. 별도 staging 디렉터리에서 구조·버전·Git 상태를 검사하고 테스트와 ESP32 릴리즈 빌드까지 성공한 뒤에만 프로젝트를 교체합니다. GitHub 게시 전 실패하면 기존 프로젝트를 자동 복구합니다. `--dry-run`은 테스트/빌드까지만 수행하고 로컬 프로젝트·Git·GitHub를 변경하지 않습니다. `--yes`를 사용하지 않는 기본 동작은 최종 게시 직전에 한 번 확인합니다.
@@ -301,16 +301,18 @@ Taildrop 모드는 ZIP을 라이브 프로젝트에 바로 덮어쓰지 않습�
 
 ```bash
 chmod +x tools/make-release.sh
-./tools/make-release.sh 1.10.6 "Fix raw stream request metadata"
+./tools/make-release.sh 2.0.0 "Split CORE and MEDIA firmware profiles"
 ```
 
-기본 설명을 사용하려면 `./tools/make-release.sh 1.10.6`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
+기본 설명을 사용하려면 `./tools/make-release.sh 2.0.0`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
 
-다음 두 파일이 `release/`에 생성됩니다.
+다음 네 파일이 `release/`에 생성됩니다.
 
 ```text
 release/MILESTONE_Core.bin
 release/MILESTONE_Core.json
+release/MILESTONE_Media.bin
+release/MILESTONE_Media.json
 ```
 
 스크립트가 BIN의 실제 바이트 수와 SHA-256을 계산하므로 JSON을 손으로 수정하지 않는 것이 안전합니다. 릴리스 빌드 전에 `tools/test-core.sh`가 자동 실행되어 하드웨어 독립 핵심 로직과 포털/API 계약, **문서 기준 버전·README 버전 이력 순서 동기화**까지 모두 통과해야 다음 단계로 진행됩니다. 테스트만 따로 실행하려면 다음 명령을 사용합니다.
@@ -324,13 +326,13 @@ release/MILESTONE_Core.json
 일반적인 게시에는 위의 `milestone-release`를 사용합니다. 아래 수동 절차는 자동화 도구를 복구하거나 디버깅해야 할 때만 참고합니다.
 
 1. 저장소의 `Releases`에서 `Draft a new release`를 선택합니다.
-2. 버전과 동일한 태그를 만듭니다. 예: `v1.10.6`
-3. Release 제목을 `MILESTONE Core v1.10.6`로 지정합니다.
-4. `release/MILESTONE_Core.bin`과 `release/MILESTONE_Core.json`을 첨부합니다.
+2. 버전과 동일한 태그를 만듭니다. 예: `v2.0.0`
+3. Release 제목을 `MILESTONE Core v2.0.0`로 지정합니다.
+4. CORE/MEDIA의 BIN과 JSON 네 파일을 모두 첨부합니다.
 5. Pre-release가 아닌 최신 정식 Release로 게시합니다.
-6. 1.9.9 이상이 설치된 기기에서 1.10.6 OTA 업데이트와 기존 설정·Wi-Fi·롤백 보호·진단 이력·커스텀 미디어 및 전용 스트리밍 모드 동작을 검증합니다.
+6. 1.11.2가 설치된 기기에서 2.0.0 CORE 업데이트, CORE↔MEDIA 전환, 기존 설정·Wi-Fi·롤백 보호·진단 이력·커스텀 미디어 보존을 검증합니다.
 
-두 파일의 이름은 모든 Release에서 정확히 같아야 합니다. 초안이나 Pre-release는 `latest` 업데이트 대상으로 사용하지 않습니다.
+네 파일의 이름은 모든 Release에서 정확히 같아야 합니다. 초안이나 Pre-release는 `latest` 업데이트 대상으로 사용하지 않습니다.
 
 최초 1.5.0 배포에서는 먼저 1.5.0 BIN과 manifest를 정식 Release로 게시한 뒤 Arduino IDE 일반 업로드를 실행하는 순서를 권장합니다. USB 업로드 직후 자동 재부팅될 때 이미 1.5.0 manifest가 존재하므로 정상적으로 `최신 버전과 동일` 판정을 확인할 수 있습니다. Release를 나중에 게시해도 기기가 손상되지는 않지만, 첫 부팅에서는 manifest HTTP 404 오류가 표시됩니다.
 
@@ -378,6 +380,25 @@ release/MILESTONE_Core.json
 - STREAM_MODE에서 일반 백그라운드 기능을 격리하고 PSRAM 240프레임 링버퍼·X/Y dirty-tile OLED 갱신·적응형 출력 주기·프레임 드롭·80°C 스트림 상한으로 영상 수신/표시에 집중
 - 라이브 송신은 96프레임 초기 충전 후 큐 64프레임 이하에서 최대 8프레임씩 144프레임 이상으로 보충하며 ESP32가 소스 시간축과 OLED 출력 클록을 분리해 관리
 - 비차단 3초 부팅 로고와 우상단 NTP `T`·업데이트 `U` 상태 아이콘
+
+## v2.0.0 업데이트 안내
+
+v2.0.0은 하나의 비대해지는 애플리케이션을 **CORE**와 **MEDIA** 두 OTA 전환형 펌웨어로 분리합니다. 설정 AP, 저장 Wi-Fi, NTP, 일반 화면, OTA, SHA-256 검증, 롤백, 진단, 버튼·온도 보호는 두 프로필에 공통으로 남습니다. 설정 스키마는 10 그대로이며 NVS 설정, 진단 이력, LittleFS 커스텀 미디어는 프로필 전환으로 삭제되지 않습니다.
+
+| 프로필 | 전용 기능 | Release 자산 |
+|---|---|---|
+| CORE | 기존 일반 표시 기능 + iPhone/iPad Bluetooth Now Playing | `MILESTONE_Core.bin`, `MILESTONE_Core.json` |
+| MEDIA | 기존 일반 표시 기능 + 저장형 커스텀 미디어 + `/stream` 실시간 스트리밍 | `MILESTONE_Media.bin`, `MILESTONE_Media.json` |
+
+- 설정 포털의 **펌웨어 업데이트 및 기능 전환**에서 대상 프로필을 확인한 뒤 기존 이중 확인 설치 버튼으로 전환
+- OTA target을 `버전@프로필`로 기록해 `2.0.0@core`와 `2.0.0@media`처럼 같은 버전 사이도 정상 설치
+- 1.x의 버전-only OTA/rollback 기록을 첫 v2 부팅에서 호환해 1.11.2 → 2.0.0 CORE 업그레이드 경로 유지
+- 현재 프로필용 최신 manifest 자동 확인과 사용자가 선택한 다른 프로필 manifest 수동 확인을 분리
+- 두 프로필 모두 동일한 OTA 파티션·인증서·크기·SHA-256·10초 candidate 검증·이전 슬롯 자동 롤백 절차 유지
+- CORE에서 MEDIA 기능, MEDIA에서 Bluetooth 설정은 삭제하지 않고 비활성 안내와 프로필 전환 경로를 표시
+- `tools/make-release.sh`와 `milestone-release`가 두 빌드를 모두 통과한 뒤 네 자산을 한 Release에 원자적으로 준비·게시
+
+정식 버전: `2.0.0`
 
 ## v1.11.2 업데이트 안내
 
