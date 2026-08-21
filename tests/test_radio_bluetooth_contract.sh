@@ -18,7 +18,7 @@ reject() {
   fi
 }
 
-require 'FIRMWARE_VERSION\[\] = "2\.0\.2"' MILESTONE_Core.ino 'firmware version is not 2.0.2'
+require 'FIRMWARE_VERSION\[\] = "2\.0\.3"' MILESTONE_Core.ino 'firmware version is not 2.0.3'
 require 'CONFIG_VERSION = 10' MILESTONE_Core.ino 'configuration schema is not 10'
 require 'bool fixedApSecurity = false;' MILESTONE_Core.ino 'fixed AP security must default off'
 require 'String fixedApPassword;' MILESTONE_Core.ino 'fixed AP password setting missing'
@@ -62,6 +62,13 @@ require 'bluetoothNowPlayingAdvertising\(\)' CoreBluetooth.inc 'actual Bluetooth
 require 'shutdownBluetoothNowPlaying\(\)' CoreBluetooth.inc 'Bluetooth shutdown missing'
 require 'suspendBluetoothNowPlaying\(\)' CoreBluetooth.inc 'Bluetooth stream suspension missing'
 require 'resumeBluetoothNowPlaying\(\)' CoreBluetooth.inc 'Bluetooth stream resume missing'
+require 'isolateBluetoothForFirmwareOperation\(\)' CoreBluetooth.inc 'firmware HTTPS Bluetooth isolation missing'
+require 'restoreBluetoothAfterFirmwareOperation\(\)' CoreBluetooth.inc 'firmware HTTPS Bluetooth restoration missing'
+require 'if \(bluetoothFirmwareOperationIsolated\) return;' CoreBluetooth.inc 'Bluetooth service must stay stopped during firmware HTTPS'
+require 'isolateBluetoothForFirmwareOperation\(\);' CoreUpdate.inc 'OTA install must isolate Bluetooth before resource checks'
+require 'isolateBluetoothForFirmwareOperation\(\);' CoreRuntime.inc 'manifest checks must isolate Bluetooth before HTTPS'
+require 'restoreBluetoothAfterFirmwareOperation\(\);' CoreUpdate.inc 'firmware failure paths must restore Bluetooth'
+require 'restoreBluetoothAfterFirmwareOperation\(\);' CoreRuntime.inc 'successful manifest checks must restore Bluetooth'
 require 'suspendBluetoothNowPlaying\(\);' CoreRuntime.inc 'STREAM_MODE entry must suspend Bluetooth'
 require 'resumeBluetoothNowPlaying\(\);' CoreRuntime.inc 'STREAM_MODE exit must resume Bluetooth'
 require 'processBluetoothNowPlaying\(\);' CoreRuntime.inc 'main loop must service Bluetooth metadata'

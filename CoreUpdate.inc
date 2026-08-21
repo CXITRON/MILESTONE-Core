@@ -139,6 +139,7 @@ void failFirmwareCheck(const String &reason, bool transient) {
                    static_cast<int16_t>(transient ? MilestoneDiagnostics::UpdateCheckFailure::TRANSIENT
                                                   : MilestoneDiagnostics::UpdateCheckFailure::FATAL));
   setUpdateState(UpdateState::ERROR_STATE);
+  restoreBluetoothAfterFirmwareOperation();
   logLine(String("firmware check failed: ") + reason);
 }
 
@@ -156,6 +157,7 @@ void failFirmwareUpdate(const String &reason) {
                    static_cast<int16_t>(classifyOtaFailure(reason)), 0, true);
   restoreNetworkAfterFirmwareOperation();
   setUpdateState(UpdateState::ERROR_STATE);
+  restoreBluetoothAfterFirmwareOperation();
   logLine(String("firmware update failed: ") + reason);
 }
 
@@ -168,6 +170,7 @@ void deferFirmwareInstall(const String &reason) {
   if (!putStringVerified("ota_result", lastOtaResult)) logLine("OTA deferral result save failed");
   if (!clearOtaAttemptRecord()) logLine("OTA attempt record clear failed");
   setUpdateState(UpdateState::AVAILABLE);
+  restoreBluetoothAfterFirmwareOperation();
   logLine(String("firmware installation deferred: ") + reason);
 }
 
@@ -412,6 +415,7 @@ bool installFirmwareUpdate() {
     deferFirmwareInstall("Wi-Fi disconnected");
     return false;
   }
+  isolateBluetoothForFirmwareOperation();
   if (ESP.getFreeHeap() < UPDATE_MIN_FREE_HEAP || ESP.getMaxAllocHeap() < UPDATE_MIN_LARGEST_BLOCK) {
     deferFirmwareInstall("not enough internal RAM");
     return false;

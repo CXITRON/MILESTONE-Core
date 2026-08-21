@@ -3,13 +3,17 @@ set -euo pipefail
 
 if (( $# < 1 || $# > 2 )); then
   echo "사용법: $0 VERSION [NOTES]" >&2
-  echo "예: $0 2.0.2 'Keep setup AP active after Wi-Fi provisioning'" >&2
+  echo "예: $0 2.0.3 'Stabilize OTA HTTPS and reproducible releases'" >&2
   exit 2
 fi
 
 version=$1
 notes=${2:-"MILESTONE Core v${version}"}
 fqbn='esp32:esp32:waveshare_esp32_s3_zero:CDCOnBoot=default,PSRAM=enabled,PartitionScheme=min_spiffs'
+# Arduino-ESP32's chip debug report contains __DATE__/__TIME__. Pin GCC's
+# reproducible-build clock so rebuilding the same source produces the same BIN
+# and an existing release can be verified or repaired byte-for-byte.
+release_source_date_epoch=946684800
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 project_dir=$(cd -- "$script_dir/.." && pwd)
@@ -71,12 +75,15 @@ for index in "${!profiles[@]}"; do
   marker=${markers[$index]}
   build_dir="$build_root/$profile"
   mkdir -p -- "$build_dir"
+  reproducible_path_flags="-ffile-prefix-map=$project_dir=/src -fmacro-prefix-map=$project_dir=/src -fdebug-prefix-map=$project_dir=/src -ffile-prefix-map=$build_root=/build -fmacro-prefix-map=$build_root=/build -fdebug-prefix-map=$build_root=/build"
 
   echo "[$profile] 펌웨어 컴파일"
-  "$arduino_cli" compile \
+  TZ=UTC SOURCE_DATE_EPOCH="$release_source_date_epoch" "$arduino_cli" compile \
     --fqbn "$fqbn" \
     --build-path "$build_dir" \
-    --build-property "compiler.cpp.extra_flags=-DMILESTONE_BUILD_PROFILE=$profile_id" \
+    --build-property "compiler.cpp.extra_flags=-DMILESTONE_BUILD_PROFILE=$profile_id $reproducible_path_flags" \
+    --build-property "compiler.c.extra_flags=$reproducible_path_flags" \
+    --build-property "compiler.S.extra_flags=$reproducible_path_flags" \
     --warnings all \
     "$project_dir"
 

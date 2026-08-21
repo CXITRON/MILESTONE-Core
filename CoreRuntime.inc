@@ -317,6 +317,7 @@ void processFirmwareUpdate() {
       // state first, return to loop(), and do not start HTTPS until a display
       // renderer has confirmed that the U frame reached the OLED.
       updateCheckIndicatorRendered = false;
+      isolateBluetoothForFirmwareOperation();
       setUpdateState(UpdateState::CHECKING);
       return;
     }
@@ -335,6 +336,7 @@ void processFirmwareUpdate() {
       ntpFailed = false;
       if (runtimeState != RuntimeState::SETUP_AP) setRuntimeState(RuntimeState::RUNNING_ONLINE);
       restoreNetworkAfterFirmwareOperation();
+      restoreBluetoothAfterFirmwareOperation();
       if (wifiSleepDeferredForUpdate && !updatePromptVisible && !portalActive) {
         wifiSleepDeferredForUpdate = false;
         enterWifiSleep();

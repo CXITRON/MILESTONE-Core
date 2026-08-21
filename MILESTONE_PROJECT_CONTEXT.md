@@ -1,6 +1,6 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v2.0.2
+> Current baseline: MILESTONE Core v2.0.3
 > Hardware: Waveshare ESP32-S3-Zero + SH1107 128×128 OLED
 > Repository: `CXITRON/MILESTONE-Core`
 
@@ -89,7 +89,7 @@ The `*.inc` runtime files are intentionally included into the sketch as one tran
 Firmware and persistent schema versions are separate concepts.
 
 ```cpp
-FIRMWARE_VERSION = "2.0.2"
+FIRMWARE_VERSION = "2.0.3"
 CONFIG_VERSION = 10
 ```
 
@@ -145,6 +145,8 @@ BLE stack initialization is not treated as proof that the device is advertising.
 
 `CoreUpdate.inc` checks the GitHub Release manifest and performs the HTTPS OTA transaction. Important invariants include TLS verification, manifest validation, content length, SHA-256 verification, temperature/resource guards, connection-stall handling, `Update.end()` success, and reboot ordering.
 
+v2.0.3 isolates optional CORE Bluetooth before manifest TLS and firmware download work. The NimBLE stack is deinitialized before the OTA memory guard so its internal RAM is available for TLS, advertising/connections cannot contend with Wi-Fi, and normal cooperative Bluetooth initialization resumes only after a completed check or failed/deferred install. A verified install reboots without rebuilding BLE. MEDIA uses the same calls through no-op profile stubs.
+
 Do not split the OTA transaction merely because the function is long. Its sequential structure encodes safety assumptions.
 
 ### Rollback
@@ -186,7 +188,7 @@ v1.8.2 adds `CoreDiagnostics.inc` plus host-testable `CoreDiagnostics.h/.cpp`. T
 Important write-policy invariants:
 
 - write only significant boot, Wi-Fi, NTP, OTA, rollback, thermal, or isolated media-failure events
-- suppress the same event/detail for 60 seconds unless the event is explicitly forced
+- suppress the same event/detail for 60 seconds unless the event is explicitly forced; repeated Wi-Fi connect timeouts, NTP timeouts, and update-check failures use a one-hour window
 - never persist every loop, ordinary screen transitions, or RSSI fluctuations
 - keep `CONFIG_VERSION` independent; diagnostics storage is not part of schema 10 migration
 - diagnostics hooks observe existing state-transition outcomes and must not reorder the underlying state machine
@@ -319,7 +321,7 @@ cd /tmp && milestone-release --dry-run taildrop X.Y.Z "short release note"
 
 Use `--yes` only when an unattended final publish is explicitly desired.
 
-## 8. Areas intentionally not refactored through v2.0.2
+## 8. Areas intentionally not refactored through v2.0.3
 
 The following broad refactors were deliberately rejected because their regression risk exceeded their immediate value:
 

@@ -520,6 +520,27 @@ void shutdownBluetoothNowPlaying() {
   logLine("BLE Now Playing stopped");
 }
 
+void isolateBluetoothForFirmwareOperation() {
+  if (!config.bluetoothNowPlaying || bluetoothFirmwareOperationIsolated) return;
+  bluetoothFirmwareOperationIsolated = true;
+  const uint32_t heapBefore = ESP.getFreeHeap();
+  const uint32_t largestBefore = ESP.getMaxAllocHeap();
+  if (bluetoothNowPlaying.initialized) shutdownBluetoothNowPlaying();
+  // Give the controller task a short opportunity to return its internal-RAM
+  // allocations before TLS performs its largest contiguous allocations.
+  delay(20);
+  logLine(String("BLE isolated for firmware HTTPS: heap=") + heapBefore + "->" +
+          ESP.getFreeHeap() + " max=" + largestBefore + "->" + ESP.getMaxAllocHeap());
+}
+
+void restoreBluetoothAfterFirmwareOperation() {
+  if (!bluetoothFirmwareOperationIsolated) return;
+  bluetoothFirmwareOperationIsolated = false;
+  // Do not synchronously rebuild NimBLE in the HTTPS cleanup path. The normal
+  // cooperative Bluetooth service starts it on the next loop iteration.
+  logLine("BLE firmware HTTPS isolation released");
+}
+
 void suspendBluetoothNowPlaying() {
   if (!bluetoothNowPlaying.initialized || bluetoothNowPlaying.suspended) return;
   bluetoothNowPlaying.suspended = true;
@@ -588,6 +609,7 @@ void applyAmsNotification(const AmsNotificationPacket &packet) {
 }
 
 void processBluetoothNowPlaying() {
+  if (bluetoothFirmwareOperationIsolated) return;
   if (!config.bluetoothNowPlaying) {
     if (bluetoothNowPlaying.initialized) shutdownBluetoothNowPlaying();
     return;
@@ -713,6 +735,8 @@ bool initializeBluetoothNowPlaying() {
   return false;
 }
 void shutdownBluetoothNowPlaying() {}
+void isolateBluetoothForFirmwareOperation() {}
+void restoreBluetoothAfterFirmwareOperation() {}
 void suspendBluetoothNowPlaying() {}
 void resumeBluetoothNowPlaying() {}
 void processBluetoothNowPlaying() {}

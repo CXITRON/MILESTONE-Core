@@ -73,7 +73,7 @@ SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 
 namespace Milestone {
 
-constexpr char FIRMWARE_VERSION[] = "2.0.2";
+constexpr char FIRMWARE_VERSION[] = "2.0.3";
 constexpr char FIRMWARE_PROFILE[] = MILESTONE_FIRMWARE_PROFILE;
 constexpr char FIRMWARE_PROFILE_LABEL[] = MILESTONE_FIRMWARE_PROFILE_LABEL;
 constexpr char FIRMWARE_PROFILE_MARKER[] = MILESTONE_PROFILE_MARKER;
@@ -384,6 +384,7 @@ bool updateInstallRequested = false;
 uint32_t updateInstallNotBeforeMs = 0;
 bool updateCheckIndicatorRendered = false;
 bool wifiSleepDeferredForUpdate = false;
+bool bluetoothFirmwareOperationIsolated = false;
 String requestedUpdateProfile = FIRMWARE_PROFILE;
 bool otaBootConfirmationPending = false;
 uint32_t otaBootConfirmationStartedMs = 0;

@@ -62,6 +62,17 @@ bool shouldSuppressDuplicate(Event event, int16_t detail, uint32_t nowMs,
   return false;
 }
 
+uint32_t duplicateSuppressionWindowMs(Event event) {
+  switch (event) {
+    case Event::WIFI_CONNECT_TIMEOUT:
+    case Event::NTP_TIMEOUT:
+    case Event::UPDATE_CHECK_FAILED:
+      return REPEATED_CONNECTIVITY_WINDOW_MS;
+    default:
+      return DEFAULT_DUPLICATE_WINDOW_MS;
+  }
+}
+
 void rememberDiagnosticWrite(Event event, int16_t detail, uint32_t nowMs,
                              SuppressionEntry *entries, size_t entryCount) {
   if (!entries || entryCount == 0) return;

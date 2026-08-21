@@ -110,6 +110,15 @@ void testDuplicateSuppression() {
       Event::OTA_FAILED, 2, 80001, entries, 3, 60000));
 }
 
+void testEventSpecificSuppressionWindows() {
+  using MilestoneDiagnostics::Event;
+  EXPECT_EQ(MilestoneDiagnostics::duplicateSuppressionWindowMs(Event::BOOT), 60000U);
+  EXPECT_EQ(MilestoneDiagnostics::duplicateSuppressionWindowMs(Event::WIFI_DISCONNECTED), 60000U);
+  EXPECT_EQ(MilestoneDiagnostics::duplicateSuppressionWindowMs(Event::WIFI_CONNECT_TIMEOUT), 3600000U);
+  EXPECT_EQ(MilestoneDiagnostics::duplicateSuppressionWindowMs(Event::NTP_TIMEOUT), 3600000U);
+  EXPECT_EQ(MilestoneDiagnostics::duplicateSuppressionWindowMs(Event::UPDATE_CHECK_FAILED), 3600000U);
+}
+
 void testEventClassification() {
   EXPECT_TRUE(MilestoneDiagnostics::isError(MilestoneDiagnostics::Event::OTA_FAILED));
   EXPECT_TRUE(MilestoneDiagnostics::isError(MilestoneDiagnostics::Event::NTP_TIMEOUT));
@@ -126,6 +135,7 @@ int main() {
   testRingBufferOrdering();
   testCorruptionFallback();
   testDuplicateSuppression();
+  testEventSpecificSuppressionWindows();
   testEventClassification();
 
   if (failures != 0) {

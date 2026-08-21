@@ -18,7 +18,7 @@ reject() {
   fi
 }
 
-require 'FIRMWARE_VERSION\[\] = "2\.0\.2"' MILESTONE_Core.ino 'firmware version is not 2.0.2'
+require 'FIRMWARE_VERSION\[\] = "2\.0\.3"' MILESTONE_Core.ino 'firmware version is not 2.0.3'
 require '#include <esp_wifi\.h>' MILESTONE_Core.ino 'low-level Wi-Fi scan control header missing'
 require 'WIFI_PRIMARY_CONNECT_TIMEOUT_MS = 12UL \* 1000UL' MILESTONE_Core.ino 'primary saved-network timeout was not shortened'
 require 'WIFI_PORTAL_TEST_CONNECT_TIMEOUT_MS = 15UL \* 1000UL' MILESTONE_Core.ino 'portal test timeout bound missing'

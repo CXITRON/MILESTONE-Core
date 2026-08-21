@@ -52,9 +52,9 @@ Options:
 
 Examples:
   cd /run/media/citron/T7/Documents/Dev/MILESTONE_Core
-  milestone-release local 2.0.2 "Keep setup AP active after Wi-Fi provisioning"
+  milestone-release local 2.0.3 "Stabilize OTA HTTPS and reproducible releases"
 
-  cd /tmp && milestone-release taildrop 2.0.2 "Keep setup AP active after Wi-Fi provisioning"
+  cd /tmp && milestone-release taildrop 2.0.3 "Stabilize OTA HTTPS and reproducible releases"
 USAGE
 }
 

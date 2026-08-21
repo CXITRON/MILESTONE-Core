@@ -11,6 +11,8 @@ constexpr uint8_t HISTORY_CAPACITY = 16;
 constexpr uint8_t SUPPRESSION_CAPACITY = 16;
 constexpr int16_t DETAIL_MAX = 32767;
 constexpr int32_t VALUE_MAX = 2147483647L;
+constexpr uint32_t DEFAULT_DUPLICATE_WINDOW_MS = 60UL * 1000UL;
+constexpr uint32_t REPEATED_CONNECTIVITY_WINDOW_MS = 60UL * 60UL * 1000UL;
 
 enum class Event : uint16_t {
   NONE = 0,
@@ -114,6 +116,7 @@ bool newest(const History &history, uint8_t newestIndex, Record &record);
 bool shouldSuppressDuplicate(Event event, int16_t detail, uint32_t nowMs,
                              const SuppressionEntry *entries, size_t entryCount,
                              uint32_t windowMs);
+uint32_t duplicateSuppressionWindowMs(Event event);
 void rememberDiagnosticWrite(Event event, int16_t detail, uint32_t nowMs,
                              SuppressionEntry *entries, size_t entryCount);
 const char *eventName(Event event);

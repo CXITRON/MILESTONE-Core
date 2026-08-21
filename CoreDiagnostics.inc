@@ -1,5 +1,3 @@
-constexpr uint32_t DIAGNOSTIC_DUPLICATE_WINDOW_MS = 60UL * 1000UL;
-
 bool persistDiagnosticHistory(const MilestoneDiagnostics::History &history) {
   if (!diagnosticsPrefsReady) return false;
   const size_t written = diagnosticsPrefs.putBytes("history", &history, sizeof(history));
@@ -31,7 +29,8 @@ void recordDiagnostic(MilestoneDiagnostics::Event event, int16_t detail = 0,
   const uint32_t nowMs = millis();
   if (!force && MilestoneDiagnostics::shouldSuppressDuplicate(
           event, detail, nowMs, diagnosticSuppression,
-          MilestoneDiagnostics::SUPPRESSION_CAPACITY, DIAGNOSTIC_DUPLICATE_WINDOW_MS)) {
+          MilestoneDiagnostics::SUPPRESSION_CAPACITY,
+          MilestoneDiagnostics::duplicateSuppressionWindowMs(event))) {
     return;
   }
 
