@@ -18,7 +18,7 @@ reject() {
   fi
 }
 
-require 'FIRMWARE_VERSION\[\] = "2\.0\.0"' MILESTONE_Core.ino 'firmware version is not 2.0.0'
+require 'FIRMWARE_VERSION\[\] = "2\.0\.1"' MILESTONE_Core.ino 'firmware version is not 2.0.1'
 require 'CONFIG_VERSION = 10' MILESTONE_Core.ino 'configuration schema is not 10'
 require 'bool fixedApSecurity = false;' MILESTONE_Core.ino 'fixed AP security must default off'
 require 'String fixedApPassword;' MILESTONE_Core.ino 'fixed AP password setting missing'
@@ -40,6 +40,10 @@ require '89D3502B|0x2b, 0x50, 0xd3, 0x89' CoreBluetooth.inc 'Apple Media Service
 require '2F7CABCE|0xce, 0xab, 0x7c, 0x2f' CoreBluetooth.inc 'AMS Entity Update UUID missing'
 require 'C6B2F38C|0x8c, 0xf3, 0xb2, 0xc6' CoreBluetooth.inc 'AMS Entity Attribute UUID missing'
 require 'BLE_HS_ADV_TYPE_SVC_DATA_UUID128|0x15' CoreBluetooth.inc 'AMS service solicitation advertising is missing'
+require 'setShortName\("MILESTON"\)' CoreBluetooth.inc 'passive BLE scans need a name in the primary advertisement'
+require 'scanResponse\.setName\(BLE_DEVICE_NAME\)' CoreBluetooth.inc 'active BLE scans need the complete MILESTONE name'
+require 'MILESTONE_BLE_AMS_RUNTIME_V2' CoreBluetooth.inc 'compiled BLE runtime marker missing'
+require 'requires an Arduino-ESP32 build with NimBLE enabled' MILESTONE_Core.ino 'CORE must fail compilation instead of shipping a BLE stub'
 require 'bluetoothNowPlayingVisible\(\)' CoreBluetooth.inc 'Bluetooth music overlay visibility gate missing'
 python3 - <<'PY_AMS_PARSE'
 from pathlib import Path
@@ -50,6 +54,7 @@ body = s[start:end]
 assert body.count('value += static_cast<char>(packet.data[i])') == 1, 'AMS notification payload must be appended exactly once'
 PY_AMS_PARSE
 require 'initializeBluetoothNowPlaying\(\)' CoreBluetooth.inc 'Bluetooth initialization missing'
+require 'setScanResponse\(true\)' CoreBluetooth.inc 'complete MILESTONE name scan response must be explicitly enabled'
 require 'setAdvertisementType\(BLE_GAP_CONN_MODE_UND\)' CoreBluetooth.inc 'AMS advertising must be explicitly connectable'
 require 'setScanFilter\(false, false\)' CoreBluetooth.inc 'AMS advertising must accept iPhone scan and connection requests'
 require 'BLE_ADVERTISING_RETRY_MS' CoreBluetooth.inc 'Bluetooth advertising retry cadence missing'
@@ -87,6 +92,7 @@ require 'bluetooth_ams_ready' CorePortal.inc 'status API must expose AMS readine
 require 'bluetooth_advertising' CorePortal.inc 'status API must expose actual advertising state'
 require 'bluetooth_stage' CorePortal.inc 'status API must expose the Bluetooth runtime stage'
 require 'bluetooth_error_code' CorePortal.inc 'status API must expose the Bluetooth stack error code'
+require 'bluetooth_address' CorePortal.inc 'status API must expose the advertising address for scanner verification'
 
 require 'id="fixed_ap"' PortalPage.h 'fixed AP toggle missing from portal'
 require 'id="ap_password" type="password"' PortalPage.h 'fixed AP password input missing from portal'
@@ -95,6 +101,7 @@ require '누구나 MILESTONE Setup 네트워크에 접속' PortalPage.h 'persist
 require 'saveApSecurity\(\)' PortalPage.h 'AP security must have an independent save action'
 require 'saveBluetoothSetting\(\)' PortalPage.h 'Bluetooth must have an independent save action'
 require 'id="bluetooth_now_playing"' PortalPage.h 'Bluetooth Now Playing toggle missing'
+require '설정 &gt; Bluetooth 목록에 나타나지 않을 수 있습니다' PortalPage.h 'iOS BLE discovery guidance missing'
 require '저장된 비밀번호는|현재 비밀번호는 숨김' PortalPage.h 'portal must explain that stored AP password is not disclosed'
 
 # The browser must not submit AP fields when only the Bluetooth control is saved.

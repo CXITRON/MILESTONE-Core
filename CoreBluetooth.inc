@@ -22,6 +22,10 @@ constexpr uint16_t AMS_CONN_TIMEOUT = 600;       // 6 seconds in 10 ms units.
 constexpr size_t AMS_NOTIFICATION_MAX = 244;
 constexpr uint8_t AMS_NOTIFICATION_QUEUE = 6;
 constexpr uint32_t BLE_ADVERTISING_RETRY_MS = 5000UL;
+constexpr char BLE_DEVICE_NAME[] = "MILESTONE";
+// make-release.sh verifies this executed marker in the compiled CORE image,
+// preventing a BLE stub from being published as a working build.
+constexpr char BLE_RUNTIME_MARKER[] = "MILESTONE_BLE_AMS_RUNTIME_V2";
 
 enum class BluetoothRuntimeStage : uint8_t {
   OFF,
@@ -78,6 +82,7 @@ struct BluetoothNowPlayingState {
   float durationSeconds = 0.0f;
   uint32_t playbackAnchorMs = 0;
   uint32_t metadataChangedMs = 0;
+  String address;
 };
 
 struct AmsNotificationPacket {
@@ -380,7 +385,7 @@ bool startBluetoothAdvertising() {
     bluetoothNowPlaying.stage = BluetoothRuntimeStage::ADVERTISING;
     return true;
   }
-  if (!bluetoothAdvertising->start()) {
+  if (!bluetoothAdvertising->start() || !bluetoothAdvertising->isAdvertising()) {
     setBluetoothError("advertising-start-failed");
     bluetoothNowPlaying.nextAdvertisingRetryMs = millis() + BLE_ADVERTISING_RETRY_MS;
     logLine("BLE advertising start failed; retry scheduled");
@@ -388,7 +393,8 @@ bool startBluetoothAdvertising() {
   }
   bluetoothNowPlaying.stage = BluetoothRuntimeStage::ADVERTISING;
   bluetoothNowPlaying.nextAdvertisingRetryMs = 0;
-  logLine("BLE advertising active as MILESTONE");
+  logLine(String(BLE_RUNTIME_MARKER) + " advertising as " + BLE_DEVICE_NAME +
+          " address=" + bluetoothNowPlaying.address);
   return true;
 }
 
@@ -407,12 +413,18 @@ bool configureBluetoothAdvertising() {
       static_cast<char>(0xf4), static_cast<char>(0x8e), 0x3a, 0x43, 0x36, 0x0f, 0x2b, 0x50,
       static_cast<char>(0xd3), static_cast<char>(0x89)};
   advertisementData.addData(solicitation, sizeof(solicitation));
+  // Flags (3 bytes) + AMS solicitation (18 bytes) leave exactly 10 bytes in
+  // the legacy 31-byte packet.  Include an eight-character shortened name so
+  // passive scans can identify the device without a scan response.
+  advertisementData.setShortName("MILESTON");
   BLEAdvertisementData scanResponse;
-  scanResponse.setName("MILESTONE");
+  scanResponse.setName(BLE_DEVICE_NAME);
+  scanResponse.addTxPower();
   const bool advertisementDataReady = bluetoothAdvertising->setAdvertisementData(advertisementData);
   const bool scanResponseReady = bluetoothAdvertising->setScanResponseData(scanResponse);
   // Service solicitation is useful only when iOS can actively scan and open a
   // connection. Do not rely on library defaults that may change by board core.
+  bluetoothAdvertising->setScanResponse(true);
   bluetoothAdvertising->setAdvertisementType(BLE_GAP_CONN_MODE_UND);
   bluetoothAdvertising->setScanFilter(false, false);
   // 160-240 ms advertising interval reduces idle RF duty while remaining easy
@@ -436,7 +448,7 @@ bool initializeBluetoothNowPlaying() {
   }
   bluetoothNowPlaying.stage = BluetoothRuntimeStage::INITIALIZING;
   clearBluetoothError();
-  if (!BLEDevice::init("MILESTONE")) {
+  if (!BLEDevice::init(BLE_DEVICE_NAME)) {
     setBluetoothError("stack-initialization-failed");
     scheduleBluetoothInitializationRetry();
     logLine("BLE initialization failed");
@@ -478,6 +490,7 @@ bool initializeBluetoothNowPlaying() {
   bluetoothNowPlaying.initialized = true;
   bluetoothNowPlaying.nextInitializationRetryMs = 0;
   bluetoothNowPlaying.suspended = false;
+  bluetoothNowPlaying.address = BLEDevice::getAddress().toString();
   resetAmsHandles();
   clearBluetoothNowPlayingMetadata();
   if (!startBluetoothAdvertising()) return false;
@@ -673,6 +686,7 @@ bool bluetoothNowPlayingAdvertising() {
 const char *bluetoothNowPlayingStage() { return bluetoothRuntimeStageName(bluetoothNowPlaying.stage); }
 const char *bluetoothNowPlayingError() { return bluetoothNowPlaying.lastError; }
 int bluetoothNowPlayingErrorCode() { return bluetoothNowPlaying.lastErrorCode; }
+const char *bluetoothNowPlayingAddress() { return bluetoothNowPlaying.address.c_str(); }
 
 const char *bluetoothNowPlayingTitle() { return bluetoothNowPlaying.title.c_str(); }
 const char *bluetoothNowPlayingArtist() { return bluetoothNowPlaying.artist.c_str(); }
@@ -716,6 +730,7 @@ const char *bluetoothNowPlayingError() {
 #endif
 }
 int bluetoothNowPlayingErrorCode() { return 0; }
+const char *bluetoothNowPlayingAddress() { return ""; }
 const char *bluetoothNowPlayingTitle() { return ""; }
 const char *bluetoothNowPlayingArtist() { return ""; }
 const char *bluetoothNowPlayingAlbum() { return ""; }

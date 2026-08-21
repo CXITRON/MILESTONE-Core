@@ -1,5 +1,8 @@
 #include <Arduino.h>
 #include "FirmwareProfile.h"
+#if MILESTONE_HAS_BLUETOOTH && !defined(CONFIG_NIMBLE_ENABLED)
+#error "The CORE firmware requires an Arduino-ESP32 build with NimBLE enabled"
+#endif
 #include <Wire.h>
 #include <U8g2lib.h>
 #include <WiFi.h>
@@ -70,7 +73,7 @@ SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 
 namespace Milestone {
 
-constexpr char FIRMWARE_VERSION[] = "2.0.0";
+constexpr char FIRMWARE_VERSION[] = "2.0.1";
 constexpr char FIRMWARE_PROFILE[] = MILESTONE_FIRMWARE_PROFILE;
 constexpr char FIRMWARE_PROFILE_LABEL[] = MILESTONE_FIRMWARE_PROFILE_LABEL;
 constexpr char FIRMWARE_PROFILE_MARKER[] = MILESTONE_PROFILE_MARKER;

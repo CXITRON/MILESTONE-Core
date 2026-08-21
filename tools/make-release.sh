@@ -3,7 +3,7 @@ set -euo pipefail
 
 if (( $# < 1 || $# > 2 )); then
   echo "사용법: $0 VERSION [NOTES]" >&2
-  echo "예: $0 2.0.0 'Split CORE and MEDIA firmware profiles'" >&2
+  echo "예: $0 2.0.1 'Fix BLE advertising visibility and runtime verification'" >&2
   exit 2
 fi
 
@@ -61,6 +61,7 @@ profile_ids=(1 2)
 asset_stems=(MILESTONE_Core MILESTONE_Media)
 markers=(MILESTONE_PROFILE_CORE MILESTONE_PROFILE_MEDIA)
 media_binary_markers=(/api/media/upload /api/stream/start /media/upload.tmp)
+ble_runtime_marker=MILESTONE_BLE_AMS_RUNTIME_V2
 
 echo "고정 빌드 설정: $fqbn"
 for index in "${!profiles[@]}"; do
@@ -114,6 +115,18 @@ for index in "${!profiles[@]}"; do
       exit 2
     fi
   done
+  ble_marker_found=false
+  if strings -a -- "$source_bin" | grep -F -- "$ble_runtime_marker" >/dev/null; then
+    ble_marker_found=true
+  fi
+  if [[ $profile == core && $ble_marker_found == false ]]; then
+    echo "오류: [core] BLE AMS 런타임 구현을 BIN에서 찾지 못했습니다." >&2
+    exit 2
+  fi
+  if [[ $profile == media && $ble_marker_found == true ]]; then
+    echo "오류: [media] BLE AMS 런타임 구현이 BIN에 포함됐습니다." >&2
+    exit 2
+  fi
 
   staged_bin="$stage_dir/$asset_stem.bin"
   staged_manifest="$stage_dir/$asset_stem.json"

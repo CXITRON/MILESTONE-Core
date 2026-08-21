@@ -52,9 +52,9 @@ Options:
 
 Examples:
   cd /run/media/citron/T7/Documents/Dev/MILESTONE_Core
-  milestone-release local 2.0.0 "Split CORE and MEDIA firmware profiles"
+  milestone-release local 2.0.1 "Fix BLE advertising visibility and runtime verification"
 
-  cd /tmp && milestone-release taildrop 2.0.0 "Split CORE and MEDIA firmware profiles"
+  cd /tmp && milestone-release taildrop 2.0.1 "Fix BLE advertising visibility and runtime verification"
 USAGE
 }
 

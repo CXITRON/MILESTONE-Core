@@ -1,6 +1,6 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v2.0.0
+> Current baseline: MILESTONE Core v2.0.1
 > Hardware: Waveshare ESP32-S3-Zero + SH1107 128×128 OLED
 > Repository: `CXITRON/MILESTONE-Core`
 
@@ -89,7 +89,7 @@ The `*.inc` runtime files are intentionally included into the sketch as one tran
 Firmware and persistent schema versions are separate concepts.
 
 ```cpp
-FIRMWARE_VERSION = "2.0.0"
+FIRMWARE_VERSION = "2.0.1"
 CONFIG_VERSION = 10
 ```
 
@@ -114,7 +114,7 @@ Schema 9 appends `CUSTOM_MEDIA` as View 7 and TopMode 8 without renumbering the 
 
 ### Bluetooth Now Playing and setup-AP security (v1.11.0)
 
-`CoreBluetooth.inc` implements optional iPhone/iPad Now Playing metadata through Apple Media Service (AMS) when the Arduino-ESP32 build exposes NimBLE. The feature is disabled by default and the BLE stack is not initialized until `bluetoothNowPlaying` is enabled. MILESTONE advertises an AMS service solicitation, bonds with the iOS device, discovers the iPhone-hosted AMS service on the same connection, subscribes to Player/Track Entity Update attributes, and renders title, artist, album, playback state, and progress as a temporary overlay. It does not add a ninth persistent `View`, so the existing 8-bit cycle mask and saved screen-order contract remain unchanged.
+`CoreBluetooth.inc` implements optional iPhone/iPad Now Playing metadata through Apple Media Service (AMS) when the Arduino-ESP32 build exposes NimBLE. The feature is disabled by default and the BLE stack is not initialized until `bluetoothNowPlaying` is enabled. MILESTONE advertises an AMS service solicitation plus a shortened primary-packet name, bonds with the iOS device, discovers the iPhone-hosted AMS service on the same connection, subscribes to Player/Track Entity Update attributes, and renders title, artist, album, playback state, and progress as a temporary overlay. It does not add a ninth persistent `View`, so the existing 8-bit cycle mask and saved screen-order contract remain unchanged. A CORE release must fail rather than silently compile the unsupported BLE stub when NimBLE is absent, and binary inspection must find `MILESTONE_BLE_AMS_RUNTIME_V2` only in the CORE image.
 
 The current implementation parses complete AMS Entity Update notifications and safely displays the received prefix when iOS marks a value as truncated. A later revision may add asynchronous Entity Attribute reads for the full value; do not block the main loop waiting for a GATT read. Pairing and AMS interoperability must be validated on the physical ESP32-S3/iPhone combination before treating the feature as hardware-certified.
 
@@ -313,7 +313,7 @@ cd /tmp && milestone-release --dry-run taildrop X.Y.Z "short release note"
 
 Use `--yes` only when an unattended final publish is explicitly desired.
 
-## 8. Areas intentionally not refactored through v2.0.0
+## 8. Areas intentionally not refactored through v2.0.1
 
 The following broad refactors were deliberately rejected because their regression risk exceeded their immediate value:
 
