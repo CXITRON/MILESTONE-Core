@@ -13,6 +13,7 @@ The source code is always the final authority when documentation and implementat
 - Main branch: `main`
 - Repository: `CXITRON/MILESTONE-Core`
 - Release transport: GitHub Releases + CORE/MEDIA profile manifests and BIN assets
+- Profile boundary: CORE owns all general/D-day views; MEDIA runs stored/live media only and must not mutate persisted CORE view settings
 - Build/release source of truth: `tools/make-release.sh`
 - Unified operator command: `milestone-release`
 

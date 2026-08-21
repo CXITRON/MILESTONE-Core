@@ -64,8 +64,10 @@ void markNtpSuccess() {
                    ntpDurationMs > MilestoneDiagnostics::VALUE_MAX ? MilestoneDiagnostics::VALUE_MAX : static_cast<int32_t>(ntpDurationMs));
   if (prefs.putULong64("last_sync", config.lastSync) != sizeof(uint64_t)) logLine("NTP timestamp save failed");
   invalidateTimeDisplayCache();
+#if MILESTONE_HAS_GENERAL_VIEWS
   int days;
   computeDday(days, true);
+#endif
   logLine("NTP synchronized");
 }
 

@@ -523,6 +523,9 @@ void processThermalProtection() {
 }
 
 bool viewEnabled(View view) {
+  if (!MILESTONE_HAS_GENERAL_VIEWS) {
+    return view == View::CUSTOM_MEDIA && mediaHasEnabledItems();
+  }
   if (view == View::CUSTOM_MEDIA && (!MILESTONE_HAS_MEDIA || !mediaHasEnabledItems())) return false;
   return (config.cycleMask & (1U << static_cast<uint8_t>(view))) != 0;
 }
@@ -542,6 +545,13 @@ void selectFirstEnabledCycleView() {
 }
 
 void advanceView(bool persist) {
+  if (!MILESTONE_HAS_GENERAL_VIEWS) {
+    currentView = View::CUSTOM_MEDIA;
+    if (mediaHasEnabledItems()) selectNextMediaItem();
+    lastCycleMs = millis();
+    wakeDisplay();
+    return;
+  }
   const View previousView = currentView;
   if (config.mode == TopMode::SELECTED_CYCLE) {
     for (uint8_t step = 1; step <= VIEW_COUNT; ++step) {
@@ -574,7 +584,8 @@ void advanceView(bool persist) {
 void processCycle() {
   if (thermalSafeMode || bootSplashActive() || portalActive || resetConfirmation || buttonRawPressed ||
       buttonStablePressed || displaySleeping || firmwareUpdateBusy() || updatePromptVisible) return;
-  if (config.mode == TopMode::CUSTOM_MEDIA && currentView == View::CUSTOM_MEDIA) {
+  if ((!MILESTONE_HAS_GENERAL_VIEWS || config.mode == TopMode::CUSTOM_MEDIA) &&
+      currentView == View::CUSTOM_MEDIA) {
     if (elapsed(millis(), lastCycleMs, static_cast<uint32_t>(currentMediaDisplaySeconds()) * 1000UL)) {
       selectNextMediaItem();
       lastCycleMs = millis();
@@ -711,6 +722,14 @@ void processDisplay() {
 }
 
 void initializeView() {
+  if (!MILESTONE_HAS_GENERAL_VIEWS) {
+    currentView = View::CUSTOM_MEDIA;
+    currentCycleIndex = 0;
+    if (mediaHasEnabledItems()) selectNextMediaItem();
+    lastCycleMs = millis();
+    scrollStartedMs = millis();
+    return;
+  }
   currentView = config.lastView;
   currentCycleIndex = config.cycleIndex % VIEW_COUNT;
   if (config.mode == TopMode::SELECTED_CYCLE) {

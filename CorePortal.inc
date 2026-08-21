@@ -22,6 +22,7 @@ void handleStatus() {
   json += "\"profile_label\":\"" + String(FIRMWARE_PROFILE_LABEL) + "\",";
   json += "\"media_supported\":" + String(MILESTONE_HAS_MEDIA ? "true" : "false") + ",";
   json += "\"bluetooth_supported\":" + String(MILESTONE_HAS_BLUETOOTH ? "true" : "false") + ",";
+  json += "\"general_views_supported\":" + String(MILESTONE_HAS_GENERAL_VIEWS ? "true" : "false") + ",";
   json += "\"state\":\"" + String(runtimeStateName(runtimeState)) + "\",";
   json += "\"wifi\":\"" + jsonEscape(wifiLabel) + "\",";
   json += "\"ip\":\"" + jsonEscape(ip) + "\",";
@@ -912,6 +913,27 @@ void handlePostConfig() {
   next.cycleMask = static_cast<uint8_t>(cycleMask);
   memcpy(next.cycleOrder, parsedOrder, sizeof(parsedOrder));
   next.cycleIntervalSec = static_cast<uint8_t>(cycleInterval);
+  if (!MILESTONE_HAS_GENERAL_VIEWS) {
+    // MEDIA may update shared device settings, but it must not rewrite the
+    // general-view state that CORE will restore after a profile switch.
+    next.title = config.title;
+    next.target = config.target;
+    next.message = config.message;
+    next.mode = config.mode;
+    next.lastView = config.lastView;
+    next.ddayTextStyle = config.ddayTextStyle;
+    next.afterComplete = config.afterComplete;
+    next.messageLeft = config.messageLeft;
+    next.messageScroll = config.messageScroll;
+    next.scrollSpeed = config.scrollSpeed;
+    next.hour24 = config.hour24;
+    next.showSeconds = config.showSeconds;
+    next.ddayPeriodSec = config.ddayPeriodSec;
+    next.cycleMask = config.cycleMask;
+    memcpy(next.cycleOrder, config.cycleOrder, sizeof(next.cycleOrder));
+    next.cycleIntervalSec = config.cycleIntervalSec;
+    next.cycleIndex = config.cycleIndex;
+  }
   if (next.mode != TopMode::SELECTED_CYCLE) next.lastView = topModeView(next.mode);
   const Config previous = config;
   config = next;
@@ -921,15 +943,19 @@ void handlePostConfig() {
     return sendJson(500, "{\"error\":\"설정을 저장하지 못했습니다. 저장공간 상태를 확인하세요.\"}");
   }
   currentCycleIndex = config.cycleIndex;
-  if (config.mode == TopMode::SELECTED_CYCLE) {
+  if (!MILESTONE_HAS_GENERAL_VIEWS) {
+    currentView = View::CUSTOM_MEDIA;
+    if (mediaHasEnabledItems()) selectNextMediaItem();
+    else closeMediaPlayback();
+  } else if (config.mode == TopMode::SELECTED_CYCLE) {
     selectFirstEnabledCycleView();
   } else {
     currentView = topModeView(config.mode);
   }
-  if (currentView == View::CUSTOM_MEDIA) {
+  if (MILESTONE_HAS_GENERAL_VIEWS && currentView == View::CUSTOM_MEDIA) {
     if (mediaHasEnabledItems()) selectNextMediaItem();
     else currentView = View::DASHBOARD;
-  } else {
+  } else if (MILESTONE_HAS_GENERAL_VIEWS) {
     closeMediaPlayback();
   }
   if (currentView == View::DEVICE_INFO) deviceInfoStartedMs = millis();
@@ -1047,6 +1073,9 @@ void handleFactoryReset() {
 void handleSettingsReset() {
   if (!authorizePortalRequest()) return;
   if (rejectPortalWorkDuringStream()) return;
+  if (!MILESTONE_HAS_GENERAL_VIEWS) {
+    return sendJson(409, "{\"error\":\"CORE 화면 설정은 MEDIA에서 초기화할 수 없습니다. CORE 펌웨어로 전환한 뒤 실행하세요.\"}");
+  }
   if (server.arg("confirm") != "DEFAULTS") return sendJson(400, "{\"error\":\"설정 초기화 확인 문자열이 올바르지 않습니다.\"}");
 
   const Config previous = config;

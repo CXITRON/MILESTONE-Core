@@ -1060,6 +1060,7 @@ void drawMainScreen() {
   getBurninOffset(ox, oy);
   display.clearBuffer();
   switch (currentView) {
+#if MILESTONE_HAS_GENERAL_VIEWS
     case View::DDAY_TIME: drawDdayView(false, ox, oy); break;
     case View::DDAY_MESSAGE: drawDdayView(true, ox, oy); break;
     case View::MESSAGE_ONLY: drawMessageOnly(ox, oy); break;
@@ -1067,6 +1068,17 @@ void drawMainScreen() {
     case View::MESSAGE_CLOCK: drawMessageClock(ox, oy); break;
     case View::DASHBOARD: drawDashboard(ox, oy); break;
     case View::DEVICE_INFO: drawDeviceInfo(ox, oy); break;
+#else
+    case View::DDAY_TIME:
+    case View::DDAY_MESSAGE:
+    case View::MESSAGE_ONLY:
+    case View::CLOCK_ONLY:
+    case View::MESSAGE_CLOCK:
+    case View::DASHBOARD:
+    case View::DEVICE_INFO:
+      currentView = View::CUSTOM_MEDIA;
+      // Fall through to the only user-facing MEDIA profile view.
+#endif
     case View::CUSTOM_MEDIA:
       if (!copyCurrentMediaFrameToDisplayBuffer()) {
         display.setFont(u8g2_font_7x14B_tf);

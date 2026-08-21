@@ -383,12 +383,12 @@ release/MILESTONE_Media.json
 
 ## v2.0.0 업데이트 안내
 
-v2.0.0은 하나의 비대해지는 애플리케이션을 **CORE**와 **MEDIA** 두 OTA 전환형 펌웨어로 분리합니다. 설정 AP, 저장 Wi-Fi, NTP, 일반 화면, OTA, SHA-256 검증, 롤백, 진단, 버튼·온도 보호는 두 프로필에 공통으로 남습니다. 설정 스키마는 10 그대로이며 NVS 설정, 진단 이력, LittleFS 커스텀 미디어는 프로필 전환으로 삭제되지 않습니다.
+v2.0.0은 하나의 비대해지는 애플리케이션을 **CORE**와 **MEDIA** 두 OTA 전환형 펌웨어로 분리합니다. 설정 AP, 저장 Wi-Fi, NTP, OTA, SHA-256 검증, 롤백, 진단, 버튼·온도 보호는 두 프로필에 공통으로 남습니다. 설정 스키마는 10 그대로이며 NVS 설정, 진단 이력, LittleFS 커스텀 미디어는 프로필 전환으로 삭제되지 않습니다.
 
 | 프로필 | 전용 기능 | Release 자산 |
 |---|---|---|
 | CORE | 기존 일반 표시 기능 + iPhone/iPad Bluetooth Now Playing | `MILESTONE_Core.bin`, `MILESTONE_Core.json` |
-| MEDIA | 기존 일반 표시 기능 + 저장형 커스텀 미디어 + `/stream` 실시간 스트리밍 | `MILESTONE_Media.bin`, `MILESTONE_Media.json` |
+| MEDIA | 미디어 전용 화면 + 저장형 커스텀 미디어 + `/stream` 실시간 스트리밍 | `MILESTONE_Media.bin`, `MILESTONE_Media.json` |
 
 - 설정 포털의 **펌웨어 업데이트 및 기능 전환**에서 대상 프로필을 확인한 뒤 기존 이중 확인 설치 버튼으로 전환
 - OTA target을 `버전@프로필`로 기록해 `2.0.0@core`와 `2.0.0@media`처럼 같은 버전 사이도 정상 설치
@@ -396,6 +396,8 @@ v2.0.0은 하나의 비대해지는 애플리케이션을 **CORE**와 **MEDIA** 
 - 현재 프로필용 최신 manifest 자동 확인과 사용자가 선택한 다른 프로필 manifest 수동 확인을 분리
 - 두 프로필 모두 동일한 OTA 파티션·인증서·크기·SHA-256·10초 candidate 검증·이전 슬롯 자동 롤백 절차 유지
 - CORE에서 MEDIA 기능, MEDIA에서 Bluetooth 설정은 삭제하지 않고 비활성 안내와 프로필 전환 경로를 표시
+- MEDIA에서는 디데이·문구·시계·종합·기기정보 화면과 일반 화면 순환을 실행하지 않고, 버튼 전환과 자동 전환 모두 활성 미디어 항목만 순환
+- MEDIA 포털은 CORE 전용 화면 설정과 기본값 복원을 숨기며, 공용 설정 저장 시에도 기존 CORE 디데이·문구·모드·순환 값을 그대로 보존
 - `tools/make-release.sh`와 `milestone-release`가 두 빌드를 모두 통과한 뒤 네 자산을 한 Release에 원자적으로 준비·게시
 
 정식 버전: `2.0.0`

@@ -10,7 +10,9 @@ This document gives coding agents and maintainers the architectural context need
 
 MILESTONE Core is an ESP32-S3 desktop display firmware with:
 
-- two OTA-switchable application profiles: CORE (general display + BLE Now Playing) and MEDIA (stored/live media)
+- two OTA-switchable application profiles: CORE (general display + BLE Now Playing) and MEDIA (stored/live media only)
+
+CORE owns D-day, message, clock, dashboard, device-information, and general screen-cycle behavior. MEDIA never enters those views: BOOT and timed transitions select the next enabled media item. Both profiles share schema 10, but MEDIA must preserve the stored CORE general-view fields so switching back restores the previous CORE setup exactly.
 
 - D-day, date, time, and message views
 - selectable/automatic screen cycling
