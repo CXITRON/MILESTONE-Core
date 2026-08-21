@@ -18,7 +18,7 @@ reject() {
   fi
 }
 
-require 'FIRMWARE_VERSION\[\] = "2\.0\.1"' MILESTONE_Core.ino 'firmware version is not 2.0.1'
+require 'FIRMWARE_VERSION\[\] = "2\.0\.2"' MILESTONE_Core.ino 'firmware version is not 2.0.2'
 require '#include <esp_wifi\.h>' MILESTONE_Core.ino 'low-level Wi-Fi scan control header missing'
 require 'WIFI_PRIMARY_CONNECT_TIMEOUT_MS = 12UL \* 1000UL' MILESTONE_Core.ino 'primary saved-network timeout was not shortened'
 require 'WIFI_PORTAL_TEST_CONNECT_TIMEOUT_MS = 15UL \* 1000UL' MILESTONE_Core.ino 'portal test timeout bound missing'
@@ -37,6 +37,18 @@ reject 'restoreConfiguredWifiAfterFailedTest\(\)' CorePortal.inc 'failed tests m
 require 'Wi-Fi 연결 시험이 진행 중입니다\. 완료 후 검색하세요' CorePortal.inc 'manual scan must be blocked during Wi-Fi test'
 require 'PORTAL_WIFI_SCAN_DWELL_MS' CorePortal.inc 'portal scan must use short AP-friendly dwell'
 require 'portalStartedMs = millis\(\);' CoreNetwork.inc 'authenticated portal activity must refresh idle timeout'
+require 'setupApRadioReady\(\)' CoreNetwork.inc 'setup AP radio health check missing'
+require 'recoverSetupApRadioIfNeeded\(now\);' CoreRuntime.inc 'setup AP radio watchdog is not serviced'
+require 'setup AP remains active' CorePortal.inc 'successful Wi-Fi test must keep the setup AP active'
+require 'MILESTONE 설정 AP는 계속 유지됩니다' PortalPage.h 'portal must confirm that AP remains after provisioning'
+require 'bool beginNtpRequest\(\)' CoreNetwork.inc 'NTP start must report whether the network was ready'
+require 'stopNtpService\(\)' CoreNetwork.inc 'bounded NTP cleanup helper missing'
+require 'time_sync_pending' CorePortal.inc 'manual time-sync progress state missing from status API'
+require 'timeSyncPolling' PortalPage.h 'manual time-sync UI must poll through completion'
+require 'pendingUpdateCheckReason != UpdateCheckReason::MANUAL' CoreRuntime.inc 'automatic update checks must defer while setup portal is active'
+require 'if \(mediaUploadActive \|\| firmwareUpdateBusy\(\) \|\| ntpRequestActive \|\|' CorePortal.inc 'stream start must reject active time synchronization'
+reject 'portalClosingAfterSuccess = true' CorePortal.inc 'successful Wi-Fi test must not arm automatic AP shutdown'
+reject 'PORTAL_SUCCESS_HOLD_MS' MILESTONE_Core.ino 'obsolete post-success AP shutdown delay remains'
 require 'id="wifi_scan_btn"' PortalPage.h 'portal scan button needs an explicit busy state'
 require '설정 AP는 그대로 유지됩니다' PortalPage.h 'empty scan result must explain that setup AP remains available'
 require 'lastError' PortalPage.h 'browser scan polling must tolerate transient AP packet loss'

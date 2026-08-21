@@ -14,9 +14,23 @@ bool firmwareUpdateCheckDue() {
 
 void finishNormalNtpSuccess() {
   markNtpSuccess();
+  finishPortalTimeSyncTracking(true);
   if (!promoteSavedNetwork(activeWifiIndex)) logLine("preferred Wi-Fi order could not be persisted");
-  setRuntimeState(RuntimeState::RUNNING_ONLINE);
+  setRuntimeState(portalActive ? RuntimeState::SETUP_AP : RuntimeState::RUNNING_ONLINE);
   startMdns();
+  if (portalActive) {
+    // Only a portal action that explicitly requested an update may continue
+    // into HTTPS here. Automatic boot/weekly checks wait until setup closes so
+    // a successful time sync cannot freeze the captive portal unexpectedly.
+    if (updateCheckAfterNetworkReady) {
+      updateCheckAfterNetworkReady = false;
+      wifiSleepDeferredForUpdate = false;
+      updateCheckNotBeforeMs = millis() + UPDATE_NETWORK_SETTLE_MS;
+      requestFirmwareUpdateCheck(UpdateCheckReason::MANUAL);
+    }
+    WiFi.setSleep(false);
+    return;
+  }
   if (bootUpdateCheckPending) {
     updateCheckAfterNetworkReady = false;
     wifiSleepDeferredForUpdate = config.wifiSleep;
@@ -66,22 +80,19 @@ void processNetwork() {
   const uint32_t now = millis();
 
   if (portalActive) {
+    if (elapsed(now, lastPortalRadioHealthMs, PORTAL_RADIO_HEALTH_MS)) {
+      lastPortalRadioHealthMs = now;
+      recoverSetupApRadioIfNeeded(now);
+    }
     dnsServer.processNextRequest();
     server.handleClient();
-    // A live stream owns the setup AP session. While streaming, cancel any
-    // previously armed post-Wi-Fi-success close and suppress every normal AP
-    // timeout path. The browser that is feeding frames must not lose the AP.
+    // A live stream owns the setup AP session and suppresses the normal idle
+    // timeout. The browser that is feeding frames must not lose the AP.
     const bool streamPinsPortal = mediaStreamActive || mediaStreamRawActive;
     if (streamPinsPortal) {
       portalStartedMs = now;
-      portalClosingAfterSuccess = false;
     }
-    if (!streamPinsPortal && portalClosingAfterSuccess &&
-        elapsed(now, portalSuccessMs, PORTAL_SUCCESS_HOLD_MS)) {
-      stopPortal();
-      return;
-    }
-    if (!streamPinsPortal && !portalClosingAfterSuccess &&
+    if (!streamPinsPortal &&
         wifiTestState != WifiTestState::CONNECTING &&
         wifiTestState != WifiTestState::TIME_SYNCING &&
         elapsed(now, portalStartedMs, AP_TIMEOUT_MS)) {
@@ -95,7 +106,11 @@ void processNetwork() {
       noteWifiConnected(now);
       wifiNetworkReadySinceMs = 0;
       wifiTestState = WifiTestState::TIME_SYNCING;
-      beginNtpRequest();
+      if (!beginNtpRequest()) {
+        finishPortalTimeSyncTracking(false, "NTP 요청 시작 실패");
+        failWifiTest("Wi-Fi는 연결됐지만 NTP 요청을 시작할 네트워크 정보가 준비되지 않았습니다.");
+        return;
+      }
       setRuntimeState(RuntimeState::TIME_SYNCING);
     } else if (deadlineReached(now, wifiDeadlineMs)) {
       recordDiagnostic(MilestoneDiagnostics::Event::WIFI_CONNECT_TIMEOUT,
@@ -107,7 +122,7 @@ void processNetwork() {
 
   if (wifiTestState == WifiTestState::TIME_SYNCING) {
     if (!stationNetworkReady()) {
-      ntpRequestStartedMs = 0;
+      stopNtpService();
       recordDiagnostic(MilestoneDiagnostics::Event::WIFI_DISCONNECTED,
                        static_cast<int16_t>(lastWifiDisconnectReason));
       failWifiTest("시간 확인 중 Wi-Fi 연결이 끊겼습니다.");
@@ -115,7 +130,7 @@ void processNetwork() {
       ntpSyncEvent = false;
       finishWifiTestSuccess();
     } else if (deadlineReached(now, ntpDeadlineMs)) {
-      ntpRequestStartedMs = 0;
+      stopNtpService();
       recordDiagnostic(MilestoneDiagnostics::Event::NTP_TIMEOUT);
       failWifiTest("인터넷 시간 확인에 실패했습니다. 인터넷 연결을 확인하세요.");
     }
@@ -139,11 +154,15 @@ void processNetwork() {
         logLine("boot-time NTP skipped; update check waits for the next confirmed NTP sync");
       } else {
         initialStationAttempt = false;
-        beginNtpRequest();
-        setRuntimeState(RuntimeState::TIME_SYNCING);
+        if (beginNtpRequest()) setRuntimeState(RuntimeState::TIME_SYNCING);
+        else {
+          setRuntimeState(RuntimeState::RUNNING_OFFLINE);
+          scheduleRetry(true);
+        }
       }
     } else if (savedWifiScanActive) {
       if (!finishSavedWifiScanAndConnect()) {
+        finishPortalTimeSyncTracking(false, "저장된 Wi-Fi에 연결하지 못했습니다.");
         initialStationAttempt = false;
         setRuntimeState(RuntimeState::RUNNING_OFFLINE);
         scheduleRetry();
@@ -153,6 +172,7 @@ void processNetwork() {
       }
     } else if (deadlineReached(now, wifiDeadlineMs)) {
       if (tryNextSavedWifiCandidate()) return;
+      finishPortalTimeSyncTracking(false, "저장된 Wi-Fi 연결 시간이 초과되었습니다.");
       initialStationAttempt = false;
       setRuntimeState(RuntimeState::RUNNING_OFFLINE);
       scheduleRetry();
@@ -166,8 +186,8 @@ void processNetwork() {
 
   if (runtimeState == RuntimeState::TIME_SYNCING) {
     if (!stationNetworkReady()) {
-      ntpRequestActive = false;
-      ntpRequestStartedMs = 0;
+      stopNtpService();
+      finishPortalTimeSyncTracking(false, "시간 동기화 중 Wi-Fi가 끊겼습니다.");
       recordDiagnostic(MilestoneDiagnostics::Event::WIFI_DISCONNECTED,
                        static_cast<int16_t>(lastWifiDisconnectReason));
       internetVerified = false;
@@ -178,8 +198,8 @@ void processNetwork() {
       ntpSyncEvent = false;
       finishNormalNtpSuccess();
     } else if (deadlineReached(now, ntpDeadlineMs)) {
-      ntpRequestActive = false;
-      ntpRequestStartedMs = 0;
+      stopNtpService();
+      finishPortalTimeSyncTracking(false, "NTP 응답 시간이 초과되었습니다.");
       recordDiagnostic(MilestoneDiagnostics::Event::NTP_TIMEOUT);
       internetVerified = false;
       ntpFailed = true;
@@ -208,15 +228,6 @@ void processNetwork() {
     scheduleRetry(true);
   }
 
-  // SNTP itself can complete just after the application-level deadline. Do
-  // not discard that valid external round trip while Wi-Fi is still present.
-  if (runtimeState == RuntimeState::RUNNING_OFFLINE && stationNetworkReady() &&
-      ntpSyncEvent && timeIsValid()) {
-    ntpSyncEvent = false;
-    finishNormalNtpSuccess();
-    return;
-  }
-
   bool periodicNtpDue = (runtimeState == RuntimeState::RUNNING_ONLINE || runtimeState == RuntimeState::WIFI_SLEEP) &&
                          config.ntpPeriodSec > 0 && timeIsValid() && config.lastSync > 0 &&
                          static_cast<uint64_t>(time(nullptr)) >= config.lastSync + config.ntpPeriodSec;
@@ -224,11 +235,9 @@ void processNetwork() {
 
   if (!portalActive && config.savedNetworkCount > 0) {
     if (periodicNtpDue && stationNetworkReady()) {
-      beginNtpRequest();
-      setRuntimeState(RuntimeState::TIME_SYNCING);
+      if (beginNtpRequest()) setRuntimeState(RuntimeState::TIME_SYNCING);
     } else if (retryDue && stationNetworkReady()) {
-      beginNtpRequest();
-      setRuntimeState(RuntimeState::TIME_SYNCING);
+      if (beginNtpRequest()) setRuntimeState(RuntimeState::TIME_SYNCING);
     } else if (periodicNtpDue || retryDue) {
       startSavedWifiSequence(false);
     }
@@ -283,6 +292,10 @@ void processFirmwareUpdate() {
     return;
   }
   if (pendingUpdateCheckReason != UpdateCheckReason::NONE) {
+    if (portalActive && pendingUpdateCheckReason != UpdateCheckReason::MANUAL) {
+      updateCheckNotBeforeMs = now + 1000UL;
+      return;
+    }
     // Always let the three-second splash finish and render the normal screen
     // once before a synchronous HTTPS check can occupy loopTask.
     if (bootSplashActive() || !deadlineReached(now, updateCheckNotBeforeMs)) return;
@@ -381,8 +394,7 @@ void enterThermalSafeMode(bool sensorFault = false) {
   thermalSafeModeFromSensorFault = sensorFault;
   thermalWarning = true;
   thermalRecoveryStartedMs = 0;
-  ntpRequestActive = false;
-  ntpSyncEvent = false;
+  stopNtpService();
   wifiTestState = WifiTestState::IDLE;
   wifiTestError = "";
   pendingSsid = "";
@@ -404,7 +416,6 @@ void enterThermalSafeMode(bool sensorFault = false) {
     server.stop();
     WiFi.softAPdisconnect(true);
     portalActive = false;
-    portalClosingAfterSuccess = false;
   }
   WiFi.disconnect(true, false);
   WiFi.mode(WIFI_OFF);
@@ -751,12 +762,10 @@ void initializeView() {
 uint32_t mediaStreamPreviousCpuMhz = 240;
 uint32_t mediaStreamLastThermalCheckMs = 0;
 bool mediaStreamButtonPressed = false;
-bool mediaStreamSntpWasEnabled = false;
 
 void enterMediaStreamPerformanceMode() {
   suspendBluetoothNowPlaying();
   mediaStreamPreviousCpuMhz = getCpuFrequencyMhz();
-  portalClosingAfterSuccess = false;
   portalStartedMs = millis();
   cancelPortalWifiScan();
   if (savedWifiScanActive) {
@@ -765,11 +774,7 @@ void enterMediaStreamPerformanceMode() {
   }
   stopMdns();
   WiFi.setSleep(false);
-  mediaStreamSntpWasEnabled = esp_sntp_enabled();
-  if (mediaStreamSntpWasEnabled) esp_sntp_stop();
-  ntpRequestActive = false;
-  ntpSyncEvent = false;
-  ntpRequestStartedMs = 0;
+  stopNtpService();
   server.enableDelay(false);
   if (mediaStreamPreviousCpuMhz < 240U && !thermalThrottled) {
     if (!setCpuFrequencyMhz(240)) logLine("STREAM_MODE could not force 240 MHz CPU");
@@ -795,11 +800,7 @@ void leaveMediaStreamPerformanceMode() {
   }
   if (!thermalSafeMode && stationNetworkReady()) {
     startMdns();
-    if (mediaStreamSntpWasEnabled) {
-      configTzTime(TZ_INFO, "time.google.com", "pool.ntp.org", "time.cloudflare.com");
-    }
   }
-  mediaStreamSntpWasEnabled = false;
   if (portalActive && !thermalSafeMode) setRuntimeState(RuntimeState::SETUP_AP);
   appliedLedColor = UINT32_MAX;
   lastDisplayMs = 0;
@@ -813,7 +814,6 @@ void processMediaStreamNetworkOnly() {
     stopMediaStream();
     return;
   }
-  portalClosingAfterSuccess = false;
   portalStartedMs = millis();
   dnsServer.processNextRequest();
   server.handleClient();

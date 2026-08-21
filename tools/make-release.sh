@@ -3,7 +3,7 @@ set -euo pipefail
 
 if (( $# < 1 || $# > 2 )); then
   echo "사용법: $0 VERSION [NOTES]" >&2
-  echo "예: $0 2.0.1 'Fix BLE advertising visibility and runtime verification'" >&2
+  echo "예: $0 2.0.2 'Keep setup AP active after Wi-Fi provisioning'" >&2
   exit 2
 fi
 

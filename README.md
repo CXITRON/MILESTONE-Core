@@ -278,13 +278,13 @@ PC의 현재 프로젝트를 직접 수정한 경우에는 **MILESTONE_Core 프�
 
 ```bash
 cd /run/media/citron/T7/Documents/Dev/MILESTONE_Core
-milestone-release local 2.0.1 "Fix BLE advertising visibility and runtime verification"
+milestone-release local 2.0.2 "Keep setup AP active after Wi-Fi provisioning"
 ```
 
 Tailscale Taildrop으로 `MILESTONE_Core_1.10.6.zip`을 받은 경우에는 교체 대상 프로젝트 디렉터리 밖의 정상적으로 존재하는 디렉터리에서 실행합니다. 기존 프로젝트가 교체될 때 현재 셸 경로가 사라지는 문제를 방지하기 위해 `/tmp`로 이동하는 방식을 권장합니다.
 
 ```bash
-cd /tmp && milestone-release taildrop 2.0.1 "Fix BLE advertising visibility and runtime verification"
+cd /tmp && milestone-release taildrop 2.0.2 "Keep setup AP active after Wi-Fi provisioning"
 ```
 
 Taildrop 모드는 ZIP을 라이브 프로젝트에 바로 덮어쓰지 않습니다. 별도 staging 디렉터리에서 구조·버전·Git 상태를 검사하고 테스트와 ESP32 릴리즈 빌드까지 성공한 뒤에만 프로젝트를 교체합니다. GitHub 게시 전 실패하면 기존 프로젝트를 자동 복구합니다. `--dry-run`은 테스트/빌드까지만 수행하고 로컬 프로젝트·Git·GitHub를 변경하지 않습니다. `--yes`를 사용하지 않는 기본 동작은 최종 게시 직전에 한 번 확인합니다.
@@ -301,10 +301,10 @@ Taildrop 모드는 ZIP을 라이브 프로젝트에 바로 덮어쓰지 않습�
 
 ```bash
 chmod +x tools/make-release.sh
-./tools/make-release.sh 2.0.1 "Fix BLE advertising visibility and runtime verification"
+./tools/make-release.sh 2.0.2 "Keep setup AP active after Wi-Fi provisioning"
 ```
 
-기본 설명을 사용하려면 `./tools/make-release.sh 2.0.1`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
+기본 설명을 사용하려면 `./tools/make-release.sh 2.0.2`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
 
 다음 네 파일이 `release/`에 생성됩니다.
 
@@ -326,11 +326,11 @@ release/MILESTONE_Media.json
 일반적인 게시에는 위의 `milestone-release`를 사용합니다. 아래 수동 절차는 자동화 도구를 복구하거나 디버깅해야 할 때만 참고합니다.
 
 1. 저장소의 `Releases`에서 `Draft a new release`를 선택합니다.
-2. 버전과 동일한 태그를 만듭니다. 예: `v2.0.1`
-3. Release 제목을 `MILESTONE Core v2.0.1`로 지정합니다.
+2. 버전과 동일한 태그를 만듭니다. 예: `v2.0.2`
+3. Release 제목을 `MILESTONE Core v2.0.2`로 지정합니다.
 4. CORE/MEDIA의 BIN과 JSON 네 파일을 모두 첨부합니다.
 5. Pre-release가 아닌 최신 정식 Release로 게시합니다.
-6. 2.0.0이 설치된 기기에서 2.0.1 CORE 업데이트, CORE↔MEDIA 전환, 기존 설정·Wi-Fi·롤백 보호·진단 이력·커스텀 미디어 보존을 검증합니다.
+6. 2.0.1이 설치된 기기에서 2.0.2 CORE/MEDIA 업데이트, Wi-Fi 시험 뒤 설정 AP 유지, CORE↔MEDIA 전환, 기존 설정·Wi-Fi·롤백 보호·진단 이력·커스텀 미디어 보존을 검증합니다.
 
 네 파일의 이름은 모든 Release에서 정확히 같아야 합니다. 초안이나 Pre-release는 `latest` 업데이트 대상으로 사용하지 않습니다.
 
@@ -352,7 +352,7 @@ Taildrop ZIP의 `milestone-release`가 현재 설치본보다 새로우면, 게�
 - 디데이(시간) 화면에서 날짜와 시각을 고정된 두 줄로 표시
 - 한국어 U8g2 글꼴, 긴 문구 스크롤
 - Asia/Seoul NTP 및 마지막 디데이 보존
-- AP+STA Wi-Fi 시험 후 자격 증명 확정
+- AP+STA Wi-Fi 시험 후 자격 증명을 확정하되 설정 AP는 유휴 제한시간까지 유지
 - 기존 임의 8자리 설정 AP 비밀번호를 기본으로 유지하면서 선택 가능한 고정 8~63자/오픈 AP 보안 설정과 오픈 AP 경고
 - 기본 OFF의 iPhone/iPad BLE Apple Media Service Now Playing 오버레이와 스트리밍 중 BLE 자동 일시 중단
 - 반응형 로컬 설정 포털과 captive portal
@@ -382,6 +382,22 @@ Taildrop ZIP의 `milestone-release`가 현재 설치본보다 새로우면, 게�
 - STREAM_MODE에서 일반 백그라운드 기능을 격리하고 PSRAM 240프레임 링버퍼·X/Y dirty-tile OLED 갱신·적응형 출력 주기·프레임 드롭·80°C 스트림 상한으로 영상 수신/표시에 집중
 - 라이브 송신은 96프레임 초기 충전 후 큐 64프레임 이하에서 최대 8프레임씩 144프레임 이상으로 보충하며 ESP32가 소스 시간축과 OLED 출력 클록을 분리해 관리
 - 비차단 3초 부팅 로고와 우상단 NTP `T`·업데이트 `U` 상태 아이콘
+
+## v2.0.2 업데이트 안내
+
+v2.0.2는 Wi-Fi 시험이 성공한 직후 설정 AP가 3초 만에 종료되어 포털 연결이 끊기던 문제를 수정하는 안정화 패치입니다. 설정 스키마 10과 CORE/MEDIA 분리 구조는 그대로 유지합니다.
+
+- Wi-Fi 및 NTP 시험 성공 뒤에도 `MILESTONE-D1-SETUP` AP와 설정 포털을 유지
+- AP+STA 상태에서 연결된 인터넷은 그대로 사용하면서 나머지 설정을 계속 변경 가능
+- 성공 직후 자동 종료 상태와 3초 종료 타이머를 제거하고, 기존 10분 유휴 종료 정책만 적용
+- 설정 포털이 활성 상태인데 AP 무선 모드 또는 SoftAP IP가 사라지면 1초 주기로 감지하고 제한된 간격으로 AP와 captive DNS를 복구
+- 수동 시간 동기화가 Wi-Fi 연결·NTP 응답·성공·실패까지 1초 주기로 계속 표시되도록 포털 상태 추적 보강
+- NTP 요청마다 기존 SNTP 서비스를 정리해 오래된 콜백이 다음 요청에 섞이지 않도록 하고, 성공·실패 뒤 백그라운드 SNTP를 종료해 수동/설정 주기를 정확히 준수
+- 시간 동기화 중 중복 요청과 STREAM_MODE 진입을 차단하고, IP·게이트웨이·DNS가 준비되지 않은 연결을 즉시 명확한 오류로 반환
+- 포털에서 시간 동기화가 끝난 직후 자동 부팅·주기 업데이트 확인이 동기식 HTTPS를 시작하지 않도록 설정 종료 뒤로 연기
+- CORE와 MEDIA 양쪽에 동일한 AP 유지·복구 동작을 적용하고 회귀 계약 테스트를 추가
+
+정식 버전: `2.0.2`
 
 ## v2.0.1 업데이트 안내
 

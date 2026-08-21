@@ -35,14 +35,38 @@ void wifiDisconnectedEvent(WiFiEvent_t, WiFiEventInfo_t info) {
 }
 
 void cancelPortalWifiScan();
+bool stationNetworkReady();
 
-void beginNtpRequest() {
-  if (WiFi.status() != WL_CONNECTED) return;
+void stopNtpService() {
+  if (esp_sntp_enabled()) esp_sntp_stop();
+  ntpRequestActive = false;
+  ntpSyncEvent = false;
+  ntpRequestStartedMs = 0;
+  ntpDeadlineMs = 0;
+}
+
+void finishPortalTimeSyncTracking(bool success, const String &error = "") {
+  if (!portalTimeSyncPending) return;
+  portalTimeSyncPending = false;
+  portalTimeSyncSucceeded = success;
+  portalTimeSyncError = success ? "" : error;
+}
+
+bool beginNtpRequest() {
+  if (!stationNetworkReady()) {
+    ntpFailed = true;
+    logLine("NTP request rejected: station network is not ready");
+    return false;
+  }
   cancelPortalWifiScan();
   // Favor latency and packet reliability during the UDP exchange. Always-
   // connected mode keeps the modem awake afterward; the explicit Wi-Fi-off
   // setting is handled separately once sync/update work is complete.
   WiFi.setSleep(false);
+  // Restart lwIP SNTP for a fresh request/callback pair. Otherwise its
+  // persistent background timer can violate the configured manual cadence and
+  // deliver a stale callback during a later state transition.
+  stopNtpService();
   ntpSyncEvent = false;
   ntpFailed = false;
   ntpRequestActive = true;
@@ -50,16 +74,18 @@ void beginNtpRequest() {
   ntpDeadlineMs = ntpRequestStartedMs + NTP_TIMEOUT_MS;
   configTzTime(TZ_INFO, "time.google.com", "pool.ntp.org", "time.cloudflare.com");
   logLine("NTP request started");
+  return true;
 }
 
 void markNtpSuccess() {
-  ntpRequestActive = false;
+  const uint32_t ntpDurationMs = ntpRequestStartedMs == 0 ? 0 : static_cast<uint32_t>(millis() - ntpRequestStartedMs);
+  // The application owns the synchronization cadence; do not leave an
+  // independent background SNTP timer running after this bounded request.
+  stopNtpService();
   internetVerified = true;
   ntpFailed = false;
   freshNtpSinceBoot = true;
   config.lastSync = static_cast<uint64_t>(time(nullptr));
-  const uint32_t ntpDurationMs = ntpRequestStartedMs == 0 ? 0 : static_cast<uint32_t>(millis() - ntpRequestStartedMs);
-  ntpRequestStartedMs = 0;
   recordDiagnostic(MilestoneDiagnostics::Event::NTP_SUCCESS, 0,
                    ntpDurationMs > MilestoneDiagnostics::VALUE_MAX ? MilestoneDiagnostics::VALUE_MAX : static_cast<int32_t>(ntpDurationMs));
   if (prefs.putULong64("last_sync", config.lastSync) != sizeof(uint64_t)) logLine("NTP timestamp save failed");
@@ -301,6 +327,39 @@ void prepareStablePortalRadio() {
   activeWifiIndex = NO_WIFI_INDEX;
 }
 
+bool startConfiguredSoftAp() {
+  return config.fixedApSecurity && apPassword.length() == 0
+           ? WiFi.softAP(AP_SSID)
+           : WiFi.softAP(AP_SSID, apPassword.c_str());
+}
+
+bool setupApRadioReady() {
+  const wifi_mode_t mode = WiFi.getMode();
+  if (mode != WIFI_MODE_AP && mode != WIFI_MODE_APSTA) return false;
+  return WiFi.softAPIP() != IPAddress(0, 0, 0, 0);
+}
+
+void recoverSetupApRadioIfNeeded(uint32_t now) {
+  if (!portalActive || setupApRadioReady() ||
+      !elapsed(now, lastPortalRadioRecoveryMs, PORTAL_RADIO_RECOVERY_COOLDOWN_MS)) {
+    return;
+  }
+  lastPortalRadioRecoveryMs = now;
+  logLine("setup AP radio disappeared; attempting in-place recovery");
+  WiFi.mode(WIFI_AP_STA);
+  WiFi.setAutoReconnect(false);
+  WiFi.setSleep(false);
+  delay(WIFI_DRIVER_SETTLE_MS);
+  if (!startConfiguredSoftAp()) {
+    logLine("setup AP in-place recovery failed");
+    return;
+  }
+  dnsServer.stop();
+  dnsServer.start(53, "*", WiFi.softAPIP());
+  portalStartedMs = now;
+  logLine(String("setup AP recovered at ") + WiFi.softAPIP().toString());
+}
+
 void startPortal() {
   if (thermalSafeMode) return;
   if (portalActive) {
@@ -315,12 +374,7 @@ void startPortal() {
   WiFi.setAutoReconnect(false);
   WiFi.setSleep(false);
   delay(WIFI_DRIVER_SETTLE_MS);
-  auto startSoftAp = []() {
-    return config.fixedApSecurity && apPassword.length() == 0
-             ? WiFi.softAP(AP_SSID)
-             : WiFi.softAP(AP_SSID, apPassword.c_str());
-  };
-  bool apStarted = startSoftAp();
+  bool apStarted = startConfiguredSoftAp();
   if (!apStarted) {
     // Driver transitions after a cancelled STA scan/connection can rarely make
     // the first softAP() call fail. Reset only the AP side and retry once.
@@ -328,7 +382,7 @@ void startPortal() {
     delay(80);
     WiFi.mode(WIFI_AP_STA);
     WiFi.setSleep(false);
-    apStarted = startSoftAp();
+    apStarted = startConfiguredSoftAp();
   }
   if (!apStarted) {
     logLine("SoftAP start failed after retry");
@@ -338,8 +392,9 @@ void startPortal() {
   registerPortalRoutes();
   server.begin();
   portalActive = true;
-  portalClosingAfterSuccess = false;
   portalStartedMs = millis();
+  lastPortalRadioHealthMs = portalStartedMs;
+  lastPortalRadioRecoveryMs = portalStartedMs;
   wakeDisplay();
   setRuntimeState(RuntimeState::SETUP_AP);
   logLine(String("setup AP started at ") + WiFi.softAPIP().toString());
@@ -353,7 +408,6 @@ void stopPortal() {
   server.stop();
   WiFi.softAPdisconnect(true);
   portalActive = false;
-  portalClosingAfterSuccess = false;
   wifiTestState = WifiTestState::IDLE;
   wifiTestError = "";
   pendingSsid = "";

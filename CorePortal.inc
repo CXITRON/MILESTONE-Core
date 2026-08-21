@@ -43,6 +43,13 @@ void handleStatus() {
   json += "\"nvs_ready\":" + String(prefsReady ? "true" : "false") + ",";
   json += "\"nvs_free_entries\":" + String(prefsReady ? prefs.freeEntries() : 0) + ",";
   json += "\"time_valid\":" + String(timeIsValid() ? "true" : "false") + ",";
+  json += "\"ntp_active\":" + String(ntpRequestActive ? "true" : "false") + ",";
+  json += "\"ntp_failed\":" + String(ntpFailed ? "true" : "false") + ",";
+  json += "\"ntp_fresh\":" + String(freshNtpSinceBoot ? "true" : "false") + ",";
+  json += "\"ntp_elapsed_ms\":" + String(ntpRequestStartedMs == 0 ? 0 : millis() - ntpRequestStartedMs) + ",";
+  json += "\"time_sync_pending\":" + String(portalTimeSyncPending ? "true" : "false") + ",";
+  json += "\"time_sync_success\":" + String(portalTimeSyncSucceeded ? "true" : "false") + ",";
+  json += "\"time_sync_error\":\"" + jsonEscape(portalTimeSyncError) + "\",";
   json += "\"bluetooth_enabled\":" + String(config.bluetoothNowPlaying ? "true" : "false") + ",";
   json += "\"bluetooth_active\":" + String(bluetoothNowPlayingRuntimeActive() ? "true" : "false") + ",";
   json += "\"bluetooth_connected\":" + String(bluetoothNowPlayingConnected() ? "true" : "false") + ",";
@@ -292,7 +299,8 @@ void handleMediaStreamStart() {
   if (mediaStreamActive) {
     return sendJson(409, "{\"error\":\"이미 다른 스트리밍 세션이 실행 중입니다.\"}");
   }
-  if (mediaUploadActive || firmwareUpdateBusy() || wifiTestState != WifiTestState::IDLE) {
+  if (mediaUploadActive || firmwareUpdateBusy() || ntpRequestActive ||
+      runtimeState == RuntimeState::TIME_SYNCING || wifiTestState != WifiTestState::IDLE) {
     return sendJson(409, "{\"error\":\"미디어 저장·Wi-Fi 시험·펌웨어 작업이 끝난 뒤 시작하세요.\"}");
   }
   refreshChipTemperature(true);
@@ -307,7 +315,6 @@ void handleMediaStreamStart() {
   if (!startMediaStream(static_cast<uint16_t>(fps))) {
     return sendJson(503, "{\"error\":\"PSRAM 스트림 버퍼를 확보하지 못했습니다.\"}");
   }
-  portalClosingAfterSuccess = false;
   portalStartedMs = millis();
   wakeDisplay();
   sendJson(200, mediaStreamStatusJson());
@@ -1041,15 +1048,27 @@ void handleTimeSync() {
   if (wifiTestState == WifiTestState::CONNECTING || wifiTestState == WifiTestState::TIME_SYNCING) {
     return sendJson(409, "{\"error\":\"Wi-Fi 시험이 진행 중입니다. 완료 후 다시 시도하세요.\"}");
   }
+  if (ntpRequestActive || runtimeState == RuntimeState::TIME_SYNCING) {
+    return sendJson(409, "{\"error\":\"시간 동기화가 이미 진행 중입니다.\"}");
+  }
+  portalTimeSyncPending = true;
+  portalTimeSyncSucceeded = false;
+  portalTimeSyncError = "";
   if (WiFi.status() != WL_CONNECTED) {
-    if (config.savedNetworkCount == 0) return sendJson(409, "{\"error\":\"먼저 Wi-Fi에 연결하세요.\"}");
+    if (config.savedNetworkCount == 0) {
+      finishPortalTimeSyncTracking(false, "저장된 Wi-Fi가 없습니다.");
+      return sendJson(409, "{\"error\":\"먼저 Wi-Fi에 연결하세요.\"}");
+    }
     wifiTestState = WifiTestState::IDLE;
     wifiTestError = "";
     startSavedWifiSequence(true);
     sendJson(202, "{\"ok\":true,\"state\":\"connecting\"}");
     return;
   }
-  beginNtpRequest();
+  if (!beginNtpRequest()) {
+    finishPortalTimeSyncTracking(false, "Wi-Fi 네트워크 정보가 아직 준비되지 않았습니다.");
+    return sendJson(409, "{\"error\":\"Wi-Fi의 IP·게이트웨이·DNS 준비가 끝난 뒤 다시 시도하세요.\"}");
+  }
   setRuntimeState(RuntimeState::TIME_SYNCING);
   sendJson(202, "{\"ok\":true}");
 }
@@ -1153,7 +1172,10 @@ void handleUpdateCheck() {
   }
   if (!timeIsValid() || !freshNtpSinceBoot) {
     updateCheckAfterNetworkReady = true;
-    beginNtpRequest();
+    if (!beginNtpRequest()) {
+      updateCheckAfterNetworkReady = false;
+      return sendJson(409, "{\"error\":\"Wi-Fi의 IP·게이트웨이·DNS 준비가 끝난 뒤 다시 시도하세요.\"}");
+    }
     setRuntimeState(RuntimeState::TIME_SYNCING);
     return sendJson(202, "{\"ok\":true,\"state\":\"time_syncing\"}");
   }
@@ -1350,15 +1372,17 @@ void finishWifiTestSuccess() {
   wifiTestError = "";
   wifiTestState = WifiTestState::SUCCESS;
   markNtpSuccess();
-  setRuntimeState(RuntimeState::RUNNING_ONLINE);
+  // A successful test must not tear down the AP that the browser is using.
+  // Keep the setup session authoritative until its normal idle timeout; the
+  // STA connection can provide internet concurrently in AP+STA mode.
+  setRuntimeState(RuntimeState::SETUP_AP);
   startMdns();
-  portalClosingAfterSuccess = true;
-  portalSuccessMs = millis();
-  logLine("tested Wi-Fi saved; setup portal will close");
+  portalStartedMs = millis();
+  logLine("tested Wi-Fi saved; setup AP remains active");
 }
 
 void failWifiTest(const String &reason) {
-  ntpRequestActive = false;
+  stopNtpService();
   internetVerified = false;
   wifiTestState = WifiTestState::FAILED;
   wifiTestError = reason;

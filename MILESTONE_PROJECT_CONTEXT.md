@@ -1,6 +1,6 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v2.0.1
+> Current baseline: MILESTONE Core v2.0.2
 > Hardware: Waveshare ESP32-S3-Zero + SH1107 128×128 OLED
 > Repository: `CXITRON/MILESTONE-Core`
 
@@ -89,7 +89,7 @@ The `*.inc` runtime files are intentionally included into the sketch as one tran
 Firmware and persistent schema versions are separate concepts.
 
 ```cpp
-FIRMWARE_VERSION = "2.0.1"
+FIRMWARE_VERSION = "2.0.2"
 CONFIG_VERSION = 10
 ```
 
@@ -130,6 +130,12 @@ v1.11.1 treats the setup AP as a user-facing radio session that must take priori
 Portal scans remain asynchronous but use an 120ms active-scan dwell per channel, while non-portal saved-network scans use 120ms. `esp_wifi_scan_stop()` is used during cancellation/timeouts rather than relying only on deleting scan results. The preferred saved network gets one bounded direct attempt; after that, only saved SSIDs actually observed by the scan are tried. This avoids minutes of repeated direct attempts when no Wi-Fi exists nearby. Confirmed no-network states use the normal configured retry period instead of the 15-second quick retry, and park Wi-Fi in `WIFI_OFF` until that retry becomes due.
 
 The portal UI tolerates transient HTTP loss while the single ESP32-S3 radio is off-channel for scanning, blocks scans while a connection test is active, and explicitly reports that the setup AP remains available when zero networks are found. Authenticated portal traffic refreshes the AP idle timeout so active configuration work is not terminated by the fixed 10-minute timer.
+
+### Setup-AP session retention (v2.0.2)
+
+A successful portal Wi-Fi/NTP test keeps the setup AP and browser session active instead of arming the former three-second shutdown. The connected STA may provide internet concurrently while the user completes the remaining settings; only the normal 10-minute idle timeout or a safety/runtime stop closes the portal. While the portal is active, the runtime also checks the AP radio mode and SoftAP IP once per second. If another radio transition unexpectedly removes the AP, recovery reasserts AP+STA mode, restarts the configured SoftAP, and rebinds captive DNS with a bounded retry cadence.
+
+Manual time synchronization has an explicit portal-visible pending/result state and is polled until success or failure. Each bounded request restarts lwIP SNTP for a fresh callback, then stops it after completion so the configured manual/periodic cadence remains authoritative and stale callbacks cannot satisfy a later request. STREAM_MODE cannot begin during NTP, and automatic boot/weekly manifest checks are deferred while the setup portal is active so a completed time sync does not immediately block the captive portal with synchronous HTTPS work.
 
 ### Bluetooth advertising recovery and diagnostics (v1.11.2)
 
@@ -313,7 +319,7 @@ cd /tmp && milestone-release --dry-run taildrop X.Y.Z "short release note"
 
 Use `--yes` only when an unattended final publish is explicitly desired.
 
-## 8. Areas intentionally not refactored through v2.0.1
+## 8. Areas intentionally not refactored through v2.0.2
 
 The following broad refactors were deliberately rejected because their regression risk exceeded their immediate value:
 

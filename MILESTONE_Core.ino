@@ -73,7 +73,7 @@ SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 
 namespace Milestone {
 
-constexpr char FIRMWARE_VERSION[] = "2.0.1";
+constexpr char FIRMWARE_VERSION[] = "2.0.2";
 constexpr char FIRMWARE_PROFILE[] = MILESTONE_FIRMWARE_PROFILE;
 constexpr char FIRMWARE_PROFILE_LABEL[] = MILESTONE_FIRMWARE_PROFILE_LABEL;
 constexpr char FIRMWARE_PROFILE_MARKER[] = MILESTONE_PROFILE_MARKER;
@@ -110,7 +110,8 @@ constexpr uint32_t WIFI_QUICK_RETRY_MS = 15UL * 1000UL;
 // the OLED leaves the boot splash independently, so this does not extend the
 // visible boot sequence.
 constexpr uint32_t NTP_TIMEOUT_MS = 60UL * 1000UL;
-constexpr uint32_t PORTAL_SUCCESS_HOLD_MS = 3000UL;
+constexpr uint32_t PORTAL_RADIO_HEALTH_MS = 1000UL;
+constexpr uint32_t PORTAL_RADIO_RECOVERY_COOLDOWN_MS = 2000UL;
 constexpr uint32_t DISPLAY_REFRESH_MS = 250UL;
 constexpr uint32_t BUTTON_DISPLAY_REFRESH_MS = 250UL;
 constexpr uint32_t BUTTON_DEBOUNCE_MS = 30UL;
@@ -341,12 +342,14 @@ bool portalActive = false;
 bool mdnsActive = false;
 bool ntpRequestActive = false;
 bool displaySleeping = false;
-bool portalClosingAfterSuccess = false;
 bool initialStationAttempt = true;
 bool internetVerified = false;
 bool ntpFailed = false;
 bool freshNtpSinceBoot = false;
 volatile bool ntpSyncEvent = false;
+bool portalTimeSyncPending = false;
+bool portalTimeSyncSucceeded = false;
+String portalTimeSyncError;
 bool savedWifiScanActive = false;
 bool savedWifiScanCompleted = false;
 bool portalWifiScanActive = false;
@@ -406,7 +409,8 @@ uint32_t stateStartedMs = 0;
 uint32_t bootSplashStartedMs = 0;
 uint32_t deviceInfoStartedMs = 0;
 uint32_t portalStartedMs = 0;
-uint32_t portalSuccessMs = 0;
+uint32_t lastPortalRadioHealthMs = 0;
+uint32_t lastPortalRadioRecoveryMs = 0;
 uint32_t wifiDeadlineMs = 0;
 uint32_t wifiNetworkReadySinceMs = 0;
 uint32_t ntpDeadlineMs = 0;

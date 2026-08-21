@@ -103,7 +103,6 @@ LedState currentLedState() {
   if (!oledReady) return LedState::DISPLAY_ERROR;
   if (wifiTestState == WifiTestState::CONNECTING) return LedState::CONNECTING;
   if (wifiTestState == WifiTestState::TIME_SYNCING) return LedState::TIME_SYNCING;
-  if (portalClosingAfterSuccess) return LedState::ONLINE;
   if (portalActive) return LedState::SETUP;
   switch (runtimeState) {
     case RuntimeState::BOOTING: return LedState::BOOTING;
