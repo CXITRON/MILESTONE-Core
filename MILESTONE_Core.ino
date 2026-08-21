@@ -6,7 +6,9 @@
 #include <WebServer.h>
 #include <DNSServer.h>
 #include <Preferences.h>
+#if MILESTONE_HAS_MEDIA
 #include <LittleFS.h>
+#endif
 #include <ESPmDNS.h>
 #include <Adafruit_NeoPixel.h>
 #include <HTTPClient.h>
@@ -47,11 +49,15 @@
 #endif
 
 #include "PortalPage.h"
+#if MILESTONE_HAS_MEDIA
 #include "StreamPage.h"
+#endif
 #include "UpdateCertificates.h"
 #include "CoreLogic.h"
 #include "CoreDiagnostics.h"
+#if MILESTONE_HAS_MEDIA
 #include "CoreMedia.h"
+#endif
 
 // TLS, HTTP parsing, hashing, display updates, and the Arduino framework all
 // share loopTask during a synchronous OTA transfer. Reserve an explicit stack
@@ -601,11 +607,17 @@ void drawCenteredStr(const char *text, int baseline, int8_t offsetX);
 bool bootSplashActive();
 void recordDiagnostic(MilestoneDiagnostics::Event event, int16_t detail,
                       int32_t value, bool force);
+#if MILESTONE_HAS_MEDIA
 void enterMediaStreamPerformanceMode();
 void leaveMediaStreamPerformanceMode();
+#endif
 
 #include "CoreConfig.inc"
+#if MILESTONE_HAS_MEDIA
 #include "CoreMedia.inc"
+#else
+#include "CoreMediaDisabled.inc"
+#endif
 #include "CoreDiagnostics.inc"
 #include "CoreRollback.inc"
 #include "CoreBluetooth.inc"

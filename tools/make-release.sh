@@ -60,6 +60,7 @@ profiles=(core media)
 profile_ids=(1 2)
 asset_stems=(MILESTONE_Core MILESTONE_Media)
 markers=(MILESTONE_PROFILE_CORE MILESTONE_PROFILE_MEDIA)
+media_binary_markers=(/api/media/upload /api/stream/start /media/upload.tmp)
 
 echo "고정 빌드 설정: $fqbn"
 for index in "${!profiles[@]}"; do
@@ -99,6 +100,20 @@ for index in "${!profiles[@]}"; do
     echo "오류: [$profile] BIN 내부에서 프로필 표식을 확인하지 못했습니다." >&2
     exit 2
   fi
+  for media_marker in "${media_binary_markers[@]}"; do
+    marker_found=false
+    if strings -a -- "$source_bin" | grep -F -- "$media_marker" >/dev/null; then
+      marker_found=true
+    fi
+    if [[ $profile == core && $marker_found == true ]]; then
+      echo "오류: [core] 미디어/스트리밍 구현이 BIN에 남아 있습니다: $media_marker" >&2
+      exit 2
+    fi
+    if [[ $profile == media && $marker_found == false ]]; then
+      echo "오류: [media] 필수 미디어/스트리밍 구현을 BIN에서 찾지 못했습니다: $media_marker" >&2
+      exit 2
+    fi
+  done
 
   staged_bin="$stage_dir/$asset_stem.bin"
   staged_manifest="$stage_dir/$asset_stem.json"

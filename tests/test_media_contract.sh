@@ -212,8 +212,9 @@ reject 'id="media_duration"[^>]*max="40"' PortalPage.h 'legacy 40-second media d
 reject 'Math\.min\(40,Math\.max\(1,Number\(val\('media_duration'\)' PortalPage.h 'legacy 40-second JS clamp must be removed'
 
 if command -v node >/dev/null 2>&1; then
+  portal_script_source=${MILESTONE_RENDERED_MEDIA_PORTAL:-$project_dir/PortalPage.h}
   awk '/<\/main><script>/{p=1; sub(/^.*<\/main><script>/,"")} p{if(/<\/script><\/body>/){sub(/<\/script><\/body>.*$/,""); print; exit} print}' \
-    "$project_dir/PortalPage.h" | node --check -
+    "$portal_script_source" | node --check -
 fi
 
 

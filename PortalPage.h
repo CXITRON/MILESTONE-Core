@@ -14,11 +14,17 @@ label{display:block;color:var(--muted);font-size:13px;margin:0 0 5px}input,selec
 button{cursor:pointer;background:#1b2828;font-weight:700}button.primary{background:var(--mint);color:#062019;border-color:var(--mint)}button.danger{border-color:#80343d;color:#ff9da5}button:disabled{cursor:not-allowed;opacity:.48;background:#11181a;color:var(--muted);border-color:var(--line)}button.primary:disabled{background:#20302d;color:#789088;border-color:#30453f}button.install-armed{background:#2b2412;color:#f4c95d;border-color:#f4c95d}.row{display:flex;gap:9px;align-items:center}.row>*{flex:1}.check{display:flex;gap:8px;align-items:center;color:var(--text);margin:8px 0}.check input{width:auto}.status{white-space:pre-wrap;background:#0a0e0f;padding:11px;border-radius:9px;color:var(--muted);min-height:42px}.ok{color:var(--mint)}.bad{color:var(--bad)}.warn{color:#f4c95d;border-color:#665725}small{color:var(--muted)}
 .profile-inactive{opacity:.55}.profile-inactive::before{content:'현재 펌웨어 프로필에서는 비활성 · 위에서 프로필을 전환하세요';display:block;color:#f4c95d;margin-bottom:12px}.profile-hidden{display:none}
 .range-row{display:grid;grid-template-columns:minmax(0,1fr) 82px;gap:9px;align-items:center}.range-row input[type=number]{text-align:center}.saved-list{display:grid;gap:8px}.saved-entry{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:9px;align-items:center;background:#0d1315;border:1px solid var(--line);border-radius:9px;padding:9px 10px}.saved-entry button{width:auto;padding:7px 10px}.saved-name{overflow-wrap:anywhere}.badge{color:var(--mint);font-size:12px;margin-left:7px}
+)HTML"
+#if MILESTONE_HAS_MEDIA
+R"HTML(
 .media-work{display:grid;grid-template-columns:256px minmax(0,1fr);gap:14px}.media-preview{width:256px;height:256px;image-rendering:pixelated;background:#000;border:1px solid var(--line);border-radius:9px}.media-list{display:grid;gap:8px;margin-top:12px}.media-entry{display:grid;grid-template-columns:minmax(110px,1fr) 76px auto;gap:7px;align-items:center;background:#0d1315;border:1px solid var(--line);border-radius:9px;padding:9px}.media-entry input{padding:8px}.media-actions{display:flex;gap:5px}.media-actions button{width:auto;padding:7px 9px}.media-meta{grid-column:1/-1;color:var(--muted);font-size:12px}.progress{height:8px;background:#0a0e0f;border-radius:8px;overflow:hidden}.progress>i{display:block;height:100%;width:0;background:var(--mint)}
 .media-pickers{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.media-picker{position:relative;display:block;margin:0}.media-picker span{display:block;border:1px solid var(--line);border-radius:9px;background:#1b2828;color:var(--text);padding:11px;text-align:center;font-weight:700}.media-picker input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;padding:0}.media-picker:focus-within span{outline:2px solid var(--mint);outline-offset:2px}.media-drop{border:1px dashed #58706a;border-radius:9px;padding:13px;text-align:center;color:var(--muted);background:#0a0e0f}.media-drop.drag{border-color:var(--mint);color:var(--mint);background:#10201d}.media-trace{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--muted);font:12px ui-monospace,SFMono-Regular,monospace}.media-diag summary{cursor:pointer;color:var(--muted)}
 .stream-preview{width:256px;height:256px;image-rendering:pixelated;background:#000;border:1px solid var(--line);border-radius:9px}.stream-source{position:fixed;left:-8px;top:-8px;width:2px;height:2px;opacity:.01;pointer-events:none}.stream-note{border-left:3px solid var(--line);padding-left:10px}
 @media(max-width:560px){.grid{grid-template-columns:1fr}.row{flex-direction:column}.row>*{width:100%}.media-pickers{grid-template-columns:1fr}}
 @media(max-width:620px){.media-work{grid-template-columns:1fr}.media-preview,.stream-preview{width:min(256px,100%);height:auto;aspect-ratio:1}}
+)HTML"
+#endif
+R"HTML(
 </style></head><body><main>
 <div class="brand">CYTRON//MILESTONE</div><h1>MILESTONE Setup</h1><p class="sub">MILESTONE D1 로컬 설정 포털</p>
 
@@ -51,6 +57,9 @@ button{cursor:pointer;background:#1b2828;font-weight:700}button.primary{backgrou
 <div id="radio_config_status" class="status full">설정을 불러오는 중…</div>
 </div></section>
 
+)HTML"
+#if MILESTONE_HAS_GENERAL_VIEWS
+R"HTML(
 <section id="general_dday_card" class="card"><h2>디데이와 문구</h2><div class="grid">
 <div><label>목표 이름 (24자 이내)</label><input id="title" maxlength="24"></div>
 <div><label>목표 날짜</label><input id="target" type="date"></div>
@@ -70,10 +79,27 @@ button{cursor:pointer;background:#1b2828;font-weight:700}button.primary{backgrou
 <div><label>순환 순서 (0~7)</label><input id="cycle_order" maxlength="15" placeholder="0,1,2,3,4,5,6,7"></div>
 <div><label>자동 전환(초, 0 또는 3~60)</label><input id="cycle_interval" type="number" min="0" max="60"></div>
 </div></section>
+)HTML"
+#else
+R"HTML(
+<div hidden aria-hidden="true"><input id="title"><input id="target"><textarea id="message"></textarea><input id="dday_period"><input id="dday_style"><input id="after_mode"><input id="msg_align"><input id="scroll_speed"><input id="msg_scroll" type="checkbox"><input id="mode"><input id="cycle_order"><input id="cycle_interval"><input class="cycle" value="0" type="checkbox"><input class="cycle" value="1" type="checkbox"><input class="cycle" value="2" type="checkbox"><input class="cycle" value="3" type="checkbox"><input class="cycle" value="4" type="checkbox"><input class="cycle" value="5" type="checkbox"><input class="cycle" value="6" type="checkbox"><input class="cycle" value="7" type="checkbox"></div>
+)HTML"
+#endif
+R"HTML(
 
 <section class="card"><h2>시간과 화면</h2><div class="grid">
+)HTML"
+#if MILESTONE_HAS_GENERAL_VIEWS
+R"HTML(
 <div id="general_hour_row"><label>시간 형식</label><select id="hour24"><option value="1">24시간제</option><option value="0">12시간제</option></select></div>
 <div id="general_seconds_row"><label>초 표시</label><select id="show_seconds"><option value="0">끄기</option><option value="1">켜기</option></select></div>
+)HTML"
+#else
+R"HTML(
+<input id="hour24" type="hidden"><input id="show_seconds" type="hidden">
+)HTML"
+#endif
+R"HTML(
 <label class="check full"><input id="show_temp" type="checkbox"> 상단 상태 기호 옆에 ESP32 칩 온도 표시</label>
 <div class="full"><small>칩 내부 온도이므로 주변 실내 온도보다 높게 표시될 수 있습니다. 이 토글은 평상시 표시만 제어하며 과열 경고와 보호 기능은 항상 작동합니다.</small></div>
 <div><label>NTP 동기화 주기</label><select id="ntp_period"><option value="3600">1시간</option><option value="10800">3시간</option><option value="21600">6시간</option><option value="43200">12시간</option><option value="86400">24시간</option><option value="0">수동</option></select></div>
@@ -88,6 +114,9 @@ button{cursor:pointer;background:#1b2828;font-weight:700}button.primary{backgrou
 <div><label>정지 화면 자동 끄기(분, 0=사용 안 함)</label><input id="screen_off" type="number" min="0" max="1440"></div>
 </div></section>
 
+)HTML"
+#if MILESTONE_HAS_MEDIA
+R"HTML(
 <section id="media_card" class="card"><h2>커스텀 미디어</h2>
 <div class="media-work"><canvas id="media_preview" class="media-preview" width="128" height="128"></canvas><div class="grid">
 <div class="full"><label>원본 선택</label><div class="media-pickers"><label class="media-picker"><span>사진·GIF 선택</span><input id="media_image_file" type="file" accept="image/*" aria-label="사진 또는 GIF 선택"></label><label class="media-picker"><span>동영상 선택</span><input id="media_video_file" type="file" accept="video/*" aria-label="사진 앱에서 동영상 선택"></label><label class="media-picker"><span>파일 앱에서 동영상 선택</span><input id="media_any_file" type="file" aria-label="파일 앱에서 동영상 선택"></label></div><small>iPhone/iPad 사진 앱의 동영상 원본이 iCloud에만 있으면 모바일 데이터 또는 인터넷 연결이 필요할 수 있습니다. 선택 화면에 !가 뜨거나 영상이 재생되지 않으면 인터넷을 켜고 영상을 먼저 재생·다운로드한 뒤 다시 선택하세요.</small></div><div id="media_drop" class="media-drop full">iPad에서는 사진 또는 파일 앱의 항목을 여기에 끌어놓을 수도 있습니다.</div>
@@ -106,10 +135,28 @@ button{cursor:pointer;background:#1b2828;font-weight:700}button.primary{backgrou
 
 <section id="stream_card" class="card"><h2>실시간 스트리밍</h2><div class="status">스트리밍은 성능 격리를 위해 전용 페이지에서 실행합니다. 영상 전체를 휴대폰/PC에서 먼저 변환한 뒤 ESP32 STREAM_MODE로 전송합니다.</div><button type="button" class="primary" style="margin-top:10px" onclick="location.href='/stream'">MILESTONE Stream 열기</button></section>
 
+)HTML"
+#endif
+R"HTML(
 <section class="card"><button id="save_display_settings" class="primary" onclick="saveConfig()">화면·시간 설정 저장</button><p><small>Wi-Fi 비밀번호는 조회되지 않으며, Wi-Fi 시험 성공 시에만 확정 저장됩니다.</small></p></section>
-<section class="card"><h2>시스템</h2><div class="grid"><div id="settings_reset_area"><button onclick="resetSettings()">표시 설정 기본값 복원</button><p><small>저장된 Wi-Fi는 유지하고 화면·시간·LED 설정만 초기화합니다.</small></p></div><div><button class="danger" onclick="factoryReset()">공장 초기화</button><p><small>저장된 Wi-Fi를 포함한 모든 데이터를 삭제하고 재부팅합니다.</small></p></div></div></section>
+<section class="card"><h2>시스템</h2><div class="grid">
+)HTML"
+#if MILESTONE_HAS_GENERAL_VIEWS
+R"HTML(
+<div id="settings_reset_area"><button onclick="resetSettings()">표시 설정 기본값 복원</button><p><small>저장된 Wi-Fi는 유지하고 화면·시간·LED 설정만 초기화합니다.</small></p></div>
+)HTML"
+#endif
+R"HTML(
+<div><button class="danger" onclick="factoryReset()">공장 초기화</button><p><small>저장된 Wi-Fi를 포함한 모든 데이터를 삭제하고 재부팅합니다.</small></p></div></div></section>
 </main><script>
-let wifiPolling=false,installConfirmArmed=false,installConfirmTimer=0,installRequestPending=false,mediaLoaded=false,convertedMedia=null,selectedMediaFile=null,selectedMediaKind='',selectedMediaToken=0,mediaPreviewTimer=0,mediaPreviewFrames=[],mediaDeleteArm={id:'',until:0,button:null},mediaClearArmUntil=0,mediaPick={active:false,input:null,source:'',started:0,timer:0,hidden:false,cancelAt:0,phase:'대기',events:[]};
+let wifiPolling=false,installConfirmArmed=false,installConfirmTimer=0,installRequestPending=false;
+)HTML"
+#if MILESTONE_HAS_MEDIA
+R"HTML(
+let mediaLoaded=false,convertedMedia=null,selectedMediaFile=null,selectedMediaKind='',selectedMediaToken=0,mediaPreviewTimer=0,mediaPreviewFrames=[],mediaDeleteArm={id:'',until:0,button:null},mediaClearArmUntil=0,mediaPick={active:false,input:null,source:'',started:0,timer:0,hidden:false,cancelAt:0,phase:'대기',events:[]};
+)HTML"
+#endif
+R"HTML(
 const $=id=>document.getElementById(id); const val=id=>$(id).value;
 function form(obj){return new URLSearchParams(obj)}
 function setStatus(s,cls=''){const e=$('status');e.textContent=s;e.className='status '+cls}
@@ -130,6 +177,9 @@ async function refreshDiagnostics(){try{renderDiagnostics(await api('/api/diagno
 function copyTextFallback(text){const t=document.createElement('textarea');t.value=text;t.style.position='fixed';t.style.opacity='0';document.body.appendChild(t);t.select();let ok=false;try{ok=document.execCommand('copy')}catch{}t.remove();return ok}
 async function copyDiagnostics(){try{const [s,d]=await Promise.all([api('/api/status'),api('/api/diagnostics')]);const up=Number(s.uptime_sec||0);const uptime=`${Math.floor(up/86400)}d ${String(Math.floor(up/3600)%24).padStart(2,'0')}:${String(Math.floor(up/60)%60).padStart(2,'0')}:${String(up%60).padStart(2,'0')}`;const text=['MILESTONE Core Diagnostics',`Firmware: ${s.firmware}`,`Uptime: ${uptime}`,`Reset: ${d.last_boot||'-'}`,`Boot validated: ${d.boot_validated?'yes':'no'}`,`Wi-Fi: ${s.wifi||'-'}`,`NTP: ${s.time_valid?'synchronized':'not synchronized'}`,`Last sync: ${s.last_sync||'-'}`,`Temperature: ${s.temperature_c??'-'} C`,`Max temperature: ${d.max_temperature_c??'-'} C`,`Last OTA: ${d.last_ota_result||'-'}`,`Last rollback: ${d.rollback_last||'-'}${d.rollback_reason?' — '+d.rollback_reason:''}`,'','Recent events:',...(d.events||[]).map(diagLine)].join('\n');let ok=false;if(navigator.clipboard&&window.isSecureContext){try{await navigator.clipboard.writeText(text);ok=true}catch{}}if(!ok)ok=copyTextFallback(text);setStatus(ok?'진단 정보를 클립보드에 복사했습니다.':'복사에 실패했습니다. 진단 영역을 길게 눌러 직접 복사해 주세요.',ok?'ok':'bad')}catch(e){setStatus(e.message,'bad')}}
 async function clearDiagnostics(){if(!confirm('최근 진단 이력 16개를 모두 지우시겠습니까? 설정과 Wi-Fi는 유지됩니다.'))return;try{await api('/api/diagnostics/clear',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:form({})});await refreshDiagnostics();setStatus('진단 이력을 지웠습니다.','ok')}catch(e){setStatus(e.message,'bad')}}
+)HTML"
+#if MILESTONE_HAS_MEDIA
+R"HTML(
 const mediaCanvas=$('media_preview'),mediaCtx=mediaCanvas.getContext('2d',{willReadFrequently:true}),workCanvas=document.createElement('canvas'),workCtx=workCanvas.getContext('2d',{willReadFrequently:true});workCanvas.width=workCanvas.height=128;
 function mediaMessage(text,bad=false){const e=$('media_info');e.textContent=text;e.className=bad?'bad':''}
 function mediaActionMessage(text,bad=false){const e=$('media_action_status');e.textContent=text;e.className='status '+(bad?'bad':'ok')}
@@ -174,6 +224,9 @@ async function deleteMediaNow(id,name,button){const started=Date.now();if(button
 async function clearMediaNow(){const button=$('media_clear');button.disabled=true;mediaActionMessage('전체 미디어 삭제 요청 전송 중…');try{await api('/api/media/clear',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:form({confirm:'MEDIA'})});await loadMedia();mediaActionMessage('커스텀 미디어를 모두 삭제했습니다.')}catch(e){button.disabled=false;mediaActionMessage(`전체 삭제 실패 · ${e.message}`,true)}}
 function armClearMedia(){const now=Date.now(),button=$('media_clear');if(now<=mediaClearArmUntil){mediaClearArmUntil=0;button.textContent='미디어 전체 삭제';clearMediaNow();return}mediaClearArmUntil=now+8000;button.textContent='다시 눌러 전체 삭제';mediaActionMessage('전체 미디어 삭제 확인 · 8초 안에 같은 버튼을 다시 누르세요.');setTimeout(()=>{if(mediaClearArmUntil&&Date.now()>mediaClearArmUntil){mediaClearArmUntil=0;if(button.isConnected)button.textContent='미디어 전체 삭제';mediaActionMessage('전체 삭제 확인 시간이 만료되었습니다.')}},8100)}
 async function repairMedia(){if(prompt('복구하면 모든 미디어가 삭제됩니다. 계속하려면 REPAIR를 입력하세요.')!=='REPAIR')return;try{await api('/api/media/repair',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:form({confirm:'REPAIR'})});await loadMedia();mediaMessage('미디어 저장소를 새로 초기화했습니다.')}catch(e){mediaMessage(e.message,true)}}
+)HTML"
+#endif
+R"HTML(
 async function loadRadioConfig(){try{const r=await api('/api/radio-config');$('fixed_ap').checked=!!r.fixed_ap;$('bluetooth_now_playing').checked=!!r.bluetooth_now_playing;$('bluetooth_now_playing').disabled=r.bluetooth_supported===false;$('ap_password').value='';$('ap_password').placeholder=r.fixed_ap&&r.ap_password_set?'현재 비밀번호는 숨김 · 새 값 입력 · 공백 저장 시 오픈 AP':'비워 두면 비밀번호 없는 오픈 AP';$('radio_config_status').textContent=`고정 AP: ${r.fixed_ap?(r.ap_password_set?'비밀번호 사용':'오픈 AP'):'기존 임의 비밀번호 방식'}\nBluetooth Now Playing: ${r.bluetooth_now_playing?'켜짐':'꺼짐'}${r.bluetooth_supported===false?' (현재 빌드 미지원)':''}`;$('radio_config_status').className='status '+(r.fixed_ap&&!r.ap_password_set?'warn':'')}catch(e){$('radio_config_status').textContent=e.message;$('radio_config_status').className='status bad'}}
 async function saveApSecurity(){const fixed=$('fixed_ap').checked,pass=val('ap_password');if(fixed&&pass.length>0&&(pass.length<8||pass.length>63))return setStatus('고정 AP 비밀번호는 비워 두거나 8~63자로 입력하세요.','bad');if(fixed&&pass.length===0&&!confirm('경고: 비밀번호 없이 설정 AP를 사용하시겠습니까?\n\nWi-Fi 범위 내의 다른 사용자가 MILESTONE Setup에 접속하여 기기 설정을 변경할 수 있습니다.'))return;setStatus('AP 보안 설정 저장 중…');try{await api('/api/radio-config',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:form({fixed_ap:fixed?1:0,ap_password:pass})});await loadRadioConfig();setStatus(fixed?'AP 보안 설정을 저장했습니다. 변경은 다음 설정 AP 시작부터 적용됩니다.':'고정 AP 설정을 껐습니다. 다음 설정 AP부터 기존 임의 비밀번호 방식을 사용합니다.','ok')}catch(e){setStatus(e.message,'bad')}}
 async function saveBluetoothSetting(){const ble=$('bluetooth_now_playing').checked;setStatus('Bluetooth 설정 저장 중…');try{await api('/api/radio-config',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:form({bluetooth_now_playing:ble?1:0})});await loadRadioConfig();setStatus(`Bluetooth Now Playing을 ${ble?'켰습니다':'껐습니다'}.`,'ok')}catch(e){setStatus(e.message,'bad')}}
@@ -181,7 +234,7 @@ async function saveBluetoothSetting(){const ble=$('bluetooth_now_playing').check
 async function load(){try{const s=await api('/api/status');renderStatus(s);const c=await api('/api/config');for(const k of ['title','target','message','mode','cycle_order','cycle_interval','dday_style','after_mode','msg_align','scroll_speed','hour24','show_seconds','ntp_period','dday_period','retry_period','brightness','night_level','led_brightness','led_night_level','screen_off'])if($(k))$(k).value=c[k];syncRangePairs();$('ssid').value=c.wifi_ssid||'';$('wifi_security').value=c.wifi_security||'personal';$('wifi_username').value=c.wifi_username||'';$('wifi_identity').value=c.wifi_identity||'';const enterpriseOption=$('wifi_security').querySelector('option[value="enterprise_peap"]');if(enterpriseOption)enterpriseOption.disabled=c.enterprise_supported===false;syncWifiSecurityUi();$('msg_scroll').checked=!!c.msg_scroll;$('show_temp').checked=!!c.show_temp;$('boot_sync').checked=!!c.boot_sync;$('wifi_sleep').checked=!!c.wifi_sleep;$('burnin').checked=!!c.burnin;$('led_enabled').checked=!!c.led_enabled;$('night_start').value=minsToTime(c.night_start);$('night_end').value=minsToTime(c.night_end);document.querySelectorAll('.cycle').forEach(x=>x.checked=(c.cycle_mask&(1<<Number(x.value)))!==0);renderSavedNetworks(c.saved_networks||[]);await Promise.all([refreshDiagnostics(),loadRadioConfig()])}catch(e){setStatus(e.message,'bad')}}
 function resetInstallConfirm(){installConfirmArmed=false;if(installConfirmTimer){clearTimeout(installConfirmTimer);installConfirmTimer=0}const b=$('install_update');b.classList.remove('install-armed');if(!installRequestPending)b.textContent='업데이트 설치'}
 function renderUpdate(s){const latest=s.latest_firmware||'-',latestProfile=s.latest_profile?` @ ${s.latest_profile.toUpperCase()}`:'';const lines=[`현재: ${s.firmware} @ ${(s.profile||'core').toUpperCase()}`,`확인 대상: ${latest}${latestProfile}`,`상태: ${s.update_state||'idle'}`,`마지막 확인: ${s.last_update_check||'-'}`];if(s.last_ota_result)lines.push(`최근 설치 결과: ${s.last_ota_result}`);if(s.rollback_armed)lines.push(`롤백 보호: 검증 중 (복귀 ${s.rollback_previous||'이전 슬롯'}, 시도 ${s.rollback_attempt||0})`);else if(s.rollback_last)lines.push(`최근 롤백 상태: ${s.rollback_last}${s.rollback_reason?' — '+s.rollback_reason:''}`);if(s.update_state==='downloading')lines.push(`다운로드: ${s.update_progress||0}%`);if(s.update_error)lines.push(`오류: ${s.update_error}`);$('update_status').textContent=lines.join('\n');$('update_status').className='status '+(s.update_available||s.update_state==='current'?'ok':s.update_error?'bad':'');const b=$('install_update');const transfer=['downloading','verifying','rebooting'].includes(s.update_state);const queued=!!s.update_install_pending;const ready=!!s.update_install_ready;installRequestPending=queued||transfer;if(transfer||queued){resetInstallConfirm();b.disabled=true;b.textContent=transfer?'설치 진행 중…':'설치 요청 처리 중…'}else{b.disabled=!ready;if(!ready)resetInstallConfirm();else if(!installConfirmArmed)b.textContent=s.latest_profile&&s.latest_profile!==s.profile?'프로필 전환 설치':'업데이트 설치'}}
-function applyProfile(s){const profile=s.profile||'core',media=!!s.media_supported,general=s.general_views_supported!==false;$('profile_target').value=profile==='core'?'media':'core';$('profile_status').textContent=`현재 ${profile.toUpperCase()} · ${media?'미디어 전용 재생/스트리밍':'디데이·시계·문구 + Bluetooth Now Playing'}\nCORE 화면 설정과 저장 데이터는 MEDIA에서 변경하지 않으며, CORE 복귀 시 그대로 복원됩니다.`;for(const id of ['general_dday_card','general_mode_card','general_hour_row','general_seconds_row','settings_reset_area'])$(id).classList.toggle('profile-hidden',!general);$('save_display_settings').textContent=general?'화면·시간 설정 저장':'미디어·시스템 설정 저장';for(const id of ['media_card','stream_card']){const card=$(id);card.classList.toggle('profile-inactive',!media);card.querySelectorAll('input,select,button').forEach(e=>e.disabled=!media)}if(media&&!mediaLoaded){mediaLoaded=true;loadMedia().catch(()=>{})}}
+function applyProfile(s){const profile=s.profile||'core',media=!!s.media_supported,general=s.general_views_supported!==false;$('profile_target').value=profile==='core'?'media':'core';$('profile_status').textContent=`현재 ${profile.toUpperCase()} · ${media?'미디어 전용 재생/스트리밍':'디데이·시계·문구 + Bluetooth Now Playing'}\nCORE 화면 설정과 저장 데이터는 MEDIA에서 변경하지 않으며, CORE 복귀 시 그대로 복원됩니다.`;for(const id of ['general_dday_card','general_mode_card','general_hour_row','general_seconds_row','settings_reset_area']){const element=$(id);if(element)element.classList.toggle('profile-hidden',!general)}$('save_display_settings').textContent=general?'화면·시간 설정 저장':'미디어·시스템 설정 저장';for(const id of ['media_card','stream_card']){const card=$(id);if(!card)continue;card.classList.toggle('profile-inactive',!media);card.querySelectorAll('input,select,button').forEach(e=>e.disabled=!media)}if(media&&!mediaLoaded){mediaLoaded=true;loadMedia().catch(()=>{})}}
 function renderStatus(s){const mb=n=>(Number(n||0)/1048576).toFixed(2)+' MB';const kb=n=>(Number(n||0)/1024).toFixed(1)+' KB';const up=Number(s.uptime_sec||0);const uptime=`${Math.floor(up/86400)}일 ${String(Math.floor(up/3600)%24).padStart(2,'0')}:${String(Math.floor(up/60)%60).padStart(2,'0')}:${String(up%60).padStart(2,'0')}`;const stage={off:'꺼짐',initializing:'초기화 중',advertising:'MILESTONE 광고 중',connected:'iPhone 연결됨',securing:'페어링/암호화 중',discovering:'AMS 검색 중',ready:'AMS 준비됨',suspended:'스트리밍으로 일시 중단',error:'오류',unsupported:'현재 프로필 미지원'}[s.bluetooth_stage]||(!s.bluetooth_enabled?'꺼짐':!s.bluetooth_active?'대기':s.bluetooth_ams_ready?'AMS 준비됨':s.bluetooth_connected?'iPhone 연결됨':s.bluetooth_advertising?'MILESTONE 광고 중':'광고 정지');const bleError=s.bluetooth_error?`\nBluetooth 오류: ${s.bluetooth_error}${s.bluetooth_error_code?` (${s.bluetooth_error_code})`:''}`:'';setStatus(`펌웨어: ${s.firmware} @ ${(s.profile||'core').toUpperCase()}\n상태: ${s.state}\n가동 시간: ${uptime}\nCPU: ${s.cpu_mhz||'-'} MHz / 온도: ${s.temperature_c??'-'} °C\nRAM: ${mb(s.heap_free)} 여유 / ${mb(s.heap_total)} 전체\n최저 RAM: ${mb(s.heap_min)} / 최대 연속 블록: ${mb(s.heap_largest)}\n최소 잔여 작업 스택: ${kb(s.stack_free)}\n플래시: ${mb(s.flash_total)} / 앱: ${mb(s.sketch_size)} / OTA 공간: ${mb(s.ota_free)}\nNVS: ${s.nvs_ready?'정상 · 여유 '+s.nvs_free_entries+' entries':'오류'}\nWi-Fi: ${s.wifi}\nIP: ${s.ip||'-'}\nBluetooth: ${stage}${bleError}\n시간: ${s.time_valid?'동기화됨':'미확정'}\n마지막 동기화: ${s.last_sync||'-'}${s.wifi_test&&s.wifi_test!=='idle'?'\nWi-Fi 시험: '+s.wifi_test:''}`,s.nvs_ready===false||s.bluetooth_stage==='error'?'bad':s.time_valid?'ok':'');renderUpdate(s);applyProfile(s)}
 async function refresh(){try{const s=await api('/api/status');renderStatus(s);if(wifiPolling){if(s.wifi_test==='success'){wifiPolling=false;setStatus('Wi-Fi 및 시간 동기화 성공. 설정을 확정 저장했습니다.','ok')}else if(s.wifi_test==='failed'){wifiPolling=false;setStatus('Wi-Fi 시험 실패: '+(s.wifi_error||'연결 또는 시간 동기화 실패'),'bad')}else setTimeout(refresh,1000)}}catch(e){setStatus(e.message,'bad')}}
 const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
@@ -197,6 +250,14 @@ async function installUpdate(){const b=$('install_update');if(b.disabled)return;
 async function exportConfig(){try{const c=await api('/api/config');const e=$('export');e.hidden=false;e.value=JSON.stringify(c,null,2)}catch(e){setStatus(e.message,'bad')}}
 async function resetSettings(){if(!confirm('저장된 Wi-Fi는 유지하고 화면·시간·LED·AP 보안·Bluetooth 설정을 기본값으로 복원하시겠습니까?'))return;try{await api('/api/settings/reset',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:form({confirm:'DEFAULTS'})});await load();setStatus('일반 설정을 기본값으로 복원했습니다. 저장된 Wi-Fi는 유지됩니다.','ok')}catch(e){setStatus(e.message,'bad')}}
 async function factoryReset(){if(prompt('초기화하려면 RESET을 입력하세요.')!=='RESET')return;try{await api('/api/reset',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:form({confirm:'RESET'})});setStatus('초기화 중입니다. 기기가 재부팅됩니다.','ok')}catch(e){setStatus(e.message,'bad')}}
-rangePairs.forEach(p=>bindRangePair(...p));$('media_list').addEventListener('click',event=>{const target=event.target&&event.target.closest?event.target.closest('button[data-media-action]'):null;if(!target)return;event.preventDefault();if(target.dataset.mediaAction==='delete')armMediaDelete(target)});$('media_clear').addEventListener('click',event=>{event.preventDefault();armClearMedia()});for(const id of ['media_image_file','media_video_file','media_any_file']){const input=$(id),source=input.getAttribute('aria-label')||id;input.addEventListener('click',()=>beginMediaPick(input,source));input.addEventListener('input',handleMediaInput);input.addEventListener('change',handleMediaInput);input.addEventListener('cancel',handleMediaCancel)}const mediaDrop=$('media_drop');mediaDrop.addEventListener('dragenter',event=>{event.preventDefault();mediaDrop.classList.add('drag')});mediaDrop.addEventListener('dragover',event=>event.preventDefault());mediaDrop.addEventListener('dragleave',()=>mediaDrop.classList.remove('drag'));mediaDrop.addEventListener('drop',handleMediaDrop);document.addEventListener('visibilitychange',markMediaPickerVisibility);window.addEventListener('pageshow',()=>{if(mediaPick.active){mediaTrace('pageshow','선택기에서 복귀');pollMediaPick()}});mediaCtx.fillRect(0,0,128,128);load();setInterval(()=>{if(!wifiPolling)refresh();refreshDiagnostics()},10000);
+rangePairs.forEach(p=>bindRangePair(...p));
+)HTML"
+#if MILESTONE_HAS_MEDIA
+R"HTML(
+$('media_list').addEventListener('click',event=>{const target=event.target&&event.target.closest?event.target.closest('button[data-media-action]'):null;if(!target)return;event.preventDefault();if(target.dataset.mediaAction==='delete')armMediaDelete(target)});$('media_clear').addEventListener('click',event=>{event.preventDefault();armClearMedia()});for(const id of ['media_image_file','media_video_file','media_any_file']){const input=$(id),source=input.getAttribute('aria-label')||id;input.addEventListener('click',()=>beginMediaPick(input,source));input.addEventListener('input',handleMediaInput);input.addEventListener('change',handleMediaInput);input.addEventListener('cancel',handleMediaCancel)}const mediaDrop=$('media_drop');mediaDrop.addEventListener('dragenter',event=>{event.preventDefault();mediaDrop.classList.add('drag')});mediaDrop.addEventListener('dragover',event=>event.preventDefault());mediaDrop.addEventListener('dragleave',()=>mediaDrop.classList.remove('drag'));mediaDrop.addEventListener('drop',handleMediaDrop);document.addEventListener('visibilitychange',markMediaPickerVisibility);window.addEventListener('pageshow',()=>{if(mediaPick.active){mediaTrace('pageshow','선택기에서 복귀');pollMediaPick()}});mediaCtx.fillRect(0,0,128,128);
+)HTML"
+#endif
+R"HTML(
+load();setInterval(()=>{if(!wifiPolling)refresh();refreshDiagnostics()},10000);
 </script></body></html>
 )HTML";

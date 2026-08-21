@@ -702,6 +702,7 @@ void processDisplay() {
     }
     return;
   }
+#if MILESTONE_HAS_MEDIA
   if (mediaDisplayOwnsFrame()) {
     if (elapsed(now, lastDisplayMs, DISPLAY_REFRESH_MS)) updateContrast();
     if (renderMediaFrameIfNeeded(now)) {
@@ -713,6 +714,7 @@ void processDisplay() {
     }
     return;
   }
+#endif
   const uint32_t refreshMs = buttonStablePressed ? BUTTON_DISPLAY_REFRESH_MS : DISPLAY_REFRESH_MS;
   if (!elapsed(now, lastDisplayMs, refreshMs)) return;
   lastDisplayMs = now;
@@ -745,6 +747,7 @@ void initializeView() {
 }
 
 
+#if MILESTONE_HAS_MEDIA
 uint32_t mediaStreamPreviousCpuMhz = 240;
 uint32_t mediaStreamLastThermalCheckMs = 0;
 bool mediaStreamButtonPressed = false;
@@ -887,6 +890,7 @@ void processMediaStreamMode() {
   }
   delay(1);
 }
+#endif
 
 void setupFirmware() {
   Serial.begin(115200);
@@ -974,21 +978,25 @@ void setupFirmware() {
 }
 
 void loopFirmware() {
+#if MILESTONE_HAS_MEDIA
   if (mediaStreamActive) {
     processMediaStreamMode();
     return;
   }
+#endif
 
   processThermalProtection();
   processButton();
   processViewStateSave();
   processNetwork();
+#if MILESTONE_HAS_MEDIA
   // A /api/stream/start request can switch modes inside processNetwork().
   // Do not run any normal background subsystem after that transition.
   if (mediaStreamActive) {
     processMediaStreamMode();
     return;
   }
+#endif
   processFirmwareUpdate();
   if (MILESTONE_HAS_BLUETOOTH) processBluetoothNowPlaying();
   processDiagnostics();

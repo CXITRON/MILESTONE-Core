@@ -1077,8 +1077,9 @@ void drawMainScreen() {
     case View::DASHBOARD:
     case View::DEVICE_INFO:
       currentView = View::CUSTOM_MEDIA;
-      // Fall through to the only user-facing MEDIA profile view.
+      [[fallthrough]];
 #endif
+#if MILESTONE_HAS_MEDIA
     case View::CUSTOM_MEDIA:
       if (!copyCurrentMediaFrameToDisplayBuffer()) {
         display.setFont(u8g2_font_7x14B_tf);
@@ -1087,6 +1088,12 @@ void drawMainScreen() {
         drawCenteredStr("OPEN SETUP TO ADD", 82);
       }
       break;
+#else
+    case View::CUSTOM_MEDIA:
+      currentView = View::DDAY_TIME;
+      drawDdayView(false, ox, oy);
+      break;
+#endif
   }
   display.sendBuffer();
 }

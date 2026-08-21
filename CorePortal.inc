@@ -145,6 +145,7 @@ bool parseUintArg(const char *name, uint32_t &value);
 bool parseUintHeader(const char *name, uint32_t &value);
 bool parseBoolArg(const char *name, bool &value);
 
+#if MILESTONE_HAS_MEDIA
 void resetMediaUploadState(bool removeTemporary) {
   if (mediaUploadFile) mediaUploadFile.close();
   if (removeTemporary && mediaStorageReady && LittleFS.exists(MEDIA_UPLOAD_TEMP)) {
@@ -596,6 +597,7 @@ void handleMediaRepair() {
   refreshMediaViewAfterCatalogChange();
   sendJson(200, "{\"ok\":true}");
 }
+#endif
 
 void handleGetRadioConfig() {
   if (!requireSetupApRequest()) return;
@@ -1223,6 +1225,7 @@ void handleUpdateInstall() {
 
 void handlePortalRoot() {
   if (!requireSetupApRequest(false)) return;
+#if MILESTONE_HAS_MEDIA
   if (mediaStreamActive) {
     // Do not send the large general portal while video timing owns the device.
     // A direct root visit moves to the lightweight stream page; captive-probe
@@ -1235,17 +1238,20 @@ void handlePortalRoot() {
     }
     return;
   }
+#endif
   server.sendHeader("Cache-Control", "no-store");
   server.sendHeader("Set-Cookie", String("MILESTONE_TOKEN=") + sessionToken + "; Path=/; HttpOnly; SameSite=Strict");
   server.send_P(200, "text/html; charset=UTF-8", MILESTONE_PORTAL_HTML);
 }
 
+#if MILESTONE_HAS_MEDIA
 void handleStreamPortal() {
   if (!requireSetupApRequest(false)) return;
   server.sendHeader("Cache-Control", "no-store");
   server.sendHeader("Set-Cookie", String("MILESTONE_TOKEN=") + sessionToken + "; Path=/; HttpOnly; SameSite=Strict");
   server.send_P(200, "text/html; charset=UTF-8", MILESTONE_STREAM_HTML);
 }
+#endif
 
 void registerPortalRoutes() {
   static bool registered = false;
@@ -1256,10 +1262,13 @@ void registerPortalRoutes() {
       "X-MILESTONE-Bytes"};
   server.collectHeaders(headerKeys, 5);
   server.on("/", HTTP_GET, handlePortalRoot);
+#if MILESTONE_HAS_MEDIA
   server.on("/stream", HTTP_GET, handleStreamPortal);
+#endif
   server.on("/api/status", HTTP_GET, handleStatus);
   server.on("/api/diagnostics", HTTP_GET, handleDiagnostics);
   server.on("/api/diagnostics/clear", HTTP_POST, handleDiagnosticsClear);
+#if MILESTONE_HAS_MEDIA
   server.on("/api/media/status", HTTP_GET, handleMediaStatus);
   server.on("/api/media/list", HTTP_GET, handleMediaList);
   server.on("/api/media/upload", HTTP_POST, handleMediaUploadComplete, handleMediaUploadData);
@@ -1273,6 +1282,7 @@ void registerPortalRoutes() {
   server.on("/api/stream/push", HTTP_POST, handleMediaStreamPushComplete, handleMediaStreamPushRaw);
   server.on("/api/stream/finish", HTTP_POST, handleMediaStreamFinish);
   server.on("/api/stream/stop", HTTP_POST, handleMediaStreamStop);
+#endif
   server.on("/api/config", HTTP_GET, handleGetConfig);
   server.on("/api/radio-config", HTTP_GET, handleGetRadioConfig);
   server.on("/api/wifi/scan", HTTP_GET, handleWifiScan);

@@ -14,6 +14,8 @@ MILESTONE Core is an ESP32-S3 desktop display firmware with:
 
 CORE owns D-day, message, clock, dashboard, device-information, and general screen-cycle behavior. MEDIA never enters those views: BOOT and timed transitions select the next enabled media item. Both profiles share schema 10, but MEDIA must preserve the stored CORE general-view fields so switching back restores the previous CORE setup exactly.
 
+The profile boundary is compile-time, not a runtime feature flag. CORE uses `CoreMediaDisabled.inc` only for schema-compatible no-op calls and raw shared-partition erase during an explicit factory reset; it must not link `CoreMedia.inc`, `CoreMedia.cpp`, LittleFS, media/stream HTTP routes, `StreamPage.h`, or media converter UI bytes. Release BIN inspection enforces this boundary.
+
 - D-day, date, time, and message views
 - selectable/automatic screen cycling
 - BOOT-button interaction

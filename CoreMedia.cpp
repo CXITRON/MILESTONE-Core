@@ -1,3 +1,6 @@
+#include "FirmwareProfile.h"
+
+#if MILESTONE_HAS_MEDIA
 #include "CoreMedia.h"
 
 #include <string.h>
@@ -241,3 +244,4 @@ const char *errorName(Error error) {
 }
 
 }  // namespace MilestoneMedia
+#endif

@@ -398,6 +398,9 @@ v2.0.0은 하나의 비대해지는 애플리케이션을 **CORE**와 **MEDIA** 
 - CORE에서 MEDIA 기능, MEDIA에서 Bluetooth 설정은 삭제하지 않고 비활성 안내와 프로필 전환 경로를 표시
 - MEDIA에서는 디데이·문구·시계·종합·기기정보 화면과 일반 화면 순환을 실행하지 않고, 버튼 전환과 자동 전환 모두 활성 미디어 항목만 순환
 - MEDIA 포털은 CORE 전용 화면 설정과 기본값 복원을 숨기며, 공용 설정 저장 시에도 기존 CORE 디데이·문구·모드·순환 값을 그대로 보존
+- CORE 빌드는 LittleFS 미디어 코덱·저장/재생 구현, `/api/media/*`, `/api/stream/*`, `/stream`, 스트리밍 런타임과 브라우저 미디어 변환 UI를 컴파일 단계에서 제외
+- CORE 공장 초기화는 LittleFS를 링크하지 않고도 공유 데이터 파티션을 직접 지워 MEDIA에 저장된 항목까지 기존 전체 초기화 계약을 유지
+- Release 빌드는 CORE BIN에 미디어 API·스트림·업로드 경로가 남아 있거나 MEDIA BIN에서 빠지면 게시 전에 실패
 - `tools/make-release.sh`와 `milestone-release`가 두 빌드를 모두 통과한 뒤 네 자산을 한 Release에 원자적으로 준비·게시
 
 정식 버전: `2.0.0`
