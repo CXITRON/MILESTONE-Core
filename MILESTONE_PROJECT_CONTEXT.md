@@ -260,6 +260,8 @@ release/MILESTONE_Media.json
 
 Each manifest records the firmware version, profile, matching asset name, exact binary size, SHA-256, and release note.
 
+In Taildrop mode, publication must hand off to the incoming project's release command before any remote mutation when that command differs from the installed launcher. Existing same-tag releases are repairable only after every already-published asset matches the current build byte-for-byte. A completed publish must download and verify all four CORE/MEDIA assets against the local build.
+
 ## 7. Unified release command
 
 The preferred operator workflow is the installed command:

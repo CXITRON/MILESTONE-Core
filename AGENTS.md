@@ -75,9 +75,10 @@ The installer copies the command to `~/.local/bin/milestone-release`.
 - both generated BIN/manifest pairs exist and profile/asset/version/size/SHA-256 agree
 - new commits covered by the current commit-hygiene policy use the expected Author and Committer identity
 - those new commit messages contain no AI-tool attribution such as Codex/OpenAI/ChatGPT/etc.; historical commits are not rewritten solely for this check
-- an existing version tag must point to the current HEAD or release stops
+- a new version tag must point to the current HEAD; repair of an existing Release keeps its tag fixed and requires that tag to be an ancestor of HEAD
 - `main` and the version tag are pushed atomically
 - the GitHub Release contains `MILESTONE_Core.bin`, `MILESTONE_Core.json`, `MILESTONE_Media.bin`, and `MILESTONE_Media.json`
+- Taildrop hands publication to the incoming release command when it differs from the installed launcher, and every published asset is downloaded and SHA-256 checked after upload
 
 Do not bypass these checks merely to make a release succeed.
 

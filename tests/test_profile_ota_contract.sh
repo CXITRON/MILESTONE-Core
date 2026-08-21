@@ -45,6 +45,13 @@ if grep -Fq 'strings -a -- "$source_bin" | grep -Fq' tools/make-release.sh; then
 fi
 require_fixed tools/milestone-release 'MILESTONE_Media.bin' 'unified release command does not publish MEDIA BIN'
 require_fixed tools/milestone-release 'MILESTONE_Media.json' 'unified release command does not publish MEDIA manifest'
+require_fixed tools/milestone-release 'handoff_to_incoming_script_if_needed' 'Taildrop does not hand off to the incoming release command before publication'
+require_fixed tools/milestone-release 'gh release upload "$TAG" "${asset_paths[@]}"' 'existing incomplete releases cannot be repaired'
+require_fixed tools/milestone-release 'verify_published_release_assets' 'published CORE/MEDIA assets are not verified'
+if grep -Fq 'ensure_release_not_already_published' tools/milestone-release; then
+  echo 'Profile OTA contract: existing releases still exit before asset reconciliation' >&2
+  exit 1
+fi
 
 bash -n tools/make-release.sh
 bash -n tools/milestone-release
