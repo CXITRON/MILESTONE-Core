@@ -92,7 +92,10 @@ for index in "${!profiles[@]}"; do
     echo "오류: [$profile] BIN 내부에서 펌웨어 버전 $version을 확인하지 못했습니다." >&2
     exit 2
   fi
-  if ! strings -a -- "$source_bin" | grep -Fq -- "$marker"; then
+  # Do not use grep -q here while pipefail is enabled. A successful early
+  # match closes the pipe, strings receives SIGPIPE, and the pipeline is then
+  # reported as failed even though the marker was present.
+  if ! strings -a -- "$source_bin" | grep -F -- "$marker" >/dev/null; then
     echo "오류: [$profile] BIN 내부에서 프로필 표식을 확인하지 못했습니다." >&2
     exit 2
   fi

@@ -31,6 +31,11 @@ require_fixed CorePortal.inc 'CORE 화면 설정은 MEDIA에서 초기화할 수
 require_fixed CorePortal.inc 'general_views_supported' 'profile capability is missing from status API'
 require_fixed PortalPage.h "'general_dday_card','general_mode_card','general_hour_row','general_seconds_row','settings_reset_area'" 'MEDIA portal does not hide CORE-only settings'
 require_fixed tools/make-release.sh 'profiles=(core media)' 'release builder does not build both profiles'
+require_fixed tools/make-release.sh 'grep -F -- "$marker" >/dev/null' 'profile marker check can still fail from a pipefail/SIGPIPE false negative'
+if grep -Fq 'strings -a -- "$source_bin" | grep -Fq' tools/make-release.sh; then
+  echo 'Profile OTA contract: profile marker check still uses grep -q under pipefail' >&2
+  exit 1
+fi
 require_fixed tools/milestone-release 'MILESTONE_Media.bin' 'unified release command does not publish MEDIA BIN'
 require_fixed tools/milestone-release 'MILESTONE_Media.json' 'unified release command does not publish MEDIA manifest'
 
