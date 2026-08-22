@@ -264,7 +264,7 @@ picocom -b 115200 /dev/ttyACM0
 https://github.com/CXITRON/MILESTONE-Core
 ```
 
-기기는 부팅 후 Wi-Fi 연결과 NTP 동기화를 먼저 완료해 시간과 디데이를 확정합니다. 최신 정식 Release 확인은 새 부팅에서 실제 NTP 응답을 받아 외부 연결을 확인한 뒤 시작하며, 확인 중에는 일반 화면을 유지하고 우상단에 `U`를 표시합니다. 계속 켜져 있는 경우 마지막 정상 확인 시각으로부터 7일 뒤 다시 확인합니다. DNS·TLS·일시적 HTTP 오류는 짧은 백오프로 최대 5회 확인한 뒤 10분 후 자동 재시도하며, 명백한 비정상 Release 응답이나 실제 OTA 설치 실패는 6시간 뒤 재시도합니다. 자동 확인은 설치까지 자동으로 실행하지 않습니다.
+기기는 부팅 후 Wi-Fi 연결과 NTP 동기화를 먼저 완료해 시간과 디데이를 확정합니다. 최신 정식 Release 확인은 새 부팅에서 실제 NTP 응답을 받아 외부 연결을 확인한 뒤 시작하며, 확인 중에는 일반 화면을 유지하고 우상단에 `U`를 표시합니다. NOW에 iPhone이 실제로 연결돼 있으면 자동 확인은 음악 표시를 끊거나 `U`·LED 점멸을 시작하지 않고 5분 연기합니다. 계속 켜져 있는 경우 마지막 정상 확인 시각으로부터 7일 뒤 다시 확인합니다. DNS·TLS·일시적 HTTP 오류는 짧은 백오프로 최대 5회 확인한 뒤 10분 후 자동 재시도하며, 명백한 비정상 Release 응답이나 실제 OTA 설치 실패는 6시간 뒤 재시도합니다. 자동 확인은 설치까지 자동으로 실행하지 않습니다.
 
 부팅 로고는 네트워크 응답을 기다리지 않고 약 3초 뒤 종료됩니다. NTP 서버 응답이 느리면 일반 화면의 우상단에 `T`를 표시한 채 백그라운드에서 서버별 최대 7초, 전체 최대 21초 동안 서로 다른 제공자를 순서대로 시도합니다. 설정 포털에서 시작한 업데이트·프로필 확인은 이 제한 안에 동기화되지 않으면 명확히 실패 처리하며 자동 재시도에 매달려 1~2분간 대기하지 않습니다. 저해상도 OLED에서 시간 동기화와 업데이트 확인을 혼동하지 않도록 두 상태를 각각 `T`와 `U` 문자로 구분합니다. NTP 성공 전에는 GitHub 업데이트 확인을 시작하지 않습니다.
 
@@ -275,6 +275,8 @@ https://github.com/CXITRON/MILESTONE-Core
 - BOOT 버튼을 1초 미만으로 짧게 눌렀다 놓기: 설치
 - 아무 조작 없이 15초 경과: 이번에는 보류
 - 설정 포털: `지금 업데이트 확인` 및 `업데이트 설치` 사용 가능
+
+NOW에서 사용자가 직접 확인을 누르면 iPhone 연결 종료를 최대 2.5초 동안 한 번 시도합니다. 종료가 확인되지 않으면 `CHECKING`을 계속 반복하지 않고 오류를 표시하며 음악 연결 복구를 시도합니다.
 
 업데이트 파일은 HTTPS 인증서로 서버를 검증하고, manifest에 기록된 크기와 SHA-256이 모두 일치해야만 다음 부팅 펌웨어로 확정됩니다. HTTP로 낮아지는 주소, 비정상 manifest, 용량 부족, RAM 부족, 연결 중단, 고온·온도 센서 오류 상태에서는 설치하지 않습니다.
 
@@ -294,13 +296,13 @@ PC의 현재 프로젝트를 직접 수정한 경우에는 **MILESTONE_Core 프�
 
 ```bash
 cd /run/media/citron/T7/Documents/Dev/MILESTONE_Core
-milestone-release local 2.2.5 "Stabilize portal OTA and NOW artwork"
+milestone-release local 2.2.6 "Defer update checks during NOW playback"
 ```
 
 Tailscale Taildrop으로 `MILESTONE_Core_1.10.6.zip`을 받은 경우에는 교체 대상 프로젝트 디렉터리 밖의 정상적으로 존재하는 디렉터리에서 실행합니다. 기존 프로젝트가 교체될 때 현재 셸 경로가 사라지는 문제를 방지하기 위해 `/tmp`로 이동하는 방식을 권장합니다.
 
 ```bash
-cd /tmp && milestone-release taildrop 2.2.5 "Stabilize portal OTA and NOW artwork"
+cd /tmp && milestone-release taildrop 2.2.6 "Defer update checks during NOW playback"
 ```
 
 Taildrop 모드는 ZIP을 라이브 프로젝트에 바로 덮어쓰지 않습니다. 별도 staging 디렉터리에서 구조·버전·Git 상태를 검사하고 테스트와 ESP32 릴리즈 빌드까지 성공한 뒤에만 프로젝트를 교체합니다. GitHub 게시 전 실패하면 기존 프로젝트를 자동 복구합니다. `--dry-run`은 테스트/빌드까지만 수행하고 로컬 프로젝트·Git·GitHub를 변경하지 않습니다. `--yes`를 사용하지 않는 기본 동작은 최종 게시 직전에 한 번 확인합니다.
@@ -317,10 +319,10 @@ Taildrop 모드는 ZIP을 라이브 프로젝트에 바로 덮어쓰지 않습�
 
 ```bash
 chmod +x tools/make-release.sh
-./tools/make-release.sh 2.2.5 "Stabilize portal OTA and NOW artwork"
+./tools/make-release.sh 2.2.6 "Defer update checks during NOW playback"
 ```
 
-기본 설명을 사용하려면 `./tools/make-release.sh 2.2.5`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
+기본 설명을 사용하려면 `./tools/make-release.sh 2.2.6`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
 
 다음 여섯 파일이 `release/`에 생성됩니다.
 
@@ -344,11 +346,11 @@ release/MILESTONE_Now.json
 일반적인 게시에는 위의 `milestone-release`를 사용합니다. 아래 수동 절차는 자동화 도구를 복구하거나 디버깅해야 할 때만 참고합니다.
 
 1. 저장소의 `Releases`에서 `Draft a new release`를 선택합니다.
-2. 버전과 동일한 태그를 만듭니다. 예: `v2.2.5`
-3. Release 제목을 `MILESTONE Core v2.2.5`로 지정합니다.
+2. 버전과 동일한 태그를 만듭니다. 예: `v2.2.6`
+3. Release 제목을 `MILESTONE Core v2.2.6`로 지정합니다.
 4. CORE/MEDIA/NOW의 BIN과 JSON 여섯 파일을 모두 첨부합니다.
 5. Pre-release가 아닌 최신 정식 Release로 게시합니다.
-6. 2.2.4 CORE/MEDIA/NOW 기기에서 같은 프로필 2.2.5 OTA, 설정 AP를 유지한 업데이트 확인, 연결된 NOW의 실제 BLE peer 격리, 표지 연속 넘김·열 중단과 기존 설정·Wi-Fi·롤백 보호·진단 이력·커스텀 미디어 보존을 검증합니다.
+6. 2.2.5 CORE/MEDIA/NOW 기기에서 같은 프로필 2.2.6 OTA, 음악 재생 중 자동 확인 연기, 수동 BLE 종료 거부의 bounded 실패와 기존 설정·Wi-Fi·롤백 보호·진단 이력·커스텀 미디어 보존을 검증합니다.
 
 여섯 파일의 이름은 모든 Release에서 정확히 같아야 합니다. 초안이나 Pre-release는 `latest` 업데이트 대상으로 사용하지 않습니다.
 
@@ -400,6 +402,19 @@ Taildrop ZIP의 `milestone-release`가 현재 설치본보다 새로우면, 게�
 - STREAM_MODE에서 일반 백그라운드 기능을 격리하고 PSRAM 240프레임 링버퍼·X/Y dirty-tile OLED 갱신·적응형 출력 주기·프레임 드롭·80°C 스트림 상한으로 영상 수신/표시에 집중
 - 라이브 송신은 96프레임 초기 충전 후 큐 64프레임 이하에서 최대 8프레임씩 144프레임 이상으로 보충하며 ESP32가 소스 시간축과 OLED 출력 클록을 분리해 관리
 - 비차단 3초 부팅 로고와 우상단 NTP `T`·업데이트 `U` 상태 아이콘
+
+## v2.2.6 업데이트 안내
+
+v2.2.6은 NOW에서 음악을 표시하는 동안 업데이트 확인 신호인 파란색 2회 점멸이 계속 반복될 수 있던 상태기계를 수정합니다. Bluetooth 음악 데이터 자체가 LED를 점멸시킨 것이 아니라, 업데이트 확인이 iPhone 종료를 확인하지 못한 채 `CHECKING`에 남아 500ms마다 격리를 재시도한 것이 원인이었습니다.
+
+- 부팅·주간 자동 확인은 실제 NimBLE peer가 연결돼 있으면 `CHECKING`과 LED 점멸에 들어가기 전에 5분 연기
+- 자동 확인 직전에 iPhone이 연결되는 경합도 BLE 종료 거부 시 즉시 정상 상태로 복귀
+- 수동 확인은 2.5초 안의 한 번의 BLE 종료 시도만 허용하고, 실패하면 명확한 오류와 함께 확인 종료
+- Bluetooth 종료 실패의 500ms 무한 재시도 제거
+- 파란색 짧은 2회 점멸은 실제 GitHub Release 확인이 진행되는 동안에만 유지
+- 설정 스키마 10과 CORE/MEDIA/NOW OTA 자산 이름 유지
+
+정식 버전: `2.2.6`
 
 ## v2.2.5 업데이트 안내
 

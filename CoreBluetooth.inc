@@ -846,6 +846,15 @@ bool bluetoothNowPlayingVisible() {
 
 bool bluetoothNowPlayingRuntimeActive() { return bluetoothNowPlaying.initialized && !bluetoothNowPlaying.suspended; }
 bool bluetoothNowPlayingConnected() { return bluetoothNowPlaying.connected; }
+bool bluetoothNowPlayingHasLiveConnection() {
+  if (!bluetoothNowPlaying.initialized) return false;
+  if (bluetoothServer && bluetoothServer->getConnectedCount() > 0) return true;
+  struct ble_gap_conn_desc connection = {};
+  if (bluetoothNowPlaying.connHandle != BLE_HS_CONN_HANDLE_NONE &&
+      ble_gap_conn_find(bluetoothNowPlaying.connHandle, &connection) == 0) return true;
+  return bluetoothEventConnHandle != BLE_HS_CONN_HANDLE_NONE &&
+         ble_gap_conn_find(bluetoothEventConnHandle, &connection) == 0;
+}
 bool bluetoothNowPlayingAmsReady() { return bluetoothNowPlaying.amsReady; }
 bool bluetoothNowPlayingAdvertising() {
   return bluetoothNowPlaying.initialized && !bluetoothNowPlaying.suspended &&
@@ -893,6 +902,7 @@ void processBluetoothNowPlaying() {}
 bool bluetoothNowPlayingVisible() { return false; }
 bool bluetoothNowPlayingRuntimeActive() { return false; }
 bool bluetoothNowPlayingConnected() { return false; }
+bool bluetoothNowPlayingHasLiveConnection() { return false; }
 bool bluetoothNowPlayingAmsReady() { return false; }
 bool bluetoothNowPlayingAdvertising() { return false; }
 const char *bluetoothNowPlayingStage() { return "unsupported"; }

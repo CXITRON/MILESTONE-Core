@@ -54,9 +54,9 @@ Options:
 
 Examples:
   cd /run/media/citron/T7/Documents/Dev/MILESTONE_Core
-  milestone-release local 2.2.5 "Stabilize portal OTA and NOW artwork"
+  milestone-release local 2.2.6 "Defer update checks during NOW playback"
 
-  cd /tmp && milestone-release taildrop 2.2.5 "Stabilize portal OTA and NOW artwork"
+  cd /tmp && milestone-release taildrop 2.2.6 "Defer update checks during NOW playback"
 USAGE
 }
 

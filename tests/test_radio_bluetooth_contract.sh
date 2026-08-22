@@ -18,7 +18,7 @@ reject() {
   fi
 }
 
-require 'FIRMWARE_VERSION\[\] = "2\.2\.5"' MILESTONE_Core.ino 'firmware version is not 2.2.5'
+require 'FIRMWARE_VERSION\[\] = "2\.2\.6"' MILESTONE_Core.ino 'firmware version is not 2.2.6'
 require 'CONFIG_VERSION = 10' MILESTONE_Core.ino 'configuration schema is not 10'
 require 'bool fixedApSecurity = false;' MILESTONE_Core.ino 'fixed AP security must default off'
 require 'String fixedApPassword;' MILESTONE_Core.ino 'fixed AP password setting missing'
@@ -73,6 +73,8 @@ require 'if \(!bluetoothIsolated\)' CoreRuntime.inc 'manifest checks must wait f
 require 'bluetoothDisconnectedEvent && bluetoothEventConnHandle == connHandle' CoreBluetooth.inc 'BLE shutdown must wait for the matching GAP disconnect confirmation'
 require 'getPeerDevices\(false\)' CoreBluetooth.inc 'OTA isolation must inspect NimBLE server peers when app state has not caught up'
 require 'getConnectedCount\(\) == 0' CoreBluetooth.inc 'OTA isolation must verify the live NimBLE connection count'
+require 'bluetoothNowPlayingHasLiveConnection\(\)' CoreBluetooth.inc 'automatic OTA checks need the NimBLE live-link state'
+require 'bluetoothServer->getConnectedCount\(\) > 0' CoreBluetooth.inc 'automatic OTA checks must inspect the NimBLE peer count'
 require 'clearBluetoothPendingEvents\(\)' CoreBluetooth.inc 'stale GAP and AMS events must be cleared after OTA isolation'
 require 'BLE_DISCONNECT_TIMEOUT_MS' CoreBluetooth.inc 'BLE disconnect confirmation must be bounded'
 require 'BLE_SECURITY_TIMEOUT_MS = 15000UL' CoreBluetooth.inc 'BLE security wait must be bounded'

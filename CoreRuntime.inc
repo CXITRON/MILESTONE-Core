@@ -379,6 +379,19 @@ void processFirmwareUpdate() {
     }
 
     const UpdateCheckReason reason = pendingUpdateCheckReason;
+    // Automatic maintenance must never interrupt an active NOW session merely
+    // to ask GitHub whether a release exists. Leave the LED in its normal state
+    // and retry after the phone has had a chance to disconnect naturally.
+    if (reason != UpdateCheckReason::MANUAL && bluetoothNowPlayingHasLiveConnection()) {
+      pendingUpdateCheckReason = UpdateCheckReason::NONE;
+      updateCheckAttempt = 0;
+      updateCheckIndicatorRendered = false;
+      updateError = "";
+      wifiSleepDeferredForUpdate = false;
+      nextUpdateRetryMs = now + UPDATE_BLUETOOTH_DEFER_MS;
+      logLine("automatic firmware check deferred while Bluetooth Now Playing is connected");
+      return;
+    }
     if (updateState != UpdateState::CHECKING) {
       // The HTTPS manifest request is synchronous. Previously CHECKING could be
       // entered and left again before processDisplay() ever sent a frame, so the
@@ -411,8 +424,21 @@ void processFirmwareUpdate() {
       const bool bluetoothIsolated = isolateBluetoothForFirmwareOperation();
       clearFirmwareOperationStage();
       if (!bluetoothIsolated) {
-        updateError = "Bluetooth disconnect pending";
-        updateCheckNotBeforeMs = millis() + 500UL;
+        pendingUpdateCheckReason = UpdateCheckReason::NONE;
+        updateCheckAttempt = 0;
+        updateCheckIndicatorRendered = false;
+        if (reason == UpdateCheckReason::MANUAL) {
+          failFirmwareCheck("Bluetooth 연결을 종료하지 못해 업데이트 확인을 중단했습니다.", true);
+        } else {
+          // A connection can race the automatic pre-check above. Exit CHECKING
+          // immediately instead of retrying BLE isolation forever at 500ms.
+          updateError = "";
+          wifiSleepDeferredForUpdate = false;
+          nextUpdateRetryMs = millis() + UPDATE_BLUETOOTH_DEFER_MS;
+          setUpdateState(UpdateState::IDLE);
+          restoreBluetoothAfterFirmwareOperation();
+          logLine("automatic firmware check deferred after Bluetooth disconnect refusal");
+        }
         return;
       }
       if (updateCheckAttempt < UINT8_MAX) ++updateCheckAttempt;

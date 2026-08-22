@@ -18,11 +18,12 @@ reject() {
   fi
 }
 
-require 'FIRMWARE_VERSION\[\] = "2\.2\.5"' MILESTONE_Core.ino 'firmware version is not 2.2.5'
+require 'FIRMWARE_VERSION\[\] = "2\.2\.6"' MILESTONE_Core.ino 'firmware version is not 2.2.6'
 require 'if \(oledReady && !portalActive && !updateCheckIndicatorRendered\) return;' CoreRuntime.inc 'portal manifest checks can deadlock waiting for the non-portal U icon'
 require 'UPDATE_PORTAL_HTTP_CONNECT_TIMEOUT_MS' CoreUpdate.inc 'portal manifest checks need a bounded connect timeout'
 require 'UPDATE_PORTAL_TLS_HANDSHAKE_TIMEOUT_SEC' CoreUpdate.inc 'portal manifest checks need a bounded TLS timeout'
 require 'UPDATE_CHECK_MAX_ATTEMPTS = 5' MILESTONE_Core.ino 'transient GitHub transport failures need hardware-verified retry headroom'
+require 'UPDATE_BLUETOOTH_DEFER_MS = 5UL \* 60UL \* 1000UL' MILESTONE_Core.ino 'automatic NOW update checks need a bounded connected-session defer interval'
 require 'UPDATE_RELEASE_API_URL' CoreUpdate.inc 'update checks must use the direct GitHub Release API path'
 require 'application/vnd\.github\+json' CoreUpdate.inc 'GitHub Release API media type missing'
 require 'parseJsonStringField\(assetFields, "digest", digest\)' CoreUpdate.inc 'GitHub asset SHA-256 digest is not validated'
@@ -114,5 +115,19 @@ require 'BoundedStringWriter writer\(body, UPDATE_MANIFEST_MAX_BYTES\)' CoreUpda
 reject 'body = http\.getString\(\)' CoreUpdate.inc 'release body must not be fully allocated before its size limit is enforced'
 require 'AbortController' PortalPage.h 'portal API requests need bounded browser recovery'
 require 'onclick="closePortal\(\)"' PortalPage.h 'setup portal needs an explicit close button'
+python3 - <<'PY_BLUETOOTH_UPDATE_DEFER'
+from pathlib import Path
+s = Path('CoreRuntime.inc').read_text()
+start = s.index('void processFirmwareUpdate()')
+end = s.index('\n\nvoid enterThermalSafeMode', start)
+body = s[start:end]
+live_gate = body.index('reason != UpdateCheckReason::MANUAL && bluetoothNowPlayingHasLiveConnection()')
+checking = body.index('setUpdateState(UpdateState::CHECKING)', live_gate)
+assert live_gate < checking, 'automatic Bluetooth defer must happen before CHECKING LED state'
+failure = body.index('if (!bluetoothIsolated)', checking)
+manual_exit = body.index('failFirmwareCheck("Bluetooth 연결을 종료하지 못해 업데이트 확인을 중단했습니다.", true)', failure)
+assert 'updateCheckNotBeforeMs = millis() + 500UL' not in body[failure:manual_exit + 200]
+assert failure < manual_exit, 'manual BLE refusal must leave CHECKING through a bounded failure path'
+PY_BLUETOOTH_UPDATE_DEFER
 
 echo "Network stability contract test passed"
