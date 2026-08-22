@@ -1025,16 +1025,26 @@ void drawNowArtworkPlaceholder(uint8_t x, uint8_t y, uint8_t size) {
   display.drawFrame(x, y, size, size);
   display.drawLine(x, y, x + size - 1, y + size - 1);
   display.drawLine(x + size - 1, y, x, y + size - 1);
-  display.setFont(u8g2_font_5x8_tf);
   String state = nowArtworkStatus();
   state.toUpperCase();
-  if (state.length() > 15) state = state.substring(0, 15);
-  const int width = display.getStrWidth(state.c_str());
+  display.setFont(u8g2_font_5x8_tf);
+  int width = display.getStrWidth(state.c_str());
+  if (width > static_cast<int>(size) - 4) {
+    display.setFont(u8g2_font_4x6_tf);
+    width = display.getStrWidth(state.c_str());
+  }
+  while (state.length() > 1 && width > static_cast<int>(size) - 4) {
+    state.remove(state.length() - 1);
+    width = display.getStrWidth(state.c_str());
+  }
+  const int ascent = display.getAscent();
+  const int descent = display.getDescent();
+  const int baseline = y + size / 2 + (ascent + descent) / 2;
+  const int textX = x + (static_cast<int>(size) - width) / 2;
   display.setDrawColor(0);
-  display.drawBox(x + 1, y + size / 2 - 5, size - 2, 10);
+  display.drawBox(x + 1, baseline - ascent - 1, size - 2, ascent - descent + 2);
   display.setDrawColor(1);
-  display.drawStr(x + max(1, (static_cast<int>(size) - width) / 2), y + size / 2 + 3,
-                  state.c_str());
+  display.drawStr(textX, baseline, state.c_str());
 }
 
 void drawBluetoothNowPlayingScreen() {

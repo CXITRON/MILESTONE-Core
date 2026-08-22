@@ -54,9 +54,9 @@ Options:
 
 Examples:
   cd /run/media/citron/T7/Documents/Dev/MILESTONE_Core
-  milestone-release local 2.2.6 "Defer update checks during NOW playback"
+  milestone-release local 2.2.7 "Harden NOW artwork network lookup"
 
-  cd /tmp && milestone-release taildrop 2.2.6 "Defer update checks during NOW playback"
+  cd /tmp && milestone-release taildrop 2.2.7 "Harden NOW artwork network lookup"
 USAGE
 }
 
