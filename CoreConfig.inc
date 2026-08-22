@@ -353,7 +353,11 @@ bool loadConfig() {
   }
   const uint8_t storedNowLayout = prefs.getUChar(
       "now_layout", static_cast<uint8_t>(NowLayout::TITLE_ARTIST));
-  config.nowLayout = storedNowLayout <= static_cast<uint8_t>(NowLayout::ARTWORK_ONLY)
+  // Layout value 2 was the removed album-name screen. Keep the numeric value
+  // reserved for rollback compatibility, but normalize it in RAM so no current
+  // build can render or cycle into that screen.
+  config.nowLayout = storedNowLayout <= static_cast<uint8_t>(NowLayout::ARTWORK_ONLY) &&
+                             storedNowLayout != static_cast<uint8_t>(NowLayout::TITLE_ARTIST_ALBUM)
       ? static_cast<NowLayout>(storedNowLayout) : NowLayout::TITLE_ARTIST;
   config.brightness = clampInt(prefs.getUChar("bright", 180), 1, 255);
   config.nightLevel = clampInt(prefs.getUChar("night_lvl", 45), 1, 255);

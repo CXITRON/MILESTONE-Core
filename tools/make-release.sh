@@ -3,7 +3,7 @@ set -euo pipefail
 
 if (( $# < 1 || $# > 2 )); then
   echo "사용법: $0 VERSION [NOTES]" >&2
-  echo "예: $0 2.2.2 'Harden NOW artwork and thermal policy'" >&2
+  echo "예: $0 2.2.3 'Fix NOW artwork settling and remove album layout'" >&2
   exit 2
 fi
 

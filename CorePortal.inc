@@ -661,6 +661,7 @@ void handlePostNowConfig() {
   if (!server.hasArg("layout")) return sendJson(400, "{\"error\":\"NOW 표시 구성이 누락되었습니다.\"}");
   const int layout = server.arg("layout").toInt();
   if (layout < 0 || layout > static_cast<int>(NowLayout::ARTWORK_ONLY) ||
+      layout == static_cast<int>(NowLayout::TITLE_ARTIST_ALBUM) ||
       String(layout) != server.arg("layout")) {
     return sendJson(400, "{\"error\":\"NOW 표시 구성 값이 올바르지 않습니다.\"}");
   }
@@ -675,6 +676,18 @@ void handlePostNowConfig() {
   sendJson(200, "{\"ok\":true}");
 }
 #endif
+
+void handlePortalClose() {
+  if (!authorizePortalRequest()) return;
+  if (mediaStreamActive || firmwareUpdateBusy() || ntpRequestActive ||
+      wifiTestState == WifiTestState::CONNECTING ||
+      wifiTestState == WifiTestState::TIME_SYNCING || portalWifiScanActive) {
+    return sendJson(409, "{\"error\":\"진행 중인 네트워크 작업이 끝난 뒤 설정을 종료하세요.\"}");
+  }
+  portalCloseRequested = true;
+  portalCloseNotBeforeMs = millis() + PORTAL_CLOSE_RESPONSE_HOLD_MS;
+  sendJson(202, "{\"ok\":true,\"closing\":true}");
+}
 
 void handlePostRadioConfig() {
   if (!authorizePortalRequest()) return;
@@ -1414,6 +1427,7 @@ void registerPortalRoutes() {
   server.on("/api/update/check", HTTP_POST, handleUpdateCheck);
   server.on("/api/profile/switch", HTTP_POST, handleProfileSwitch);
   server.on("/api/update/install", HTTP_POST, handleUpdateInstall);
+  server.on("/api/portal/close", HTTP_POST, handlePortalClose);
   server.on("/api/settings/reset", HTTP_POST, handleSettingsReset);
   server.on("/api/reset", HTTP_POST, handleFactoryReset);
   server.on("/generate_204", HTTP_GET, handlePortalRoot);

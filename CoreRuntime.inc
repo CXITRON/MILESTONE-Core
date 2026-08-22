@@ -116,6 +116,10 @@ void processNetwork() {
     // idle timeout. Re-sample after portal service before making timeout
     // decisions.
     const uint32_t portalNow = millis();
+    if (portalCloseRequested && deadlineReached(portalNow, portalCloseNotBeforeMs)) {
+      stopPortal();
+      return;
+    }
     // A live stream owns the setup AP session and suppresses the normal idle
     // timeout. The browser that is feeding frames must not lose the AP.
     const bool streamPinsPortal = mediaStreamActive || mediaStreamRawActive;
@@ -681,8 +685,15 @@ void advanceView(bool persist) {
 void advanceNowLayout() {
 #if MILESTONE_HAS_NOW_VIEW
   const Config previous = config;
-  const uint8_t next = (static_cast<uint8_t>(config.nowLayout) + 1U) % 5U;
-  config.nowLayout = static_cast<NowLayout>(next);
+  static constexpr NowLayout layouts[] = {
+      NowLayout::TITLE_ONLY, NowLayout::TITLE_ARTIST,
+      NowLayout::TITLE_ARTWORK, NowLayout::ARTWORK_ONLY};
+  uint8_t current = 0;
+  for (uint8_t i = 0; i < sizeof(layouts) / sizeof(layouts[0]); ++i) {
+    if (layouts[i] == config.nowLayout) { current = i; break; }
+  }
+  const uint8_t next = (current + 1U) % (sizeof(layouts) / sizeof(layouts[0]));
+  config.nowLayout = layouts[next];
   if (!saveGeneralConfig()) {
     config = previous;
     logLine("NOW layout change could not be persisted");
@@ -690,7 +701,7 @@ void advanceNowLayout() {
   }
   scrollStartedMs = millis();
   wakeDisplay();
-  logLine(String("NOW layout -> ") + String(next));
+  logLine(String("NOW layout -> ") + String(static_cast<uint8_t>(config.nowLayout)));
 #endif
 }
 

@@ -18,7 +18,7 @@ reject() {
   fi
 }
 
-require 'FIRMWARE_VERSION\[\] = "2\.2\.2"' MILESTONE_Core.ino 'firmware version is not 2.2.2'
+require 'FIRMWARE_VERSION\[\] = "2\.2\.3"' MILESTONE_Core.ino 'firmware version is not 2.2.3'
 require 'if \(oledReady && !portalActive && !updateCheckIndicatorRendered\) return;' CoreRuntime.inc 'portal manifest checks can deadlock waiting for the non-portal U icon'
 require 'UPDATE_PORTAL_HTTP_CONNECT_TIMEOUT_MS' CoreUpdate.inc 'portal manifest checks need a bounded connect timeout'
 require 'UPDATE_PORTAL_TLS_HANDSHAKE_TIMEOUT_SEC' CoreUpdate.inc 'portal manifest checks need a bounded TLS timeout'
@@ -106,5 +106,9 @@ reject 'PORTAL_SUCCESS_HOLD_MS' MILESTONE_Core.ino 'obsolete post-success AP shu
 require 'id="wifi_scan_btn"' PortalPage.h 'portal scan button needs an explicit busy state'
 require '설정 AP는 그대로 유지됩니다' PortalPage.h 'empty scan result must explain that setup AP remains available'
 require 'lastError' PortalPage.h 'browser scan polling must tolerate transient AP packet loss'
+require 'server\.on\("/api/portal/close", HTTP_POST, handlePortalClose\)' CorePortal.inc 'explicit setup portal close API missing'
+require 'PORTAL_CLOSE_RESPONSE_HOLD_MS = 750UL' MILESTONE_Core.ino 'portal close must leave time for its HTTP response'
+require 'portalCloseRequested && deadlineReached\(portalNow, portalCloseNotBeforeMs\)' CoreRuntime.inc 'portal close request is not processed after HTTP service'
+require 'onclick="closePortal\(\)"' PortalPage.h 'setup portal needs an explicit close button'
 
 echo "Network stability contract test passed"

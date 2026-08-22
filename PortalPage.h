@@ -61,10 +61,10 @@ R"HTML(
 #if MILESTONE_HAS_NOW_VIEW
 R"HTML(
 <section id="now_layout_card" class="card"><h2>NOW 표시</h2><div class="grid">
-<div class="full"><label>BOOT 짧게 누르기 / 기본 표시 구성</label><select id="now_layout"><option value="0">곡명만</option><option value="1">곡명 + 아티스트</option><option value="2">곡명 + 아티스트 + 앨범명</option><option value="3">곡명 + 앨범 표지</option><option value="4">앨범 표지 중심</option></select></div>
+<div class="full"><label>BOOT 짧게 누르기 / 기본 표시 구성</label><select id="now_layout"><option value="0">곡명만</option><option value="1">곡명 + 아티스트</option><option value="3">곡명 + 앨범 표지</option><option value="4">앨범 표지 중심</option></select></div>
 <div class="full"><button class="primary" onclick="saveNowLayout()">NOW 표시 저장</button></div>
 <div id="now_layout_status" class="status full">NOW 표시 설정을 불러오는 중…</div>
-<div class="full"><small>모든 구성에 재생 상태, 진행 막대와 재생/전체 시간이 표시됩니다. BOOT 버튼을 1초 미만으로 누르면 다섯 구성이 차례로 바뀝니다. 표지는 저장된 Wi-Fi를 통해 MusicBrainz와 Cover Art Archive에서 직접 조회하며, 찾지 못해도 제목·진행률 표시는 계속 동작합니다.</small></div>
+<div class="full"><small>모든 구성에 재생 상태, 진행 막대와 재생/전체 시간이 표시됩니다. BOOT 버튼을 1초 미만으로 누르면 네 구성이 차례로 바뀝니다. 표지는 저장된 Wi-Fi를 통해 MusicBrainz와 Cover Art Archive에서 직접 조회하며, 찾지 못해도 제목·진행률 표시는 계속 동작합니다.</small></div>
 </div></section>
 )HTML"
 #endif
@@ -157,7 +157,7 @@ R"HTML(
 )HTML"
 #endif
 R"HTML(
-<div><button class="danger" onclick="factoryReset()">공장 초기화</button><p><small>저장된 Wi-Fi를 포함한 모든 데이터를 삭제하고 재부팅합니다.</small></p></div></div></section>
+<div><button onclick="closePortal()">설정 종료</button><p><small>설정 AP를 닫고 저장된 Wi-Fi의 일반 동작으로 돌아갑니다.</small></p></div><div><button class="danger" onclick="factoryReset()">공장 초기화</button><p><small>저장된 Wi-Fi를 포함한 모든 데이터를 삭제하고 재부팅합니다.</small></p></div></div></section>
 </main><script>
 let wifiPolling=false,timeSyncPolling=false,updateActionPolling=false,installConfirmArmed=false,installConfirmTimer=0,installConfirmTarget='',installRequestPending=false;
 )HTML"
@@ -260,6 +260,7 @@ async function checkUpdate(){setStatus('저장된 Wi-Fi 연결과 시간 확인 
 async function switchProfile(){const profile=val('profile_target');setStatus(`${profile.toUpperCase()} 전환을 위해 저장된 Wi-Fi와 최신 Release를 확인합니다…`);try{const d=await api('/api/profile/switch',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:form({profile})});updateActionPolling=true;$('profile_status').textContent=d.state==='reconnecting'?`${profile.toUpperCase()} 전환 준비 · 저장된 Wi-Fi에 자동 연결 중…`:`${profile.toUpperCase()} Release 확인 중… 완료되면 ESP32 BOOT 버튼으로 확정합니다.`;setTimeout(refresh,700)}catch(e){updateActionPolling=false;setStatus(e.message,'bad')}}
 async function installUpdate(){const b=$('install_update');if(b.disabled)return;if(!installConfirmArmed){const status=await api('/api/status');installConfirmTarget=status.latest_firmware&&status.latest_profile?`${status.latest_firmware}@${status.latest_profile}`:'';if(!installConfirmTarget)return setStatus('설치 대상을 다시 확인하세요.','bad');installConfirmArmed=true;b.classList.add('install-armed');b.textContent=`2/2 · ${(status.latest_profile||'').toUpperCase()} 설치 확정`;setStatus(`${installConfirmTarget.toUpperCase()} 설치 확인 1/2 완료 · 8초 이내에 같은 버튼을 다시 눌러 확정하세요.`);installConfirmTimer=setTimeout(()=>{resetInstallConfirm();setStatus('설치 확인 시간이 만료되었습니다. 다시 1단계부터 진행하세요.')},8000);return}const confirmedTarget=installConfirmTarget;resetInstallConfirm();installRequestPending=true;b.disabled=true;b.textContent='설치 요청 처리 중…';setStatus(`${confirmedTarget.toUpperCase()} 설치 확인 2/2 완료 · 요청을 전송합니다.`,'ok');try{const d=await api('/api/update/install',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:form({confirm:confirmedTarget})});if(d.state==='reconnecting'){setStatus('설치 확인 완료 · 저장된 Wi-Fi와 NTP 연결 후 자동으로 설치를 계속합니다. 다시 누를 필요가 없습니다.','ok');setTimeout(refresh,700)}else{setStatus('설치 요청이 접수되었습니다. 곧 다운로드를 시작하며, 이후 포털 응답이 잠시 멈출 수 있습니다. OLED에서 진행률을 확인해 주세요.','ok');setTimeout(refresh,400)}}catch(e){installRequestPending=false;resetInstallConfirm();setStatus(e.message,'bad');setTimeout(refresh,500)}}
 async function exportConfig(){try{const c=await api('/api/config');const e=$('export');e.hidden=false;e.value=JSON.stringify(c,null,2)}catch(e){setStatus(e.message,'bad')}}
+async function closePortal(){if(!confirm('설정 AP를 종료하고 NOW 화면으로 돌아가시겠습니까?'))return;setStatus('설정 종료 요청을 전송합니다…');try{await api('/api/portal/close',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:form({})});setStatus('설정 AP를 종료합니다. 휴대폰은 기존 Wi-Fi 또는 모바일 네트워크로 돌아갑니다.','ok')}catch(e){setStatus(e.message,'bad')}}
 async function resetSettings(){if(!confirm('저장된 Wi-Fi는 유지하고 화면·시간·LED·AP 보안·Bluetooth 설정을 기본값으로 복원하시겠습니까?'))return;try{await api('/api/settings/reset',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:form({confirm:'DEFAULTS'})});await load();setStatus('일반 설정을 기본값으로 복원했습니다. 저장된 Wi-Fi는 유지됩니다.','ok')}catch(e){setStatus(e.message,'bad')}}
 async function factoryReset(){if(prompt('초기화하려면 RESET을 입력하세요.')!=='RESET')return;try{await api('/api/reset',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:form({confirm:'RESET'})});setStatus('초기화 중입니다. 기기가 재부팅됩니다.','ok')}catch(e){setStatus(e.message,'bad')}}
 rangePairs.forEach(p=>bindRangePair(...p));

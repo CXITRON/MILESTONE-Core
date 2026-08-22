@@ -76,7 +76,7 @@ SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 
 namespace Milestone {
 
-constexpr char FIRMWARE_VERSION[] = "2.2.2";
+constexpr char FIRMWARE_VERSION[] = "2.2.3";
 constexpr char FIRMWARE_PROFILE[] = MILESTONE_FIRMWARE_PROFILE;
 constexpr char FIRMWARE_PROFILE_LABEL[] = MILESTONE_FIRMWARE_PROFILE_LABEL;
 constexpr char FIRMWARE_PROFILE_MARKER[] = MILESTONE_PROFILE_MARKER;
@@ -123,6 +123,7 @@ constexpr uint8_t NTP_SERVER_COUNT = sizeof(NTP_SERVERS) / sizeof(NTP_SERVERS[0]
 constexpr uint32_t NTP_TIMEOUT_MS = NTP_SERVER_ATTEMPT_MS * NTP_SERVER_COUNT;
 constexpr uint32_t PORTAL_RADIO_HEALTH_MS = 1000UL;
 constexpr uint32_t PORTAL_RADIO_RECOVERY_COOLDOWN_MS = 2000UL;
+constexpr uint32_t PORTAL_CLOSE_RESPONSE_HOLD_MS = 750UL;
 constexpr uint32_t DISPLAY_REFRESH_MS = 250UL;
 constexpr uint32_t BUTTON_DISPLAY_REFRESH_MS = 250UL;
 constexpr uint32_t BUTTON_DEBOUNCE_MS = 30UL;
@@ -366,6 +367,7 @@ uint8_t currentCycleIndex = 0;
 uint8_t oledAddress = 0;
 bool oledReady = false;
 bool portalActive = false;
+bool portalCloseRequested = false;
 bool mdnsActive = false;
 bool ntpRequestActive = false;
 bool displaySleeping = false;
@@ -442,6 +444,7 @@ uint32_t stateStartedMs = 0;
 uint32_t bootSplashStartedMs = 0;
 uint32_t deviceInfoStartedMs = 0;
 uint32_t portalStartedMs = 0;
+uint32_t portalCloseNotBeforeMs = 0;
 uint32_t lastPortalRadioHealthMs = 0;
 uint32_t lastPortalRadioRecoveryMs = 0;
 uint32_t wifiDeadlineMs = 0;

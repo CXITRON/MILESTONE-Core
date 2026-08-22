@@ -421,11 +421,26 @@ void processNowArtwork() {
       nowArtworkState = "cached";
     }
   }
-  if (!nowArtworkLayoutUsesImage() || !nowArtworkTrackKey || nowArtworkVisibleKey == nowArtworkTrackKey ||
-      nowArtworkWorkerRunning || portalActive || firmwareTransferActive() || updateState == UpdateState::CHECKING ||
-      !deadlineReached(millis(), nowArtworkTrackChangedMs + NOW_ART_TRACK_SETTLE_MS) ||
-      (nowArtworkRetryAtMs && !deadlineReached(millis(), nowArtworkRetryAtMs)) ||
-      !deadlineReached(millis(), nowArtworkNextRequestMs)) return;
+  if (!nowArtworkLayoutUsesImage() || !nowArtworkTrackKey ||
+      nowArtworkVisibleKey == nowArtworkTrackKey || nowArtworkWorkerRunning) return;
+  const uint32_t now = millis();
+  if (!deadlineReached(now, nowArtworkTrackChangedMs + NOW_ART_TRACK_SETTLE_MS)) {
+    nowArtworkState = "settling";
+    return;
+  }
+  const bool portalStationStable = stationNetworkReady() &&
+      wifiTestState == WifiTestState::IDLE && !portalWifiScanActive &&
+      !savedWifiScanActive && !ntpRequestActive && !portalCloseRequested;
+  if (portalActive && !portalStationStable) {
+    nowArtworkState = "portal-paused";
+    return;
+  }
+  if (firmwareTransferActive() || updateState == UpdateState::CHECKING) {
+    nowArtworkState = "ota-paused";
+    return;
+  }
+  if ((nowArtworkRetryAtMs && !deadlineReached(now, nowArtworkRetryAtMs)) ||
+      !deadlineReached(now, nowArtworkNextRequestMs)) return;
   if (!stationNetworkReady()) {
     nowArtworkState = "waiting-wifi";
     if (config.savedNetworkCount > 0 && !portalActive &&

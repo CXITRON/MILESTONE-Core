@@ -1046,7 +1046,6 @@ void drawBluetoothNowPlayingScreen() {
 
   const String title = bluetoothNowPlayingTitle();
   const String artist = bluetoothNowPlayingArtist();
-  const String album = bluetoothNowPlayingAlbum();
   switch (config.nowLayout) {
     case NowLayout::TITLE_ONLY:
       setNowPlayingTextFont(title);
@@ -1054,20 +1053,12 @@ void drawBluetoothNowPlayingScreen() {
       drawNowPlayingProgress(87, 118);
       break;
     case NowLayout::TITLE_ARTIST:
+    case NowLayout::TITLE_ARTIST_ALBUM:  // Removed legacy value; render safe fallback.
       setNowPlayingTextFont(title);
       drawScrollingUtf8(title, 48, 2, 124, true, 2);
       setNowPlayingTextFont(artist);
       drawScrollingUtf8(artist, 73, 2, 124, true);
       drawNowPlayingProgress(87, 118);
-      break;
-    case NowLayout::TITLE_ARTIST_ALBUM:
-      setNowPlayingTextFont(title);
-      drawScrollingUtf8(title, 40, 2, 124, true, 2);
-      setNowPlayingTextFont(artist);
-      drawScrollingUtf8(artist, 64, 2, 124, true);
-      setNowPlayingTextFont(album);
-      drawScrollingUtf8(album.length() ? album : String("-"), 81, 2, 124, true);
-      drawNowPlayingProgress(90, 118);
       break;
     case NowLayout::TITLE_ARTWORK: {
       const uint8_t *art = nowArtworkSmallBitmap();
