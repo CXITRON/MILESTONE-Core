@@ -86,16 +86,22 @@ void processNetwork() {
     }
     dnsServer.processNextRequest();
     server.handleClient();
+    // An authenticated handler can refresh portalStartedMs. The loop-level
+    // `now` was captured before handleClient(), so comparing that older value
+    // with the refreshed timestamp underflows and falsely looks like a full
+    // idle timeout. Re-sample after portal service before making timeout
+    // decisions.
+    const uint32_t portalNow = millis();
     // A live stream owns the setup AP session and suppresses the normal idle
     // timeout. The browser that is feeding frames must not lose the AP.
     const bool streamPinsPortal = mediaStreamActive || mediaStreamRawActive;
     if (streamPinsPortal) {
-      portalStartedMs = now;
+      portalStartedMs = portalNow;
     }
     if (!streamPinsPortal &&
         wifiTestState != WifiTestState::CONNECTING &&
         wifiTestState != WifiTestState::TIME_SYNCING &&
-        elapsed(now, portalStartedMs, AP_TIMEOUT_MS)) {
+        elapsed(portalNow, portalStartedMs, AP_TIMEOUT_MS)) {
       stopPortal();
       return;
     }
@@ -129,6 +135,9 @@ void processNetwork() {
     } else if (ntpSyncEvent && timeIsValid()) {
       ntpSyncEvent = false;
       finishWifiTestSuccess();
+    } else if (advanceNtpServerIfDue(now)) {
+      // Keep servicing the setup portal while the next independent provider
+      // receives its bounded opportunity to answer.
     } else if (deadlineReached(now, ntpDeadlineMs)) {
       stopNtpService();
       recordDiagnostic(MilestoneDiagnostics::Event::NTP_TIMEOUT);
@@ -197,6 +206,8 @@ void processNetwork() {
     } else if (ntpSyncEvent && timeIsValid()) {
       ntpSyncEvent = false;
       finishNormalNtpSuccess();
+    } else if (advanceNtpServerIfDue(now)) {
+      // The display/runtime stays responsive between bounded server attempts.
     } else if (deadlineReached(now, ntpDeadlineMs)) {
       stopNtpService();
       finishPortalTimeSyncTracking(false, "NTP 응답 시간이 초과되었습니다.");

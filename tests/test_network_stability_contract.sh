@@ -18,10 +18,12 @@ reject() {
   fi
 }
 
-require 'FIRMWARE_VERSION\[\] = "2\.0\.4"' MILESTONE_Core.ino 'firmware version is not 2.0.4'
+require 'FIRMWARE_VERSION\[\] = "2\.0\.5"' MILESTONE_Core.ino 'firmware version is not 2.0.5'
 require 'if \(oledReady && !portalActive && !updateCheckIndicatorRendered\) return;' CoreRuntime.inc 'portal manifest checks can deadlock waiting for the non-portal U icon'
 require 'UPDATE_PORTAL_HTTP_CONNECT_TIMEOUT_MS' CoreUpdate.inc 'portal manifest checks need a bounded connect timeout'
 require 'UPDATE_PORTAL_TLS_HANDSHAKE_TIMEOUT_SEC' CoreUpdate.inc 'portal manifest checks need a bounded TLS timeout'
+require 'const uint32_t portalNow = millis\(\);' CoreRuntime.inc 'portal timeout must re-sample time after request handlers'
+require 'elapsed\(portalNow, portalStartedMs, AP_TIMEOUT_MS\)' CoreRuntime.inc 'portal timeout still compares an older loop timestamp with refreshed activity'
 python3 - <<'PY_PORTAL_UPDATE_ORDER'
 from pathlib import Path
 s = Path('CoreRuntime.inc').read_text()
@@ -33,6 +35,17 @@ isolate = body.index('isolateBluetoothForFirmwareOperation();', gate)
 attempt = body.index('++updateCheckAttempt', isolate)
 assert gate < isolate < attempt, 'BLE isolation must start only after the portal-safe display gate'
 PY_PORTAL_UPDATE_ORDER
+python3 - <<'PY_PORTAL_TIMEOUT_ORDER'
+from pathlib import Path
+s = Path('CoreRuntime.inc').read_text()
+start = s.index('void processNetwork()')
+end = s.index('\n\nvoid processFirmwareUpdate()', start)
+body = s[start:end]
+handled = body.index('server.handleClient();')
+resampled = body.index('const uint32_t portalNow = millis();', handled)
+checked = body.index('elapsed(portalNow, portalStartedMs, AP_TIMEOUT_MS)', resampled)
+assert handled < resampled < checked, 'portal activity time must be sampled after request handlers and before idle timeout'
+PY_PORTAL_TIMEOUT_ORDER
 require '#include <esp_wifi\.h>' MILESTONE_Core.ino 'low-level Wi-Fi scan control header missing'
 require 'WIFI_PRIMARY_CONNECT_TIMEOUT_MS = 12UL \* 1000UL' MILESTONE_Core.ino 'primary saved-network timeout was not shortened'
 require 'WIFI_PORTAL_TEST_CONNECT_TIMEOUT_MS = 15UL \* 1000UL' MILESTONE_Core.ino 'portal test timeout bound missing'
@@ -57,6 +70,9 @@ require 'setup AP remains active' CorePortal.inc 'successful Wi-Fi test must kee
 require 'MILESTONE 설정 AP는 계속 유지됩니다' PortalPage.h 'portal must confirm that AP remains after provisioning'
 require 'bool beginNtpRequest\(\)' CoreNetwork.inc 'NTP start must report whether the network was ready'
 require 'stopNtpService\(\)' CoreNetwork.inc 'bounded NTP cleanup helper missing'
+require 'NTP_SERVER_ATTEMPT_MS = 10UL \* 1000UL' MILESTONE_Core.ino 'NTP per-server failover bound missing'
+require 'advanceNtpServerIfDue\(now\)' CoreRuntime.inc 'runtime does not advance an unresponsive NTP provider'
+require 'configTzTime\(TZ_INFO, NTP_SERVERS\[ntpServerIndex\], nullptr, nullptr\)' CoreNetwork.inc 'NTP must isolate each provider from lwIP fixed failover delays'
 require 'time_sync_pending' CorePortal.inc 'manual time-sync progress state missing from status API'
 require 'timeSyncPolling' PortalPage.h 'manual time-sync UI must poll through completion'
 require 'pendingUpdateCheckReason != UpdateCheckReason::MANUAL' CoreRuntime.inc 'automatic update checks must defer while setup portal is active'

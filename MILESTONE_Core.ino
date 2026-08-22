@@ -73,7 +73,7 @@ SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 
 namespace Milestone {
 
-constexpr char FIRMWARE_VERSION[] = "2.0.4";
+constexpr char FIRMWARE_VERSION[] = "2.0.5";
 constexpr char FIRMWARE_PROFILE[] = MILESTONE_FIRMWARE_PROFILE;
 constexpr char FIRMWARE_PROFILE_LABEL[] = MILESTONE_FIRMWARE_PROFILE_LABEL;
 constexpr char FIRMWARE_PROFILE_MARKER[] = MILESTONE_PROFILE_MARKER;
@@ -105,11 +105,19 @@ constexpr uint32_t WIFI_PORTAL_TEST_CONNECT_TIMEOUT_MS = 15UL * 1000UL;
 constexpr uint32_t WIFI_DRIVER_SETTLE_MS = 100UL;
 constexpr uint32_t WIFI_IP_STABLE_MS = 750UL;
 constexpr uint32_t WIFI_QUICK_RETRY_MS = 15UL * 1000UL;
-// SNTP may wait about 15 seconds before falling back from an unresponsive
-// server. Keep the request alive long enough to use all configured servers;
-// the OLED leaves the boot splash independently, so this does not extend the
-// visible boot sequence.
-constexpr uint32_t NTP_TIMEOUT_MS = 60UL * 1000UL;
+// Arduino-ESP32's bundled lwIP waits 15 seconds for each unresponsive SNTP
+// server. Own the failover cadence so one dead endpoint cannot make a normal
+// synchronization take close to a minute. Each fresh SNTP start can add up to
+// five seconds of randomized startup delay, leaving another five seconds for
+// DNS and the UDP reply before advancing to the next independent provider.
+constexpr uint32_t NTP_SERVER_ATTEMPT_MS = 10UL * 1000UL;
+constexpr const char *NTP_SERVERS[] = {
+  "time.cloudflare.com",
+  "time.google.com",
+  "pool.ntp.org",
+};
+constexpr uint8_t NTP_SERVER_COUNT = sizeof(NTP_SERVERS) / sizeof(NTP_SERVERS[0]);
+constexpr uint32_t NTP_TIMEOUT_MS = NTP_SERVER_ATTEMPT_MS * NTP_SERVER_COUNT;
 constexpr uint32_t PORTAL_RADIO_HEALTH_MS = 1000UL;
 constexpr uint32_t PORTAL_RADIO_RECOVERY_COOLDOWN_MS = 2000UL;
 constexpr uint32_t DISPLAY_REFRESH_MS = 250UL;
@@ -407,6 +415,8 @@ uint32_t diagnosticBootValidationStartedMs = 0;
 uint32_t wifiConnectionStartedMs = 0;
 volatile uint16_t lastWifiDisconnectReason = 0;
 uint32_t ntpRequestStartedMs = 0;
+uint32_t ntpServerDeadlineMs = 0;
+uint8_t ntpServerIndex = 0;
 float highestChipTemperatureC = NAN;
 
 uint32_t stateStartedMs = 0;

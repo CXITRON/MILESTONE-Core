@@ -42,7 +42,29 @@ void stopNtpService() {
   ntpRequestActive = false;
   ntpSyncEvent = false;
   ntpRequestStartedMs = 0;
+  ntpServerDeadlineMs = 0;
+  ntpServerIndex = 0;
   ntpDeadlineMs = 0;
+}
+
+void startCurrentNtpServer(uint32_t now) {
+  // Configure one endpoint at a time. Passing all three to lwIP leaves each
+  // failed endpoint in control for its fixed 15-second receive timeout.
+  configTzTime(TZ_INFO, NTP_SERVERS[ntpServerIndex], nullptr, nullptr);
+  ntpServerDeadlineMs = now + NTP_SERVER_ATTEMPT_MS;
+  logLine(String("NTP server ") + String(ntpServerIndex + 1) + "/" +
+          String(NTP_SERVER_COUNT) + " started: " + NTP_SERVERS[ntpServerIndex]);
+}
+
+bool advanceNtpServerIfDue(uint32_t now) {
+  if (!ntpRequestActive || ntpSyncEvent ||
+      !deadlineReached(now, ntpServerDeadlineMs) ||
+      ntpServerIndex + 1 >= NTP_SERVER_COUNT) {
+    return false;
+  }
+  ++ntpServerIndex;
+  startCurrentNtpServer(now);
+  return true;
 }
 
 void finishPortalTimeSyncTracking(bool success, const String &error = "") {
@@ -72,7 +94,8 @@ bool beginNtpRequest() {
   ntpRequestActive = true;
   ntpRequestStartedMs = millis();
   ntpDeadlineMs = ntpRequestStartedMs + NTP_TIMEOUT_MS;
-  configTzTime(TZ_INFO, "time.google.com", "pool.ntp.org", "time.cloudflare.com");
+  ntpServerIndex = 0;
+  startCurrentNtpServer(ntpRequestStartedMs);
   logLine("NTP request started");
   return true;
 }

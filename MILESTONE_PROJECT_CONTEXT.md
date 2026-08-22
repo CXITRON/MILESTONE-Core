@@ -1,6 +1,6 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v2.0.4
+> Current baseline: MILESTONE Core v2.0.5
 > Hardware: Waveshare ESP32-S3-Zero + SH1107 128×128 OLED
 > Repository: `CXITRON/MILESTONE-Core`
 
@@ -89,7 +89,7 @@ The `*.inc` runtime files are intentionally included into the sketch as one tran
 Firmware and persistent schema versions are separate concepts.
 
 ```cpp
-FIRMWARE_VERSION = "2.0.4"
+FIRMWARE_VERSION = "2.0.5"
 CONFIG_VERSION = 10
 ```
 
@@ -135,7 +135,7 @@ The portal UI tolerates transient HTTP loss while the single ESP32-S3 radio is o
 
 A successful portal Wi-Fi/NTP test keeps the setup AP and browser session active instead of arming the former three-second shutdown. The connected STA may provide internet concurrently while the user completes the remaining settings; only the normal 10-minute idle timeout or a safety/runtime stop closes the portal. While the portal is active, the runtime also checks the AP radio mode and SoftAP IP once per second. If another radio transition unexpectedly removes the AP, recovery reasserts AP+STA mode, restarts the configured SoftAP, and rebinds captive DNS with a bounded retry cadence.
 
-Manual time synchronization has an explicit portal-visible pending/result state and is polled until success or failure. Each bounded request restarts lwIP SNTP for a fresh callback, then stops it after completion so the configured manual/periodic cadence remains authoritative and stale callbacks cannot satisfy a later request. STREAM_MODE cannot begin during NTP, and automatic boot/weekly manifest checks are deferred while the setup portal is active so a completed time sync does not immediately block the captive portal with synchronous HTTPS work.
+Manual time synchronization has an explicit portal-visible pending/result state and is polled until success or failure. Each bounded request restarts lwIP SNTP for a fresh callback, then stops it after completion so the configured manual/periodic cadence remains authoritative and stale callbacks cannot satisfy a later request. v2.0.5 configures one independent NTP provider at a time and advances after 10 seconds instead of inheriting lwIP's fixed 15-second receive delay for every unresponsive server; three providers therefore complete or fail within 30 seconds. STREAM_MODE cannot begin during NTP, and automatic boot/weekly manifest checks are deferred while the setup portal is active so a completed time sync does not immediately block the captive portal with synchronous HTTPS work.
 
 ### Bluetooth advertising recovery and diagnostics (v1.11.2)
 
@@ -148,6 +148,8 @@ BLE stack initialization is not treated as proof that the device is advertising.
 v2.0.3 isolates optional CORE Bluetooth before manifest TLS and firmware download work. The NimBLE stack is deinitialized before the OTA memory guard so its internal RAM is available for TLS, advertising/connections cannot contend with Wi-Fi, and normal cooperative Bluetooth initialization resumes only after a completed check or failed/deferred install. A verified install reboots without rebuilding BLE. MEDIA uses the same calls through no-op profile stubs.
 
 v2.0.4 fixes the portal-only manifest gate: the setup screen intentionally renders its AP indicator instead of the normal U icon, so manual update checks and CORE↔MEDIA profile checks must not wait for `updateCheckIndicatorRendered`. Bluetooth isolation now starts only immediately before the actual HTTPS attempt. Portal-originated manifest requests also use shorter connect/read/TLS limits so the synchronous request cannot leave captive-portal HTTP and DNS service unresponsive for the full autonomous-update timeout.
+
+v2.0.5 fixes setup-AP idle-time evaluation after a portal request. `processNetwork()` captures its ordinary loop timestamp before calling `server.handleClient()`, but an authenticated handler refreshes `portalStartedMs` inside that call. The timeout check must re-sample `millis()` after request handling; subtracting the refreshed activity time from the older loop timestamp underflows and can falsely close the AP immediately. That false stop also changes AP+STA to STA immediately before the queued GitHub HTTPS request, explaining the coupled manifest/profile-check failures. Portal timeout ordering and bounded NTP provider rotation are covered by source contract tests.
 
 Do not split the OTA transaction merely because the function is long. Its sequential structure encodes safety assumptions.
 
@@ -323,7 +325,7 @@ cd /tmp && milestone-release --dry-run taildrop X.Y.Z "short release note"
 
 Use `--yes` only when an unattended final publish is explicitly desired.
 
-## 8. Areas intentionally not refactored through v2.0.4
+## 8. Areas intentionally not refactored through v2.0.5
 
 The following broad refactors were deliberately rejected because their regression risk exceeded their immediate value:
 
