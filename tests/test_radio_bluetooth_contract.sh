@@ -18,7 +18,7 @@ reject() {
   fi
 }
 
-require 'FIRMWARE_VERSION\[\] = "2\.2\.3"' MILESTONE_Core.ino 'firmware version is not 2.2.3'
+require 'FIRMWARE_VERSION\[\] = "2\.2\.4"' MILESTONE_Core.ino 'firmware version is not 2.2.4'
 require 'CONFIG_VERSION = 10' MILESTONE_Core.ino 'configuration schema is not 10'
 require 'bool fixedApSecurity = false;' MILESTONE_Core.ino 'fixed AP security must default off'
 require 'String fixedApPassword;' MILESTONE_Core.ino 'fixed AP password setting missing'
@@ -43,7 +43,7 @@ require 'C6B2F38C|0x8c, 0xf3, 0xb2, 0xc6' CoreBluetooth.inc 'AMS Entity Attribut
 require 'BLE_HS_ADV_TYPE_SVC_DATA_UUID128|0x15' CoreBluetooth.inc 'AMS service solicitation advertising is missing'
 require 'setShortName\("MILESTON"\)' CoreBluetooth.inc 'passive BLE scans need a name in the primary advertisement'
 require 'scanResponse\.setName\(BLE_DEVICE_NAME\)' CoreBluetooth.inc 'active BLE scans need the complete MILESTONE name'
-require 'MILESTONE_BLE_AMS_RUNTIME_V4' CoreBluetooth.inc 'compiled BLE runtime marker missing'
+require 'MILESTONE_BLE_AMS_RUNTIME_V5' CoreBluetooth.inc 'compiled BLE runtime marker missing'
 require 'requires an Arduino-ESP32 build with NimBLE enabled' MILESTONE_Core.ino 'NOW must fail compilation instead of shipping a BLE stub'
 require 'bluetoothNowPlayingVisible\(\)' CoreBluetooth.inc 'Bluetooth music overlay visibility gate missing'
 python3 - <<'PY_AMS_PARSE'
@@ -66,8 +66,10 @@ require 'resumeBluetoothNowPlaying\(\)' CoreBluetooth.inc 'Bluetooth stream resu
 require 'isolateBluetoothForFirmwareOperation\(\)' CoreBluetooth.inc 'firmware HTTPS Bluetooth isolation missing'
 require 'restoreBluetoothAfterFirmwareOperation\(\)' CoreBluetooth.inc 'firmware HTTPS Bluetooth restoration missing'
 require 'if \(bluetoothFirmwareOperationIsolated\) return;' CoreBluetooth.inc 'Bluetooth service must stay stopped during firmware HTTPS'
-require '!isolateBluetoothForFirmwareOperation\(\)' CoreUpdate.inc 'OTA install must reject incomplete Bluetooth isolation'
-require '!isolateBluetoothForFirmwareOperation\(\)' CoreRuntime.inc 'manifest checks must wait for safe Bluetooth isolation'
+require 'const bool bluetoothIsolated = isolateBluetoothForFirmwareOperation\(\)' CoreUpdate.inc 'OTA install must capture Bluetooth isolation result'
+require 'const bool bluetoothIsolated = isolateBluetoothForFirmwareOperation\(\)' CoreRuntime.inc 'manifest checks must capture Bluetooth isolation result'
+require 'if \(!bluetoothIsolated\)' CoreUpdate.inc 'OTA install must reject incomplete Bluetooth isolation'
+require 'if \(!bluetoothIsolated\)' CoreRuntime.inc 'manifest checks must wait for safe Bluetooth isolation'
 require 'bluetoothDisconnectedEvent && bluetoothEventConnHandle == connHandle' CoreBluetooth.inc 'BLE shutdown must wait for the matching GAP disconnect confirmation'
 require 'BLE_DISCONNECT_TIMEOUT_MS' CoreBluetooth.inc 'BLE disconnect confirmation must be bounded'
 require 'BLE_SECURITY_TIMEOUT_MS = 15000UL' CoreBluetooth.inc 'BLE security wait must be bounded'
@@ -78,6 +80,21 @@ require 'disconnect\(timedOutHandle, BLE_ERR_REM_USER_CONN_TERM\)' CoreBluetooth
 require 'bluetooth_security_elapsed_ms' CorePortal.inc 'portal status must expose security wait duration'
 require 'bluetooth_security_elapsed_ms.*초' PortalPage.h 'portal must render the current security wait duration'
 require 'stack deinit refused' CoreBluetooth.inc 'BLE shutdown timeout must refuse unsafe stack deinit'
+require 'BLE quiesced without deinit for firmware HTTPS' CoreBluetooth.inc 'firmware HTTPS must retain the initialized BLE stack'
+python3 - <<'PY_BLE_OTA_QUIESCE'
+from pathlib import Path
+import re
+s = Path('CoreBluetooth.inc').read_text()
+start = s.index('bool isolateBluetoothForFirmwareOperation()')
+end = s.index('\nvoid restoreBluetoothAfterFirmwareOperation()', start)
+body = s[start:end]
+assert 'waitForBluetoothDisconnectBeforeShutdown()' in body
+assert 'bluetoothAdvertising->stop()' in body
+assert not re.search(r'^\s*BLEDevice::deinit', body, re.M), 'OTA isolation must not delete live NimBLE objects'
+PY_BLE_OTA_QUIESCE
+require 'FIRMWARE_OPERATION_RTC_MAGIC' CoreUpdate.inc 'firmware operations need an RTC reset breadcrumb'
+require 'manifest-tls' CoreUpdate.inc 'manifest reset stage is not diagnosable'
+require 'firmware_interrupted_stage' CorePortal.inc 'portal must expose interrupted firmware operation stage'
 python3 - <<'PY_BLE_SHUTDOWN'
 from pathlib import Path
 s = Path('CoreBluetooth.inc').read_text()

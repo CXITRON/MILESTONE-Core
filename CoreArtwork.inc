@@ -165,7 +165,8 @@ bool nowArtworkReadJpeg(const String &url, uint8_t *&jpeg, size_t &jpegSize) {
   http.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
   http.setRedirectLimit(4);
   if (!http.begin(client, url)) return false;
-  http.addHeader("User-Agent", "MILESTONE-Core/2.2.2 (https://github.com/CXITRON/MILESTONE-Core)");
+  http.addHeader("User-Agent", String("MILESTONE-Now/") + FIRMWARE_VERSION +
+                               " (https://github.com/CXITRON/MILESTONE-Core)");
   const int response = http.GET();
   if (response != HTTP_CODE_OK) {
     http.end();
@@ -275,7 +276,8 @@ void nowArtworkWorker(void *) {
   http.setConnectTimeout(5000);
   http.setTimeout(6000);
   if (http.begin(client, query)) {
-    http.addHeader("User-Agent", "MILESTONE-Core/2.2.2 (https://github.com/CXITRON/MILESTONE-Core)");
+    http.addHeader("User-Agent", String("MILESTONE-Now/") + FIRMWARE_VERSION +
+                                 " (https://github.com/CXITRON/MILESTONE-Core)");
     const int response = http.GET();
     if (response == HTTP_CODE_OK) {
       const int lookupSize = http.getSize();

@@ -1,3 +1,34 @@
+constexpr uint32_t FIRMWARE_OPERATION_RTC_MAGIC = 0x4F544152UL;  // "OTAR"
+RTC_DATA_ATTR uint32_t firmwareOperationRtcMagic = 0;
+RTC_DATA_ATTR uint8_t firmwareOperationRtcStage = 0;
+String firmwareInterruptedStage;
+
+void markFirmwareOperationStage(uint8_t stage) {
+  firmwareOperationRtcMagic = FIRMWARE_OPERATION_RTC_MAGIC;
+  firmwareOperationRtcStage = stage;
+}
+
+void clearFirmwareOperationStage() {
+  firmwareOperationRtcMagic = FIRMWARE_OPERATION_RTC_MAGIC;
+  firmwareOperationRtcStage = 0;
+}
+
+const char *firmwareInterruptedStageName() { return firmwareInterruptedStage.c_str(); }
+
+void consumeFirmwareOperationResetBreadcrumb() {
+  const uint8_t interrupted = firmwareOperationRtcMagic == FIRMWARE_OPERATION_RTC_MAGIC
+      ? firmwareOperationRtcStage : 0;
+  clearFirmwareOperationStage();
+  if (!interrupted || esp_reset_reason() == ESP_RST_POWERON) return;
+  firmwareInterruptedStage = interrupted == 1 ? "ble-quiesce"
+      : interrupted == 2 ? "manifest-tls"
+      : interrupted == 3 ? "firmware-tls"
+      : interrupted == 4 ? "flash-write"
+      : interrupted == 5 ? "verification" : "unknown";
+  logLine(String("previous reset interrupted firmware operation stage=") +
+          firmwareInterruptedStage + " reset=" + resetReasonName(esp_reset_reason()));
+}
+
 String formatEpoch(uint64_t epoch) {
   if (epoch < static_cast<uint64_t>(MIN_VALID_EPOCH)) return "";
   time_t value = static_cast<time_t>(epoch);
@@ -129,6 +160,7 @@ MilestoneDiagnostics::OtaFailure classifyOtaFailure(const String &reason) {
 }
 
 void failFirmwareCheck(const String &reason, bool transient) {
+  clearFirmwareOperationStage();
   updateError = reason;
   updateInstallRequested = false;
   updateInstallAfterNetworkReady = false;
@@ -146,6 +178,7 @@ void failFirmwareCheck(const String &reason, bool transient) {
 }
 
 void failFirmwareUpdate(const String &reason) {
+  clearFirmwareOperationStage();
   updateError = reason;
   updateInstallRequested = false;
   updateInstallAfterNetworkReady = false;
@@ -166,6 +199,7 @@ void failFirmwareUpdate(const String &reason) {
 }
 
 void deferFirmwareInstall(const String &reason) {
+  clearFirmwareOperationStage();
   updateError = reason;
   updateInstallRequested = false;
   updateInstallAfterNetworkReady = false;
@@ -341,6 +375,7 @@ UpdateCheckAttemptResult checkFirmwareManifestAttempt(UpdateCheckReason reason, 
   http.addHeader("Accept", "application/vnd.github+json");
   http.addHeader("X-GitHub-Api-Version", "2022-11-28");
   http.addHeader("Cache-Control", "no-cache");
+  markFirmwareOperationStage(2);
   const int response = http.GET();
   if (response != HTTP_CODE_OK) {
     failure = describeHttpFailure("manifest", response, secureClient);
@@ -449,7 +484,10 @@ bool installFirmwareUpdate() {
     deferFirmwareInstall("Wi-Fi disconnected");
     return false;
   }
-  if (!isolateBluetoothForFirmwareOperation()) {
+  markFirmwareOperationStage(1);
+  const bool bluetoothIsolated = isolateBluetoothForFirmwareOperation();
+  clearFirmwareOperationStage();
+  if (!bluetoothIsolated) {
     deferFirmwareInstall("Bluetooth disconnect incomplete");
     return false;
   }
@@ -507,6 +545,7 @@ bool installFirmwareUpdate() {
   http.setUserAgent(String("MILESTONE-") + FIRMWARE_PROFILE_LABEL + '/' + FIRMWARE_VERSION);
   int response = 0;
   String connectionFailure;
+  markFirmwareOperationStage(3);
   for (uint8_t attempt = 1; attempt <= UPDATE_CHECK_MAX_ATTEMPTS; ++attempt) {
     logLine(String("firmware HTTPS attempt ") + String(attempt) + "/" +
             String(UPDATE_CHECK_MAX_ATTEMPTS));
@@ -565,6 +604,7 @@ bool installFirmwareUpdate() {
   }
 
   mbedtls_sha256_context shaContext;
+  markFirmwareOperationStage(4);
   mbedtls_sha256_init(&shaContext);
   mbedtls_sha256_starts(&shaContext, 0);
   NetworkClient *stream = http.getStreamPtr();
@@ -623,6 +663,7 @@ bool installFirmwareUpdate() {
     return false;
   }
   setUpdateState(UpdateState::VERIFYING);
+  markFirmwareOperationStage(5);
   drawUpdateScreen();
   if (!sha256Hex(digest).equalsIgnoreCase(latestFirmwareSha256)) {
     Update.abort();
@@ -651,6 +692,7 @@ bool installFirmwareUpdate() {
   drawUpdateScreen();
   processLed();
   logLine(String("firmware verified; rebooting into ") + targetIdentity);
+  clearFirmwareOperationStage();
   delay(1200);
   ESP.restart();
   return true;

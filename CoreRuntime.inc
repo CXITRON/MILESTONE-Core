@@ -394,7 +394,10 @@ void processFirmwareUpdate() {
     // Waiting for U while the portal is active would deadlock every manual or
     // profile manifest check. Outside setup, preserve the visible-U contract.
     if (oledReady && !portalActive && !updateCheckIndicatorRendered) return;
-    if (!isolateBluetoothForFirmwareOperation()) {
+    markFirmwareOperationStage(1);
+    const bool bluetoothIsolated = isolateBluetoothForFirmwareOperation();
+    clearFirmwareOperationStage();
+    if (!bluetoothIsolated) {
       updateError = "Bluetooth disconnect pending";
       updateCheckNotBeforeMs = millis() + 500UL;
       return;
@@ -403,6 +406,7 @@ void processFirmwareUpdate() {
 
     String failure;
     const UpdateCheckAttemptResult result = checkFirmwareManifestAttempt(reason, failure);
+    clearFirmwareOperationStage();
     if (result == UpdateCheckAttemptResult::SUCCESS) {
       pendingUpdateCheckReason = UpdateCheckReason::NONE;
       updateCheckAttempt = 0;
@@ -1083,6 +1087,7 @@ void setupFirmware() {
   initializeDiagnosticStorage();
   recordDiagnostic(MilestoneDiagnostics::Event::BOOT, static_cast<int16_t>(esp_reset_reason()), 0, true);
   consumeNowArtworkResetBreadcrumb();
+  consumeFirmwareOperationResetBreadcrumb();
   diagnosticBootValidated = false;
   diagnosticBootValidationPending = true;
   diagnosticBootValidationStartedMs = millis();

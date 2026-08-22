@@ -1,6 +1,6 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v2.2.3
+> Current baseline: MILESTONE Core v2.2.4
 > Hardware: Waveshare ESP32-S3-Zero + SH1107 128×128 OLED
 > Repository: `CXITRON/MILESTONE-Core`
 
@@ -89,7 +89,7 @@ The `*.inc` runtime files are intentionally included into the sketch as one tran
 Firmware and persistent schema versions are separate concepts.
 
 ```cpp
-FIRMWARE_VERSION = "2.2.3"
+FIRMWARE_VERSION = "2.2.4"
 CONFIG_VERSION = 10
 ```
 
@@ -114,7 +114,7 @@ Schema 9 appends `CUSTOM_MEDIA` as View 7 and TopMode 8 without renumbering the 
 
 ### Bluetooth Now Playing, NOW profile, and setup-AP security (v1.11.0, v2.1.0)
 
-`CoreBluetooth.inc` implements iPhone/iPad Now Playing metadata through Apple Media Service (AMS) when the Arduino-ESP32 build exposes NimBLE. Since v2.1.0, the BLE runtime is compiled only into the dedicated NOW image and is always enabled there; CORE and MEDIA contain no BLE runtime. MILESTONE advertises an AMS service solicitation plus a shortened primary-packet name, bonds with the iOS device, discovers the iPhone-hosted AMS service on the same connection, subscribes to Player/Track Entity Update attributes, and renders a large title, artist, playback state, and progress. Korean metadata uses the Korean U8g2 font and non-Korean metadata uses the Japanese font so kana/kanji titles render instead of falling back to empty glyphs. NOW does not add a ninth persistent `View`, so the existing 8-bit cycle mask and saved CORE screen-order contract remain unchanged. A NOW release must fail rather than silently compile the unsupported BLE stub when NimBLE is absent, and binary inspection must find `MILESTONE_BLE_AMS_RUNTIME_V4` only in the NOW image.
+`CoreBluetooth.inc` implements iPhone/iPad Now Playing metadata through Apple Media Service (AMS) when the Arduino-ESP32 build exposes NimBLE. Since v2.1.0, the BLE runtime is compiled only into the dedicated NOW image and is always enabled there; CORE and MEDIA contain no BLE runtime. MILESTONE advertises an AMS service solicitation plus a shortened primary-packet name, bonds with the iOS device, discovers the iPhone-hosted AMS service on the same connection, subscribes to Player/Track Entity Update attributes, and renders a large title, artist, playback state, and progress. Korean metadata uses the Korean U8g2 font and non-Korean metadata uses the Japanese font so kana/kanji titles render instead of falling back to empty glyphs. NOW does not add a ninth persistent `View`, so the existing 8-bit cycle mask and saved CORE screen-order contract remain unchanged. A NOW release must fail rather than silently compile the unsupported BLE stub when NimBLE is absent, and binary inspection must find `MILESTONE_BLE_AMS_RUNTIME_V5` only in the NOW image.
 
 The current implementation parses complete AMS Entity Update notifications and safely displays the received prefix when iOS marks a value as truncated. A later revision may add asynchronous Entity Attribute reads for the full value; do not block the main loop waiting for a GATT read. Pairing and AMS interoperability must be validated on the physical ESP32-S3/iPhone combination before treating the feature as hardware-certified.
 
@@ -168,6 +168,8 @@ v2.2.1 hardens the NOW pairing/encryption transition. The runtime no longer depe
 v2.2.2 hardens NOW artwork lookup after intermittent resets were reported near failed cover requests. MusicBrainz XML is scanned from a bounded 48KiB stream instead of being copied into an internal-heap `String`, the worker has an explicit 14KiB stack with high-water logging, and lookup/network/download/decode failures have distinct states. An RTC breadcrumb preserves whether an abnormal reset interrupted lookup, download, or decode and exposes that stage through the NOW portal API after reboot. NOW's internal-die thermal policy is raised to 75/85/95°C for warning/throttle/protection while CORE and MEDIA retain 70/80/90°C; thermal protection still does not intentionally reboot the device.
 
 v2.2.3 limits `settling` to the 1.4-second metadata debounce. A setup AP without a stable STA reports `portal-paused`; a stable STA may run the background artwork lookup while the AP remains open, and an explicit portal-close API/button returns immediately to normal NOW operation after its HTTP response is delivered. The visible album-name layout is removed. Its persisted numeric value 2 remains reserved for rollback compatibility but normalizes to title + artist, and BOOT plus the portal expose only four layouts.
+
+v2.2.4 removes `BLEDevice::deinit(false)` from NOW firmware checks and installs. Arduino-ESP32 3.3.x deletes advertising/server objects before stopping its NimBLE host task, leaving a callback race even after a matching disconnect event. Firmware operations now stop advertising, confirm disconnection, retain the initialized BLE objects, and resume advertising afterward; the existing internal-RAM guard refuses TLS safely if the retained stack leaves insufficient memory. RTC breadcrumbs identify resets during BLE quiesce, manifest TLS, firmware TLS, flash write, or verification through the portal status API.
 
 Do not split the OTA transaction merely because the function is long. Its sequential structure encodes safety assumptions.
 

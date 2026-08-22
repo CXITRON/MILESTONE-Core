@@ -34,7 +34,7 @@ constexpr uint32_t BLE_SECURITY_POLL_MS = 250UL;
 constexpr char BLE_DEVICE_NAME[] = "MILESTONE";
 // make-release.sh verifies this executed marker in the compiled NOW image,
 // preventing a BLE stub from being published as a working build.
-constexpr char BLE_RUNTIME_MARKER[] = "MILESTONE_BLE_AMS_RUNTIME_V4";
+constexpr char BLE_RUNTIME_MARKER[] = "MILESTONE_BLE_AMS_RUNTIME_V5";
 
 enum class BluetoothRuntimeStage : uint8_t {
   OFF,
@@ -591,16 +591,27 @@ bool isolateBluetoothForFirmwareOperation() {
   bluetoothFirmwareOperationIsolated = true;
   const uint32_t heapBefore = ESP.getFreeHeap();
   const uint32_t largestBefore = ESP.getMaxAllocHeap();
-  if (bluetoothNowPlaying.initialized && !shutdownBluetoothNowPlaying()) {
-    bluetoothFirmwareOperationIsolated = false;
-    bluetoothNowPlaying.suspended = false;
-    if (!bluetoothNowPlaying.connected) startBluetoothAdvertising();
-    return false;
+  if (bluetoothNowPlaying.initialized) {
+    bluetoothNowPlaying.suspended = true;
+    bluetoothNowPlaying.stage = BluetoothRuntimeStage::SUSPENDED;
+    if (bluetoothAdvertising) bluetoothAdvertising->stop();
+    if (!waitForBluetoothDisconnectBeforeShutdown()) {
+      bluetoothFirmwareOperationIsolated = false;
+      bluetoothNowPlaying.suspended = false;
+      if (!bluetoothNowPlaying.connected) startBluetoothAdvertising();
+      return false;
+    }
+    // Keep the initialized NimBLE host/controller and GATT objects alive.
+    // Arduino-ESP32 3.3.x BLEDevice::deinit() deletes its server before it
+    // stops the host task, which can race queued GAP/GATT callbacks and PANIC.
+    // A firmware check needs radio quiescence, not object destruction; the
+    // existing RAM guard will fail safely if retained BLE leaves too little
+    // contiguous internal memory for TLS.
+    resetAmsHandles();
+    clearBluetoothNowPlayingMetadata();
   }
-  // Give the controller task a short opportunity to return its internal-RAM
-  // allocations before TLS performs its largest contiguous allocations.
   delay(20);
-  logLine(String("BLE isolated for firmware HTTPS: heap=") + heapBefore + "->" +
+  logLine(String("BLE quiesced without deinit for firmware HTTPS: heap=") + heapBefore + "->" +
           ESP.getFreeHeap() + " max=" + largestBefore + "->" + ESP.getMaxAllocHeap());
   return true;
 }
@@ -608,9 +619,11 @@ bool isolateBluetoothForFirmwareOperation() {
 void restoreBluetoothAfterFirmwareOperation() {
   if (!bluetoothFirmwareOperationIsolated) return;
   bluetoothFirmwareOperationIsolated = false;
-  // Do not synchronously rebuild NimBLE in the HTTPS cleanup path. The normal
-  // cooperative Bluetooth service starts it on the next loop iteration.
-  logLine("BLE firmware HTTPS isolation released");
+  if (bluetoothNowPlayingConfigured() && bluetoothNowPlaying.initialized) {
+    bluetoothNowPlaying.suspended = false;
+    startBluetoothAdvertising();
+  }
+  logLine("BLE firmware HTTPS quiesce released");
 }
 
 void suspendBluetoothNowPlaying() {
