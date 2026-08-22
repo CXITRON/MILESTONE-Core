@@ -1,6 +1,6 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v2.0.8
+> Current baseline: MILESTONE Core v2.1.0
 > Hardware: Waveshare ESP32-S3-Zero + SH1107 128×128 OLED
 > Repository: `CXITRON/MILESTONE-Core`
 
@@ -10,9 +10,9 @@ This document gives coding agents and maintainers the architectural context need
 
 MILESTONE Core is an ESP32-S3 desktop display firmware with:
 
-- two OTA-switchable application profiles: CORE (general display + BLE Now Playing) and MEDIA (stored/live media only)
+- three OTA-switchable application profiles: CORE (general displays), MEDIA (stored/live media), and NOW (iPhone AMS Now Playing)
 
-CORE owns D-day, message, clock, dashboard, device-information, and general screen-cycle behavior. MEDIA never enters those views: BOOT and timed transitions select the next enabled media item. Both profiles share schema 10, but MEDIA must preserve the stored CORE general-view fields so switching back restores the previous CORE setup exactly.
+CORE owns D-day, message, clock, dashboard, device-information, and general screen-cycle behavior. MEDIA never enters those views: BOOT and timed transitions select the next enabled media item. NOW renders only Bluetooth connection/AMS metadata state and does not enter general or media views. All three profiles share schema 10; MEDIA and NOW preserve the stored CORE general-view fields so switching back restores the previous CORE setup exactly.
 
 The profile boundary is compile-time, not a runtime feature flag. CORE uses `CoreMediaDisabled.inc` only for schema-compatible no-op calls and raw shared-partition erase during an explicit factory reset; it must not link `CoreMedia.inc`, `CoreMedia.cpp`, LittleFS, media/stream HTTP routes, `StreamPage.h`, or media converter UI bytes. Release BIN inspection enforces this boundary.
 
@@ -31,7 +31,7 @@ The profile boundary is compile-time, not a runtime feature flag. CORE uses `Cor
 - persistent recent Diagnostics & Health event history with portal copy/clear tools
 - browser-converted 128×128 monochrome photos, GIFs, and short local videos
 - isolated `/stream` live playback with browser-side full preconversion, RAW/XOR-RLE binary frame-record transport, PSRAM buffering, and stream-specific runtime isolation
-- optional iPhone/iPad BLE Now Playing metadata overlay via Apple Media Service (AMS), disabled by default
+- dedicated NOW profile for iPhone/iPad BLE Now Playing metadata via Apple Media Service (AMS)
 
 It is an embedded application composed of several cooperative state machines. Reliability and recoverability are more important than cosmetic architectural purity.
 
@@ -89,7 +89,7 @@ The `*.inc` runtime files are intentionally included into the sketch as one tran
 Firmware and persistent schema versions are separate concepts.
 
 ```cpp
-FIRMWARE_VERSION = "2.0.8"
+FIRMWARE_VERSION = "2.1.0"
 CONFIG_VERSION = 10
 ```
 
@@ -112,9 +112,9 @@ Schema 9 appends `CUSTOM_MEDIA` as View 7 and TopMode 8 without renumbering the 
 `CoreNetwork.inc` manages Wi-Fi connection, Enterprise PEAP, setup AP behavior, DHCP stabilization, NTP synchronization, retries, and Wi-Fi sleep behavior. Cold-boot sequencing was hardened because setup-mode connectivity and autonomous reboot connectivity previously behaved differently. In schema 10, fixed AP security is opt-in: the default path still generates a fresh 8-character setup-AP password, while fixed mode uses a persisted 8–63 character password or an explicitly blank password for an open AP.
 
 
-### Bluetooth Now Playing and setup-AP security (v1.11.0)
+### Bluetooth Now Playing, NOW profile, and setup-AP security (v1.11.0, v2.1.0)
 
-`CoreBluetooth.inc` implements optional iPhone/iPad Now Playing metadata through Apple Media Service (AMS) when the Arduino-ESP32 build exposes NimBLE. The feature is disabled by default and the BLE stack is not initialized until `bluetoothNowPlaying` is enabled. MILESTONE advertises an AMS service solicitation plus a shortened primary-packet name, bonds with the iOS device, discovers the iPhone-hosted AMS service on the same connection, subscribes to Player/Track Entity Update attributes, and renders title, artist, album, playback state, and progress as a temporary overlay. It does not add a ninth persistent `View`, so the existing 8-bit cycle mask and saved screen-order contract remain unchanged. A CORE release must fail rather than silently compile the unsupported BLE stub when NimBLE is absent, and binary inspection must find `MILESTONE_BLE_AMS_RUNTIME_V2` only in the CORE image.
+`CoreBluetooth.inc` implements iPhone/iPad Now Playing metadata through Apple Media Service (AMS) when the Arduino-ESP32 build exposes NimBLE. Since v2.1.0, the BLE runtime is compiled only into the dedicated NOW image and is always enabled there; CORE and MEDIA contain no BLE runtime. MILESTONE advertises an AMS service solicitation plus a shortened primary-packet name, bonds with the iOS device, discovers the iPhone-hosted AMS service on the same connection, subscribes to Player/Track Entity Update attributes, and renders title, artist, album, playback state, and progress. Korean metadata uses the Korean U8g2 font and non-Korean metadata uses the Japanese font so kana/kanji titles render instead of falling back to empty glyphs. NOW does not add a ninth persistent `View`, so the existing 8-bit cycle mask and saved CORE screen-order contract remain unchanged. A NOW release must fail rather than silently compile the unsupported BLE stub when NimBLE is absent, and binary inspection must find `MILESTONE_BLE_AMS_RUNTIME_V2` only in the NOW image.
 
 The current implementation parses complete AMS Entity Update notifications and safely displays the received prefix when iOS marks a value as truncated. A later revision may add asynchronous Entity Attribute reads for the full value; do not block the main loop waiting for a GATT read. Pairing and AMS interoperability must be validated on the physical ESP32-S3/iPhone combination before treating the feature as hardware-certified.
 
@@ -156,6 +156,8 @@ v2.0.6 follows the v2.0.5 hardware verification result: the first four `github.c
 v2.0.7 makes setup-portal firmware actions own their network prerequisites. A manual update or CORE↔MEDIA check queues the exact requested profile before reconnecting the preferred saved Wi-Fi, then continues through DHCP stabilization, bounded NTP, and Release API verification without a second browser action. Profile switching remains a physical-confirmation transaction: the OLED shows source and target identities and only a short BOOT press authorizes installation; the web install endpoint rejects cross-profile confirmation. The boot splash and ready-to-reboot screen show both semantic version and CORE/MEDIA identity. Same-profile web installation retains a target-qualified two-step confirmation, and an already confirmed install can reconnect/NTP automatically without asking the user to confirm again.
 
 v2.0.8 hardens stored MEDIA playback. The catalog display interval is a minimum hold time rather than permission to reopen an animation mid-frame-cycle: one enabled item remains in its own MSM1 loop, while multiple items switch only after the active animation reaches a finished or loop boundary. Mid-playback LittleFS/frame-decode failures are recorded with the item ID and retried after a bounded five-second backoff instead of leaving an unexplained frozen frame or tight reopen loop. The main portal status also exposes the current hardware reset reason and numeric code so a real brownout, watchdog, panic, external reset, or ordinary power-on can be distinguished from a catalog restart.
+
+v2.1.0 moves AMS Bluetooth out of CORE into the third NOW application profile. CORE contains only general views, MEDIA contains only stored/live media, and NOW contains only the always-on AMS connection and metadata screen. The common portal can check/install all three fixed assets, while a profile switch still requires a short physical BOOT confirmation. Release inspection rejects Bluetooth markers outside NOW and media/stream markers outside MEDIA. The configuration schema remains 10 and profile switches preserve Wi-Fi, CORE views, diagnostics, and stored media.
 
 Do not split the OTA transaction merely because the function is long. Its sequential structure encodes safety assumptions.
 
@@ -274,11 +276,13 @@ release/MILESTONE_Core.bin
 release/MILESTONE_Core.json
 release/MILESTONE_Media.bin
 release/MILESTONE_Media.json
+release/MILESTONE_Now.bin
+release/MILESTONE_Now.json
 ```
 
 Each manifest records the firmware version, profile, matching asset name, exact binary size, SHA-256, and release note.
 
-In Taildrop mode, publication must hand off to the incoming project's release command before any remote mutation when that command differs from the installed launcher. Existing same-tag releases are repairable only after every already-published asset matches the current build byte-for-byte. A completed publish must download and verify all four CORE/MEDIA assets against the local build.
+In Taildrop mode, publication must hand off to the incoming project's release command before any remote mutation when that command differs from the installed launcher. Existing same-tag releases are repairable only after every already-published asset matches the current build byte-for-byte. A completed publish must download and verify all six CORE/MEDIA/NOW assets against the local build.
 
 ## 7. Unified release command
 

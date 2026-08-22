@@ -92,6 +92,15 @@ void testJsonEscapes() {
   EXPECT_FALSE(MilestoneCoreLogic::decodeJsonEscape('u', decoded));
 }
 
+void testUtf8HangulDetection() {
+  EXPECT_TRUE(MilestoneCoreLogic::utf8ContainsHangul("지금 재생 중"));
+  EXPECT_TRUE(MilestoneCoreLogic::utf8ContainsHangul("한日 mix"));
+  EXPECT_FALSE(MilestoneCoreLogic::utf8ContainsHangul("今夜は最高"));
+  EXPECT_FALSE(MilestoneCoreLogic::utf8ContainsHangul("カタカナ / ひらがな"));
+  EXPECT_FALSE(MilestoneCoreLogic::utf8ContainsHangul("Now Playing"));
+  EXPECT_FALSE(MilestoneCoreLogic::utf8ContainsHangul("\xE3\x81"));
+}
+
 }  // namespace
 
 int main() {
@@ -100,6 +109,7 @@ int main() {
   testCycleOrder();
   testSha256();
   testJsonEscapes();
+  testUtf8HangulDetection();
 
   if (failures != 0) {
     std::cerr << failures << " core logic test(s) failed\n";

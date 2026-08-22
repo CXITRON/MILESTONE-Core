@@ -11,9 +11,12 @@ require_fixed() {
 
 require_fixed FirmwareProfile.h '#define MILESTONE_FIRMWARE_PROFILE "core"' 'CORE profile identity is missing'
 require_fixed FirmwareProfile.h '#define MILESTONE_FIRMWARE_PROFILE "media"' 'MEDIA profile identity is missing'
+require_fixed FirmwareProfile.h '#define MILESTONE_FIRMWARE_PROFILE "now"' 'NOW profile identity is missing'
 require_fixed FirmwareProfile.h '#define MILESTONE_FIRMWARE_ASSET "MILESTONE_Core.bin"' 'CORE asset mapping is missing'
 require_fixed FirmwareProfile.h '#define MILESTONE_FIRMWARE_ASSET "MILESTONE_Media.bin"' 'MEDIA asset mapping is missing'
+require_fixed FirmwareProfile.h '#define MILESTONE_FIRMWARE_ASSET "MILESTONE_Now.bin"' 'NOW asset mapping is missing'
 require_fixed FirmwareProfile.h '#define MILESTONE_HAS_GENERAL_VIEWS 0' 'MEDIA general-view exclusion is missing'
+require_fixed FirmwareProfile.h '#define MILESTONE_BLUETOOTH_ALWAYS_ON 1' 'NOW always-on Bluetooth policy is missing'
 require_fixed MILESTONE_Core.ino '#include "CoreMediaDisabled.inc"' 'CORE media compile boundary is missing'
 require_fixed MILESTONE_Core.ino '#include "CoreMedia.inc"' 'MEDIA implementation include is missing'
 require_fixed CoreMedia.cpp '#if MILESTONE_HAS_MEDIA' 'standalone media codec still compiles into CORE'
@@ -36,10 +39,10 @@ require_fixed CoreDisplay.inc '#if MILESTONE_HAS_GENERAL_VIEWS' 'general display
 require_fixed CoreDisplay.inc '[[fallthrough]];' 'intentional MEDIA view fallthrough is not explicit'
 require_fixed CoreNetwork.inc '#if MILESTONE_HAS_GENERAL_VIEWS' 'MEDIA still recomputes D-Day after NTP sync'
 require_fixed CorePortal.inc 'next.title = config.title;' 'MEDIA does not preserve CORE general-view settings'
-require_fixed CorePortal.inc 'CORE 화면 설정은 MEDIA에서 초기화할 수 없습니다.' 'MEDIA settings reset guard is missing'
+require_fixed CorePortal.inc 'CORE 화면 설정은 현재 프로필에서 초기화할 수 없습니다.' 'non-CORE settings reset guard is missing'
 require_fixed CorePortal.inc 'general_views_supported' 'profile capability is missing from status API'
 require_fixed PortalPage.h "'general_dday_card','general_mode_card','general_hour_row','general_seconds_row','settings_reset_area'" 'MEDIA portal does not hide CORE-only settings'
-require_fixed tools/make-release.sh 'profiles=(core media)' 'release builder does not build both profiles'
+require_fixed tools/make-release.sh 'profiles=(core media now)' 'release builder does not build all profiles'
 require_fixed tools/make-release.sh 'release_source_date_epoch=946684800' 'release build clock is not pinned'
 require_fixed tools/make-release.sh 'TZ=UTC SOURCE_DATE_EPOCH="$release_source_date_epoch" "$arduino_cli" compile' 'Arduino compile does not use the reproducible build clock'
 require_fixed tools/make-release.sh '-ffile-prefix-map=$project_dir=/src' 'release build does not normalize source paths'
@@ -47,16 +50,18 @@ require_fixed tools/make-release.sh '-ffile-prefix-map=$build_root=/build' 'rele
 require_fixed tools/make-release.sh 'media_binary_markers=(/api/media/upload /api/stream/start /media/upload.tmp)' 'release builder does not inspect binary profile boundaries'
 require_fixed tools/make-release.sh '미디어/스트리밍 구현이 BIN에 남아 있습니다' 'CORE binary exclusion check is missing'
 require_fixed tools/make-release.sh 'grep -F -- "$marker" >/dev/null' 'profile marker check can still fail from a pipefail/SIGPIPE false negative'
-require_fixed tools/make-release.sh 'ble_runtime_marker=MILESTONE_BLE_AMS_RUNTIME_V2' 'release build does not verify the CORE BLE runtime implementation'
+require_fixed tools/make-release.sh 'ble_runtime_marker=MILESTONE_BLE_AMS_RUNTIME_V2' 'release build does not verify the NOW BLE runtime implementation'
 if grep -Fq 'strings -a -- "$source_bin" | grep -Fq' tools/make-release.sh; then
   echo 'Profile OTA contract: profile marker check still uses grep -q under pipefail' >&2
   exit 1
 fi
 require_fixed tools/milestone-release 'MILESTONE_Media.bin' 'unified release command does not publish MEDIA BIN'
 require_fixed tools/milestone-release 'MILESTONE_Media.json' 'unified release command does not publish MEDIA manifest'
+require_fixed tools/milestone-release 'MILESTONE_Now.bin' 'unified release command does not publish NOW BIN'
+require_fixed tools/milestone-release 'MILESTONE_Now.json' 'unified release command does not publish NOW manifest'
 require_fixed tools/milestone-release 'handoff_to_incoming_script_if_needed' 'Taildrop does not hand off to the incoming release command before publication'
 require_fixed tools/milestone-release 'gh release upload "$TAG" "${asset_paths[@]}"' 'existing incomplete releases cannot be repaired'
-require_fixed tools/milestone-release 'verify_published_release_assets' 'published CORE/MEDIA assets are not verified'
+require_fixed tools/milestone-release 'verify_published_release_assets' 'published CORE/MEDIA/NOW assets are not verified'
 if grep -Fq 'ensure_release_not_already_published' tools/milestone-release; then
   echo 'Profile OTA contract: existing releases still exit before asset reconciliation' >&2
   exit 1

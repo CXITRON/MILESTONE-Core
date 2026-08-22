@@ -49,24 +49,28 @@ trap cleanup EXIT
 
 core_portal_html="$build_dir/core-portal.html"
 media_portal_html="$build_dir/media-portal.html"
-for profile_id in 0 1; do
-  portal_binary="$build_dir/render-portal-$profile_id"
-  general_views=$((1 - profile_id))
+now_portal_html="$build_dir/now-portal.html"
+profiles=(core media now)
+media_flags=(0 1 0)
+general_flags=(1 0 0)
+now_flags=(0 0 1)
+for index in "${!profiles[@]}"; do
+  profile=${profiles[$index]}
+  portal_binary="$build_dir/render-portal-$profile"
   "$cxx" -std=c++11 -Wall -Wextra -Wpedantic -Werror \
-    -I"$project_dir" -DMILESTONE_HAS_MEDIA=$profile_id \
-    -DMILESTONE_HAS_GENERAL_VIEWS=$general_views \
+    -I"$project_dir" -DMILESTONE_HAS_MEDIA=${media_flags[$index]} \
+    -DMILESTONE_HAS_GENERAL_VIEWS=${general_flags[$index]} \
+    -DMILESTONE_HAS_NOW_VIEW=${now_flags[$index]} \
     "$project_dir/tests/render_portal.cpp" -o "$portal_binary"
-  if [[ $profile_id == 0 ]]; then
-    "$portal_binary" > "$core_portal_html"
-  else
-    "$portal_binary" > "$media_portal_html"
-  fi
+  "$portal_binary" > "$build_dir/$profile-portal.html"
 done
 for marker in 'id="media_preview"' '/api/media/upload' "location.href='/stream'"; do
-  if grep -Fq -- "$marker" "$core_portal_html"; then
-    echo "Profile portal contract: CORE portal still contains $marker" >&2
-    exit 1
-  fi
+  for portal_html in "$core_portal_html" "$now_portal_html"; do
+    if grep -Fq -- "$marker" "$portal_html"; then
+      echo "Profile portal contract: non-MEDIA portal still contains $marker" >&2
+      exit 1
+    fi
+  done
   grep -Fq -- "$marker" "$media_portal_html" || {
     echo "Profile portal contract: MEDIA portal is missing $marker" >&2
     exit 1
@@ -76,12 +80,14 @@ grep -Fq 'id="general_dday_card"' "$core_portal_html" || {
   echo 'Profile portal contract: CORE portal is missing general view settings' >&2
   exit 1
 }
-if grep -Fq 'id="general_dday_card"' "$media_portal_html"; then
-  echo 'Profile portal contract: MEDIA portal still contains visible general view settings' >&2
-  exit 1
-fi
+for portal_html in "$media_portal_html" "$now_portal_html"; do
+  if grep -Fq 'id="general_dday_card"' "$portal_html"; then
+    echo 'Profile portal contract: non-CORE portal still contains visible general view settings' >&2
+    exit 1
+  fi
+done
 if command -v node >/dev/null 2>&1; then
-  for portal_html in "$core_portal_html" "$media_portal_html"; do
+  for portal_html in "$core_portal_html" "$media_portal_html" "$now_portal_html"; do
     sed -n '/<script>/,/<\/script>/p' "$portal_html" | sed '1s/^.*<script>//; $s/<\/script>.*$//' | node --check -
   done
 fi

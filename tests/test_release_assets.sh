@@ -9,7 +9,7 @@ cleanup() {
 trap cleanup EXIT
 
 mkdir -p "$TEST_DIR/project/release" "$TEST_DIR/published" "$TEST_DIR/bin"
-for asset in MILESTONE_Core.bin MILESTONE_Core.json MILESTONE_Media.bin MILESTONE_Media.json; do
+for asset in MILESTONE_Core.bin MILESTONE_Core.json MILESTONE_Media.bin MILESTONE_Media.json MILESTONE_Now.bin MILESTONE_Now.json; do
   printf 'verified %s\n' "$asset" > "$TEST_DIR/project/release/$asset"
 done
 cp "$TEST_DIR/project/release/MILESTONE_Core.bin" "$TEST_DIR/published/"
@@ -71,6 +71,8 @@ EXPECTED_RELEASE_ASSETS=(
   MILESTONE_Core.json
   MILESTONE_Media.bin
   MILESTONE_Media.json
+  MILESTONE_Now.bin
+  MILESTONE_Now.json
 )
 log() { :; }
 die() {
@@ -87,6 +89,8 @@ fi
 
 cp "$TEST_DIR/project/release/MILESTONE_Media.bin" "$TEST_DIR/published/"
 cp "$TEST_DIR/project/release/MILESTONE_Media.json" "$TEST_DIR/published/"
+cp "$TEST_DIR/project/release/MILESTONE_Now.bin" "$TEST_DIR/published/"
+cp "$TEST_DIR/project/release/MILESTONE_Now.json" "$TEST_DIR/published/"
 verify_published_release_assets
 
 printf 'tampered core\n' > "$TEST_DIR/published/MILESTONE_Core.bin"

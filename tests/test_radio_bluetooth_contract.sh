@@ -18,7 +18,7 @@ reject() {
   fi
 }
 
-require 'FIRMWARE_VERSION\[\] = "2\.0\.8"' MILESTONE_Core.ino 'firmware version is not 2.0.8'
+require 'FIRMWARE_VERSION\[\] = "2\.1\.0"' MILESTONE_Core.ino 'firmware version is not 2.1.0'
 require 'CONFIG_VERSION = 10' MILESTONE_Core.ino 'configuration schema is not 10'
 require 'bool fixedApSecurity = false;' MILESTONE_Core.ino 'fixed AP security must default off'
 require 'String fixedApPassword;' MILESTONE_Core.ino 'fixed AP password setting missing'
@@ -43,7 +43,7 @@ require 'BLE_HS_ADV_TYPE_SVC_DATA_UUID128|0x15' CoreBluetooth.inc 'AMS service s
 require 'setShortName\("MILESTON"\)' CoreBluetooth.inc 'passive BLE scans need a name in the primary advertisement'
 require 'scanResponse\.setName\(BLE_DEVICE_NAME\)' CoreBluetooth.inc 'active BLE scans need the complete MILESTONE name'
 require 'MILESTONE_BLE_AMS_RUNTIME_V2' CoreBluetooth.inc 'compiled BLE runtime marker missing'
-require 'requires an Arduino-ESP32 build with NimBLE enabled' MILESTONE_Core.ino 'CORE must fail compilation instead of shipping a BLE stub'
+require 'requires an Arduino-ESP32 build with NimBLE enabled' MILESTONE_Core.ino 'NOW must fail compilation instead of shipping a BLE stub'
 require 'bluetoothNowPlayingVisible\(\)' CoreBluetooth.inc 'Bluetooth music overlay visibility gate missing'
 python3 - <<'PY_AMS_PARSE'
 from pathlib import Path
@@ -72,10 +72,15 @@ require 'restoreBluetoothAfterFirmwareOperation\(\);' CoreRuntime.inc 'successfu
 require 'suspendBluetoothNowPlaying\(\);' CoreRuntime.inc 'STREAM_MODE entry must suspend Bluetooth'
 require 'resumeBluetoothNowPlaying\(\);' CoreRuntime.inc 'STREAM_MODE exit must resume Bluetooth'
 require 'processBluetoothNowPlaying\(\);' CoreRuntime.inc 'main loop must service Bluetooth metadata'
-require 'if \(config\.bluetoothNowPlaying\)' CoreRuntime.inc 'Bluetooth stack must be gated by saved setting'
+require 'if \(bluetoothNowPlayingConfigured\(\)\)' CoreRuntime.inc 'Bluetooth stack must be gated by the active profile policy'
+require 'MILESTONE_BLUETOOTH_ALWAYS_ON \|\| config\.bluetoothNowPlaying' CoreBluetooth.inc 'NOW must force Bluetooth on without mutating saved CORE settings'
+require '#define MILESTONE_HAS_BLUETOOTH 0' FirmwareProfile.h 'CORE and MEDIA must exclude Bluetooth'
+require '#define MILESTONE_PROFILE_NOW 3' FirmwareProfile.h 'NOW profile identifier missing'
 
 require 'void drawBluetoothNowPlayingScreen\(\)' CoreDisplay.inc 'Now Playing OLED renderer missing'
 require 'if \(bluetoothNowPlayingVisible\(\)\)' CoreDisplay.inc 'Now Playing must be an overlay rather than a ninth persistent view'
+require 'u8g2_font_unifont_t_japanese2' CoreDisplay.inc 'NOW metadata Japanese font routing missing'
+require 'utf8ContainsHangul' CoreDisplay.inc 'NOW metadata Korean font routing missing'
 require 'constexpr uint8_t VIEW_COUNT = 8;' MILESTONE_Core.ino 'existing eight-view cycle contract must remain unchanged'
 
 require 'server\.on\("/api/radio-config", HTTP_GET, handleGetRadioConfig\)' CorePortal.inc 'radio config GET route missing'

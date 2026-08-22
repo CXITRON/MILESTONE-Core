@@ -600,11 +600,16 @@ void processThermalProtection() {
 }
 
 bool viewEnabled(View view) {
+#if MILESTONE_HAS_NOW_VIEW
+  (void)view;
+  return false;
+#else
   if (!MILESTONE_HAS_GENERAL_VIEWS) {
     return view == View::CUSTOM_MEDIA && mediaHasEnabledItems();
   }
   if (view == View::CUSTOM_MEDIA && (!MILESTONE_HAS_MEDIA || !mediaHasEnabledItems())) return false;
   return (config.cycleMask & (1U << static_cast<uint8_t>(view))) != 0;
+#endif
 }
 
 void selectFirstEnabledCycleView() {
@@ -622,6 +627,12 @@ void selectFirstEnabledCycleView() {
 }
 
 void advanceView(bool persist) {
+#if MILESTONE_HAS_NOW_VIEW
+  (void)persist;
+  lastCycleMs = millis();
+  wakeDisplay();
+  return;
+#else
   if (!MILESTONE_HAS_GENERAL_VIEWS) {
     currentView = View::CUSTOM_MEDIA;
     if (mediaHasEnabledItems()) selectNextMediaItem();
@@ -656,6 +667,7 @@ void advanceView(bool persist) {
   scrollStartedMs = millis();
   lastCycleMs = millis();
   if (persist) wakeDisplay();
+#endif
 }
 
 void processCycle() {
@@ -824,6 +836,13 @@ void processDisplay() {
 }
 
 void initializeView() {
+#if MILESTONE_HAS_NOW_VIEW
+  currentView = View::DDAY_TIME;
+  currentCycleIndex = 0;
+  lastCycleMs = millis();
+  scrollStartedMs = millis();
+  return;
+#else
   if (!MILESTONE_HAS_GENERAL_VIEWS) {
     currentView = View::CUSTOM_MEDIA;
     currentCycleIndex = 0;
@@ -844,6 +863,7 @@ void initializeView() {
   if (currentView == View::DEVICE_INFO) deviceInfoStartedMs = millis();
   lastCycleMs = millis();
   scrollStartedMs = millis();
+#endif
 }
 
 
@@ -1050,7 +1070,7 @@ void setupFirmware() {
   if (MILESTONE_HAS_MEDIA) initializeMediaStorage();
   initializeView();
   if (MILESTONE_HAS_BLUETOOTH) {
-    if (config.bluetoothNowPlaying) {
+    if (bluetoothNowPlayingConfigured()) {
       if (!initializeBluetoothNowPlaying()) {
         logLine("Bluetooth Now Playing initialization failed; continuing without BLE");
       }

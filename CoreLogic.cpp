@@ -153,4 +153,44 @@ bool decodeJsonEscape(char escaped, char &decoded) {
   }
 }
 
+bool utf8ContainsHangul(const char *text) {
+  if (text == nullptr) return false;
+  const uint8_t *cursor = reinterpret_cast<const uint8_t *>(text);
+  while (*cursor != 0) {
+    uint32_t codepoint = 0;
+    size_t continuation = 0;
+    if (*cursor < 0x80U) {
+      codepoint = *cursor++;
+    } else if ((*cursor & 0xE0U) == 0xC0U) {
+      codepoint = *cursor++ & 0x1FU;
+      continuation = 1;
+    } else if ((*cursor & 0xF0U) == 0xE0U) {
+      codepoint = *cursor++ & 0x0FU;
+      continuation = 2;
+    } else if ((*cursor & 0xF8U) == 0xF0U) {
+      codepoint = *cursor++ & 0x07U;
+      continuation = 3;
+    } else {
+      ++cursor;
+      continue;
+    }
+    bool valid = true;
+    for (size_t index = 0; index < continuation; ++index) {
+      if (cursor[index] == 0 || (cursor[index] & 0xC0U) != 0x80U) {
+        valid = false;
+        break;
+      }
+      codepoint = (codepoint << 6U) | (cursor[index] & 0x3FU);
+    }
+    if (!valid) continue;
+    cursor += continuation;
+    if ((codepoint >= 0x1100U && codepoint <= 0x11FFU) ||
+        (codepoint >= 0x3130U && codepoint <= 0x318FU) ||
+        (codepoint >= 0xAC00U && codepoint <= 0xD7AFU)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 }  // namespace MilestoneCoreLogic

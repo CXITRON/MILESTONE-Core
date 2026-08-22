@@ -26,6 +26,8 @@ EXPECTED_RELEASE_ASSETS=(
   MILESTONE_Core.json
   MILESTONE_Media.bin
   MILESTONE_Media.json
+  MILESTONE_Now.bin
+  MILESTONE_Now.json
 )
 
 usage() {
@@ -52,9 +54,9 @@ Options:
 
 Examples:
   cd /run/media/citron/T7/Documents/Dev/MILESTONE_Core
-  milestone-release local 2.0.8 "Stabilize stored MEDIA playback and reset diagnosis"
+  milestone-release local 2.1.0 "Split Bluetooth into the dedicated NOW profile"
 
-  cd /tmp && milestone-release taildrop 2.0.8 "Stabilize stored MEDIA playback and reset diagnosis"
+  cd /tmp && milestone-release taildrop 2.1.0 "Split Bluetooth into the dedicated NOW profile"
 USAGE
 }
 
@@ -336,14 +338,14 @@ refresh_remote() {
 }
 
 build_release() {
-  log "호스트 테스트 + CORE/MEDIA ESP32 릴리즈 빌드"
+  log "호스트 테스트 + CORE/MEDIA/NOW ESP32 릴리즈 빌드"
   (
     cd "$PROJECT_DIR"
     bash ./tools/make-release.sh "$VERSION" "$NOTES"
   )
 
-  local profiles=(core media)
-  local stems=(MILESTONE_Core MILESTONE_Media)
+  local profiles=(core media now)
+  local stems=(MILESTONE_Core MILESTONE_Media MILESTONE_Now)
   local index profile stem manifest bin manifest_version manifest_profile
   local manifest_asset manifest_size actual_size manifest_sha actual_sha
   for index in "${!profiles[@]}"; do
@@ -501,6 +503,7 @@ make_release_notes() {
     printf '\n## Assets\n'
     printf -- '- `MILESTONE_Core.bin` / `MILESTONE_Core.json` — CORE OTA firmware and manifest\n'
     printf -- '- `MILESTONE_Media.bin` / `MILESTONE_Media.json` — MEDIA OTA firmware and manifest\n'
+    printf -- '- `MILESTONE_Now.bin` / `MILESTONE_Now.json` — NOW OTA firmware and manifest\n'
   } > "$outfile"
 }
 
@@ -513,7 +516,7 @@ confirm_publish() {
   printf '  HEAD:    %s\n' "$(git -C "$PROJECT_DIR" log -1 --oneline)"
   printf '  Remote:  %s\n' "$(git -C "$PROJECT_DIR" remote get-url origin)"
   if (( RELEASE_EXISTS == 1 )); then
-    printf '\nGitHub의 main을 갱신하고 기존 %s Release의 네 자산을 복구할까요? [y/N] ' "$TAG"
+    printf '\nGitHub의 main을 갱신하고 기존 %s Release의 여섯 자산을 복구할까요? [y/N] ' "$TAG"
   else
     printf '\nGitHub에 main + %s 태그 + Release를 게시할까요? [y/N] ' "$TAG"
   fi
@@ -578,7 +581,7 @@ verify_published_release_assets() {
 
   rm -rf -- "$verify_dir"
   [[ -z $failure ]] || die "$failure"
-  log "GitHub Release CORE/MEDIA 네 자산 검증 완료"
+  log "GitHub Release CORE/MEDIA/NOW 여섯 자산 검증 완료"
 }
 
 publish_release() {
@@ -601,7 +604,7 @@ publish_release() {
   REMOTE_PUSHED=1
 
   if (( RELEASE_EXISTS == 1 )); then
-    log "GitHub Release CORE/MEDIA 자산 복구"
+    log "GitHub Release CORE/MEDIA/NOW 자산 복구"
     gh release upload "$TAG" "${asset_paths[@]}" --repo "$EXPECTED_REPO" --clobber
     gh release edit "$TAG" \
       --repo "$EXPECTED_REPO" \

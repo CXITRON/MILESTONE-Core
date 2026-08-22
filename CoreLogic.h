@@ -22,5 +22,6 @@ int compareSemanticVersions(const char *left, const char *right);
 
 bool validSha256(const char *value);
 bool decodeJsonEscape(char escaped, char &decoded);
+bool utf8ContainsHangul(const char *text);
 
 }  // namespace MilestoneCoreLogic

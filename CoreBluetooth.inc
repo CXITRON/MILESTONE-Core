@@ -3,6 +3,11 @@
 // peripheral for pairing/advertising and uses NimBLE's GATT client procedures
 // on the same connection to subscribe to the iPhone-hosted AMS service.
 
+bool bluetoothNowPlayingConfigured() {
+  return MILESTONE_HAS_BLUETOOTH &&
+         (MILESTONE_BLUETOOTH_ALWAYS_ON || config.bluetoothNowPlaying);
+}
+
 #if MILESTONE_HAS_BLUETOOTH && defined(CONFIG_NIMBLE_ENABLED)
 
 constexpr uint8_t AMS_ENTITY_PLAYER = 0;
@@ -380,7 +385,7 @@ int amsSubscriptionWriteCallback(uint16_t connHandle, const ble_gatt_error *erro
 
 bool startBluetoothAdvertising() {
   if (!bluetoothNowPlaying.initialized || bluetoothNowPlaying.suspended ||
-      !config.bluetoothNowPlaying || bluetoothNowPlaying.connected || !bluetoothAdvertising) return false;
+      !bluetoothNowPlayingConfigured() || bluetoothNowPlaying.connected || !bluetoothAdvertising) return false;
   if (bluetoothAdvertising->isAdvertising()) {
     bluetoothNowPlaying.stage = BluetoothRuntimeStage::ADVERTISING;
     return true;
@@ -443,7 +448,7 @@ bool configureBluetoothAdvertising() {
 }
 
 bool initializeBluetoothNowPlaying() {
-  if (!config.bluetoothNowPlaying || mediaStreamActive || bluetoothNowPlaying.initialized) {
+  if (!bluetoothNowPlayingConfigured() || mediaStreamActive || bluetoothNowPlaying.initialized) {
     return bluetoothNowPlaying.initialized;
   }
   bluetoothNowPlaying.stage = BluetoothRuntimeStage::INITIALIZING;
@@ -521,7 +526,7 @@ void shutdownBluetoothNowPlaying() {
 }
 
 void isolateBluetoothForFirmwareOperation() {
-  if (!config.bluetoothNowPlaying || bluetoothFirmwareOperationIsolated) return;
+  if (!bluetoothNowPlayingConfigured() || bluetoothFirmwareOperationIsolated) return;
   bluetoothFirmwareOperationIsolated = true;
   const uint32_t heapBefore = ESP.getFreeHeap();
   const uint32_t largestBefore = ESP.getMaxAllocHeap();
@@ -556,7 +561,7 @@ void suspendBluetoothNowPlaying() {
 }
 
 void resumeBluetoothNowPlaying() {
-  if (!config.bluetoothNowPlaying) return;
+  if (!bluetoothNowPlayingConfigured()) return;
   if (!bluetoothNowPlaying.initialized) {
     if (deadlineReached(millis(), bluetoothNowPlaying.nextInitializationRetryMs)) {
       initializeBluetoothNowPlaying();
@@ -610,7 +615,7 @@ void applyAmsNotification(const AmsNotificationPacket &packet) {
 
 void processBluetoothNowPlaying() {
   if (bluetoothFirmwareOperationIsolated) return;
-  if (!config.bluetoothNowPlaying) {
+  if (!bluetoothNowPlayingConfigured()) {
     if (bluetoothNowPlaying.initialized) shutdownBluetoothNowPlaying();
     return;
   }
@@ -693,7 +698,7 @@ void processBluetoothNowPlaying() {
 }
 
 bool bluetoothNowPlayingVisible() {
-  return config.bluetoothNowPlaying && bluetoothNowPlaying.initialized &&
+  return bluetoothNowPlayingConfigured() && bluetoothNowPlaying.initialized &&
          bluetoothNowPlaying.connected && bluetoothNowPlaying.amsReady &&
          !bluetoothNowPlaying.suspended && bluetoothNowPlaying.title.length() > 0;
 }
@@ -731,7 +736,7 @@ float bluetoothCurrentElapsedSeconds() {
 #else
 
 bool initializeBluetoothNowPlaying() {
-  if (config.bluetoothNowPlaying) logLine("BLE Now Playing unavailable in this firmware profile/build");
+  if (bluetoothNowPlayingConfigured()) logLine("BLE Now Playing unavailable in this firmware profile/build");
   return false;
 }
 void shutdownBluetoothNowPlaying() {}

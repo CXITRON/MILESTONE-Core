@@ -7,13 +7,13 @@ The source code is always the final authority when documentation and implementat
 ## 1. Project baseline
 
 - Product: MILESTONE Core
-- Current firmware baseline: `2.0.8`
+- Current firmware baseline: `2.1.0`
 - Persistent config schema: `10`
 - Hardware: Waveshare ESP32-S3-Zero + SH1107 128×128 OLED
 - Main branch: `main`
 - Repository: `CXITRON/MILESTONE-Core`
-- Release transport: GitHub Releases + CORE/MEDIA profile manifests and BIN assets
-- Profile boundary: CORE owns all general/D-day views; MEDIA runs stored/live media only and must not mutate persisted CORE view settings. This is a compile-time boundary: CORE BIN must contain no media/stream routes, LittleFS media implementation, stream page, or converter UI.
+- Release transport: GitHub Releases + CORE/MEDIA/NOW profile manifests and BIN assets
+- Profile boundary: CORE owns all general/D-day views, MEDIA runs stored/live media only, and NOW runs iPhone AMS Bluetooth Now Playing only. MEDIA and NOW must not mutate persisted CORE view settings. This is a compile-time boundary: CORE and NOW contain no media/stream implementation, while CORE and MEDIA contain no Bluetooth runtime.
 - Build/release source of truth: `tools/make-release.sh`
 - Unified operator command: `milestone-release`
 
@@ -71,13 +71,13 @@ The installer copies the command to `~/.local/bin/milestone-release`.
 - host regression tests pass, including documentation/version synchronization checks
 - `AGENTS.md` and `MILESTONE_PROJECT_CONTEXT.md` baseline versions match `FIRMWARE_VERSION`
 - `README.md` contains the current version entry and keeps version history in newest-to-oldest semantic-version order
-- both fixed Arduino profile builds pass (`CORE` and `MEDIA`)
-- both generated BIN/manifest pairs exist and profile/asset/version/size/SHA-256 agree
+- all three fixed Arduino profile builds pass (`CORE`, `MEDIA`, and `NOW`)
+- all three generated BIN/manifest pairs exist and profile/asset/version/size/SHA-256 agree
 - new commits covered by the current commit-hygiene policy use the expected Author and Committer identity
 - those new commit messages contain no AI-tool attribution such as Codex/OpenAI/ChatGPT/etc.; historical commits are not rewritten solely for this check
 - a new version tag must point to the current HEAD; repair of an existing Release keeps its tag fixed and requires that tag to be an ancestor of HEAD
 - `main` and the version tag are pushed atomically
-- the GitHub Release contains `MILESTONE_Core.bin`, `MILESTONE_Core.json`, `MILESTONE_Media.bin`, and `MILESTONE_Media.json`
+- the GitHub Release contains all six CORE/MEDIA/NOW BIN and JSON assets
 - Taildrop hands publication to the incoming release command when it differs from the installed launcher, and every published asset is downloaded and SHA-256 checked after upload
 
 Do not bypass these checks merely to make a release succeed.

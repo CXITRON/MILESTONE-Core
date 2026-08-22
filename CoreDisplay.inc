@@ -989,6 +989,13 @@ void drawUpdateScreen() {
   display.sendBuffer();
 }
 
+#if MILESTONE_HAS_BLUETOOTH
+void setNowPlayingTextFont(const String &text) {
+  display.setFont(MilestoneCoreLogic::utf8ContainsHangul(text.c_str())
+                    ? u8g2_font_unifont_t_korean2
+                    : u8g2_font_unifont_t_japanese2);
+}
+
 void drawBluetoothNowPlayingScreen() {
   if (!oledReady) return;
   display.clearBuffer();
@@ -996,16 +1003,17 @@ void drawBluetoothNowPlayingScreen() {
   drawCenteredStr(bluetoothNowPlayingIsPlaying() ? "NOW PLAYING" : "PAUSED", 10);
   display.drawHLine(0, 14, 128);
 
-  display.setFont(u8g2_font_unifont_t_korean2);
-  drawScrollingUtf8(String(bluetoothNowPlayingTitle()), 37, 2, 124, true);
-  display.setFont(u8g2_font_unifont_t_korean2);
-  drawScrollingUtf8(String(bluetoothNowPlayingArtist()), 62, 2, 124, true);
+  const String title = bluetoothNowPlayingTitle();
+  const String artist = bluetoothNowPlayingArtist();
+  setNowPlayingTextFont(title);
+  drawScrollingUtf8(title, 37, 2, 124, true);
+  setNowPlayingTextFont(artist);
+  drawScrollingUtf8(artist, 62, 2, 124, true);
 
   String album = bluetoothNowPlayingAlbum();
   if (album.length()) {
-    display.setFont(u8g2_font_5x8_tf);
-    addEllipsisToFit(album, 122);
-    drawCenteredStr(album.c_str(), 79);
+    setNowPlayingTextFont(album);
+    drawScrollingUtf8(album, 82, 2, 124, true);
   }
 
   const float duration = bluetoothNowPlayingDurationSeconds();
@@ -1029,6 +1037,38 @@ void drawBluetoothNowPlayingScreen() {
   drawCenteredStr(footer, 118);
   display.sendBuffer();
 }
+
+void drawBluetoothNowWaitingScreen() {
+  display.clearBuffer();
+  display.setFont(u8g2_font_7x14B_tf);
+  drawCenteredStr("MILESTONE NOW", 18);
+  display.drawHLine(4, 25, 120);
+  display.setFont(u8g2_font_6x10_tf);
+  const char *stage = bluetoothNowPlayingStage();
+  if (strcmp(stage, "advertising") == 0) {
+    drawCenteredStr("BLE ADVERTISING", 49);
+    drawCenteredStr("Unlock iPhone", 70);
+    drawCenteredStr("and play music", 86);
+  } else if (strcmp(stage, "ready") == 0) {
+    drawCenteredStr("AMS READY", 54);
+    drawCenteredStr("Start playback", 78);
+  } else if (strcmp(stage, "error") == 0) {
+    drawCenteredStr("BLUETOOTH ERROR", 48);
+    String error = bluetoothNowPlayingError();
+    if (error.length() > 20) error = error.substring(0, 20);
+    drawCenteredStr(error.c_str(), 72);
+    drawCenteredStr("Retrying...", 92);
+  } else {
+    String status = stage;
+    status.toUpperCase();
+    drawCenteredStr(status.c_str(), 54);
+    drawCenteredStr("Preparing AMS", 78);
+  }
+  display.setFont(u8g2_font_5x8_tf);
+  drawCenteredStr("Hold BOOT 3s: setup", 119);
+  display.sendBuffer();
+}
+#endif
 
 void drawMainScreen() {
   if (!oledReady || displaySleeping) return;
@@ -1056,10 +1096,17 @@ void drawMainScreen() {
     drawResetConfirmation();
     return;
   }
+#if MILESTONE_HAS_BLUETOOTH
   if (bluetoothNowPlayingVisible()) {
     drawBluetoothNowPlayingScreen();
     return;
   }
+#if MILESTONE_HAS_NOW_VIEW
+  drawBluetoothNowWaitingScreen();
+  return;
+#endif
+#endif
+#if !MILESTONE_HAS_NOW_VIEW
   int8_t ox, oy;
   getBurninOffset(ox, oy);
   display.clearBuffer();
@@ -1100,4 +1147,5 @@ void drawMainScreen() {
 #endif
   }
   display.sendBuffer();
+#endif
 }

@@ -3,7 +3,7 @@ set -euo pipefail
 
 if (( $# < 1 || $# > 2 )); then
   echo "사용법: $0 VERSION [NOTES]" >&2
-  echo "예: $0 2.0.8 'Stabilize stored MEDIA playback and reset diagnosis'" >&2
+  echo "예: $0 2.1.0 'Split Bluetooth into the dedicated NOW profile'" >&2
   exit 2
 fi
 
@@ -60,10 +60,10 @@ cleanup() {
 }
 trap cleanup EXIT
 
-profiles=(core media)
-profile_ids=(1 2)
-asset_stems=(MILESTONE_Core MILESTONE_Media)
-markers=(MILESTONE_PROFILE_CORE MILESTONE_PROFILE_MEDIA)
+profiles=(core media now)
+profile_ids=(1 2 3)
+asset_stems=(MILESTONE_Core MILESTONE_Media MILESTONE_Now)
+markers=(MILESTONE_PROFILE_CORE MILESTONE_PROFILE_MEDIA MILESTONE_PROFILE_NOW)
 media_binary_markers=(/api/media/upload /api/stream/start /media/upload.tmp)
 ble_runtime_marker=MILESTONE_BLE_AMS_RUNTIME_V2
 
@@ -113,8 +113,8 @@ for index in "${!profiles[@]}"; do
     if strings -a -- "$source_bin" | grep -F -- "$media_marker" >/dev/null; then
       marker_found=true
     fi
-    if [[ $profile == core && $marker_found == true ]]; then
-      echo "오류: [core] 미디어/스트리밍 구현이 BIN에 남아 있습니다: $media_marker" >&2
+    if [[ $profile != media && $marker_found == true ]]; then
+      echo "오류: [$profile] 미디어/스트리밍 구현이 BIN에 남아 있습니다: $media_marker" >&2
       exit 2
     fi
     if [[ $profile == media && $marker_found == false ]]; then
@@ -126,12 +126,12 @@ for index in "${!profiles[@]}"; do
   if strings -a -- "$source_bin" | grep -F -- "$ble_runtime_marker" >/dev/null; then
     ble_marker_found=true
   fi
-  if [[ $profile == core && $ble_marker_found == false ]]; then
-    echo "오류: [core] BLE AMS 런타임 구현을 BIN에서 찾지 못했습니다." >&2
+  if [[ $profile == now && $ble_marker_found == false ]]; then
+    echo "오류: [now] BLE AMS 런타임 구현을 BIN에서 찾지 못했습니다." >&2
     exit 2
   fi
-  if [[ $profile == media && $ble_marker_found == true ]]; then
-    echo "오류: [media] BLE AMS 런타임 구현이 BIN에 포함됐습니다." >&2
+  if [[ $profile != now && $ble_marker_found == true ]]; then
+    echo "오류: [$profile] BLE AMS 런타임 구현이 BIN에 포함됐습니다." >&2
     exit 2
   fi
 
@@ -150,7 +150,7 @@ for index in "${!profiles[@]}"; do
   fi
 done
 
-# 두 프로필이 모두 검증된 뒤에만 공개 릴리스 산출물을 교체합니다.
+# 세 프로필이 모두 검증된 뒤에만 공개 릴리스 산출물을 교체합니다.
 for asset_stem in "${asset_stems[@]}"; do
   mv -- "$stage_dir/$asset_stem.bin" "$release_dir/$asset_stem.bin"
   mv -- "$stage_dir/$asset_stem.json" "$release_dir/$asset_stem.json"
@@ -166,4 +166,4 @@ for index in "${!profiles[@]}"; do
   echo "           $size bytes / $sha256"
 done
 echo
-echo "GitHub 태그 v${version}의 정식 Release에 위 네 파일을 함께 첨부하세요."
+echo "GitHub 태그 v${version}의 정식 Release에 위 여섯 파일을 함께 첨부하세요."

@@ -23,6 +23,7 @@ void handleStatus() {
   json += "\"media_supported\":" + String(MILESTONE_HAS_MEDIA ? "true" : "false") + ",";
   json += "\"bluetooth_supported\":" + String(MILESTONE_HAS_BLUETOOTH ? "true" : "false") + ",";
   json += "\"general_views_supported\":" + String(MILESTONE_HAS_GENERAL_VIEWS ? "true" : "false") + ",";
+  json += "\"now_view_supported\":" + String(MILESTONE_HAS_NOW_VIEW ? "true" : "false") + ",";
   json += "\"state\":\"" + String(runtimeStateName(runtimeState)) + "\",";
   json += "\"reset_reason\":\"" + String(resetReasonName(esp_reset_reason())) + "\",";
   json += "\"reset_reason_code\":" + String(static_cast<int>(esp_reset_reason())) + ",";
@@ -52,7 +53,7 @@ void handleStatus() {
   json += "\"time_sync_pending\":" + String(portalTimeSyncPending ? "true" : "false") + ",";
   json += "\"time_sync_success\":" + String(portalTimeSyncSucceeded ? "true" : "false") + ",";
   json += "\"time_sync_error\":\"" + jsonEscape(portalTimeSyncError) + "\",";
-  json += "\"bluetooth_enabled\":" + String(config.bluetoothNowPlaying ? "true" : "false") + ",";
+  json += "\"bluetooth_enabled\":" + String(bluetoothNowPlayingConfigured() ? "true" : "false") + ",";
   json += "\"bluetooth_active\":" + String(bluetoothNowPlayingRuntimeActive() ? "true" : "false") + ",";
   json += "\"bluetooth_connected\":" + String(bluetoothNowPlayingConnected() ? "true" : "false") + ",";
   json += "\"bluetooth_ams_ready\":" + String(bluetoothNowPlayingAmsReady() ? "true" : "false") + ",";
@@ -618,12 +619,14 @@ void handleGetRadioConfig() {
   String json = "{";
   json += "\"fixed_ap\":" + String(config.fixedApSecurity ? "true" : "false") + ",";
   json += "\"ap_password_set\":" + String(config.fixedApPassword.length() > 0 ? "true" : "false") + ",";
-  json += "\"bluetooth_now_playing\":" + String(config.bluetoothNowPlaying ? "true" : "false") + ",";
+  json += "\"bluetooth_now_playing\":" + String(bluetoothNowPlayingConfigured() ? "true" : "false") + ",";
 #if MILESTONE_HAS_BLUETOOTH && defined(CONFIG_NIMBLE_ENABLED)
-  json += "\"bluetooth_supported\":true";
+  json += "\"bluetooth_supported\":true,";
 #else
-  json += "\"bluetooth_supported\":false";
+  json += "\"bluetooth_supported\":false,";
 #endif
+  json += "\"bluetooth_configurable\":" +
+          String((MILESTONE_HAS_BLUETOOTH && !MILESTONE_BLUETOOTH_ALWAYS_ON) ? "true" : "false");
   json += "}";
   sendJson(200, json);
 }
@@ -654,8 +657,11 @@ void handlePostRadioConfig() {
   if (hasBluetoothUpdate && !parseBoolArg("bluetooth_now_playing", bluetoothEnabled)) {
     return sendJson(400, "{\"error\":\"Bluetooth 설정 값이 올바르지 않습니다.\"}");
   }
+  if (hasBluetoothUpdate && MILESTONE_BLUETOOTH_ALWAYS_ON) {
+    return sendJson(409, "{\"error\":\"NOW 프로필에서는 Bluetooth Now Playing이 항상 켜져 있습니다.\"}");
+  }
   if (hasBluetoothUpdate && bluetoothEnabled && !MILESTONE_HAS_BLUETOOTH) {
-    return sendJson(409, "{\"error\":\"CORE 펌웨어로 전환한 뒤 Bluetooth를 켤 수 있습니다.\"}");
+    return sendJson(409, "{\"error\":\"NOW 펌웨어로 전환한 뒤 Bluetooth를 사용할 수 있습니다.\"}");
   }
 #if !defined(CONFIG_NIMBLE_ENABLED)
   if (hasBluetoothUpdate && bluetoothEnabled) {
@@ -681,7 +687,7 @@ void handlePostRadioConfig() {
   const bool bluetoothChanged = previous.bluetoothNowPlaying != config.bluetoothNowPlaying;
   bool bluetoothActive = bluetoothNowPlayingRuntimeActive();
   if (bluetoothChanged) {
-    if (config.bluetoothNowPlaying) bluetoothActive = initializeBluetoothNowPlaying();
+    if (bluetoothNowPlayingConfigured()) bluetoothActive = initializeBluetoothNowPlaying();
     else {
       shutdownBluetoothNowPlaying();
       bluetoothActive = false;
@@ -929,8 +935,8 @@ void handlePostConfig() {
   memcpy(next.cycleOrder, parsedOrder, sizeof(parsedOrder));
   next.cycleIntervalSec = static_cast<uint8_t>(cycleInterval);
   if (!MILESTONE_HAS_GENERAL_VIEWS) {
-    // MEDIA may update shared device settings, but it must not rewrite the
-    // general-view state that CORE will restore after a profile switch.
+    // Non-CORE profiles may update shared device settings, but they must not
+    // rewrite the general-view state that CORE restores after a switch.
     next.title = config.title;
     next.target = config.target;
     next.message = config.message;
@@ -958,6 +964,10 @@ void handlePostConfig() {
     return sendJson(500, "{\"error\":\"설정을 저장하지 못했습니다. 저장공간 상태를 확인하세요.\"}");
   }
   currentCycleIndex = config.cycleIndex;
+#if MILESTONE_HAS_NOW_VIEW
+  currentView = View::DDAY_TIME;
+  closeMediaPlayback();
+#else
   if (!MILESTONE_HAS_GENERAL_VIEWS) {
     currentView = View::CUSTOM_MEDIA;
     if (mediaHasEnabledItems()) selectNextMediaItem();
@@ -973,6 +983,7 @@ void handlePostConfig() {
   } else if (MILESTONE_HAS_GENERAL_VIEWS) {
     closeMediaPlayback();
   }
+#endif
   if (currentView == View::DEVICE_INFO) deviceInfoStartedMs = millis();
   lastTemperatureReadMs = 0;
   invalidateTimeDisplayCache();
@@ -1101,7 +1112,7 @@ void handleSettingsReset() {
   if (!authorizePortalRequest()) return;
   if (rejectPortalWorkDuringStream()) return;
   if (!MILESTONE_HAS_GENERAL_VIEWS) {
-    return sendJson(409, "{\"error\":\"CORE 화면 설정은 MEDIA에서 초기화할 수 없습니다. CORE 펌웨어로 전환한 뒤 실행하세요.\"}");
+    return sendJson(409, "{\"error\":\"CORE 화면 설정은 현재 프로필에서 초기화할 수 없습니다. CORE 펌웨어로 전환한 뒤 실행하세요.\"}");
   }
   if (server.arg("confirm") != "DEFAULTS") return sendJson(400, "{\"error\":\"설정 초기화 확인 문자열이 올바르지 않습니다.\"}");
 

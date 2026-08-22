@@ -46,7 +46,7 @@ Arduino IDE의 `Tools > Manage Libraries…`에서 다음 라이브러리를 설
 
 1.7.0부터 `MILESTONE_Core.ino`는 공통 선언과 Arduino 진입점만 유지하고, 구현부를 같은 translation unit에 포함되는 `CoreConfig.inc`, `CoreDiagnostics.inc`, `CoreRollback.inc`, `CoreBluetooth.inc`, `CoreDisplay.inc`, `CoreNetwork.inc`, `CoreUpdate.inc`, `CorePortal.inc`, `CoreRuntime.inc`로 기계적으로 분리합니다. Arduino IDE에서는 이전과 동일하게 `MILESTONE_Core.ino`만 열면 됩니다.
 
-1.3.1에서 1.5.0으로 넘어갈 때는 파티션 테이블도 OTA용으로 바뀌어야 하므로 **Arduino IDE의 일반 업로드**를 사용해야 합니다. 앱 BIN 하나만 `0x10000` 주소에 기록하는 방식으로 최초 설치하지 마십시오. 1.5.0이 정상 설치된 뒤부터 Release의 OTA BIN으로 인터넷 업데이트할 수 있습니다. v2.0.0부터 CORE는 `MILESTONE_Core.bin`, MEDIA는 `MILESTONE_Media.bin`을 사용합니다.
+1.3.1에서 1.5.0으로 넘어갈 때는 파티션 테이블도 OTA용으로 바뀌어야 하므로 **Arduino IDE의 일반 업로드**를 사용해야 합니다. 앱 BIN 하나만 `0x10000` 주소에 기록하는 방식으로 최초 설치하지 마십시오. 1.5.0이 정상 설치된 뒤부터 Release의 OTA BIN으로 인터넷 업데이트할 수 있습니다. v2.1.0은 CORE `MILESTONE_Core.bin`, MEDIA `MILESTONE_Media.bin`, NOW `MILESTONE_Now.bin`의 세 프로필을 제공합니다.
 
 업로드가 포트 대기 상태에서 실패할 때만 다음 순서로 수동 다운로드 모드에 진입합니다.
 
@@ -66,7 +66,17 @@ Arduino IDE의 `Tools > Manage Libraries…`에서 다음 라이브러리를 설
 
 휴대폰이나 PC에서 해당 Wi-Fi에 접속합니다. “인터넷 없음” 경고는 정상입니다. 자동 설정 창이 뜨지 않으면 브라우저에서 `http://192.168.4.1`을 직접 엽니다.
 
-v1.11.0부터 **무선 및 설정 AP** 카드에서 기존 AP 방식을 그대로 둘지, 고정 AP 보안을 사용할지 선택할 수 있습니다. **고정 AP 설정 사용**이 꺼져 있으면 이전 버전과 동일하게 설정 AP를 열 때마다 새로운 8자리 임의 비밀번호를 사용합니다. 켜면 8~63자의 고정 비밀번호를 NVS에 저장해 다음 설정 AP 시작부터 재사용합니다. 고정 모드에서 비밀번호를 **공백으로 저장하면 암호 없는 오픈 AP**가 됩니다. 오픈 AP에서는 Wi-Fi 범위 안의 다른 사용자가 설정 포털에 접근해 기기 설정을 변경할 수 있으므로, 포털은 저장 전에 별도 경고와 확인을 표시합니다. 저장된 AP 비밀번호 원문은 조회 API나 브라우저에 다시 노출하지 않습니다.
+**무선 및 설정 AP** 카드에서 기존 AP 방식을 그대로 둘지, 고정 AP 보안을 사용할지 선택할 수 있습니다. **고정 AP 설정 사용**이 꺼져 있으면 설정 AP를 열 때마다 새로운 8자리 임의 비밀번호를 사용합니다. 켜면 8~63자의 고정 비밀번호를 NVS에 저장해 다음 설정 AP 시작부터 재사용합니다. 고정 모드에서 비밀번호를 **공백으로 저장하면 암호 없는 오픈 AP**가 됩니다. 오픈 AP에서는 Wi-Fi 범위 안의 다른 사용자가 설정 포털에 접근해 기기 설정을 변경할 수 있으므로, 포털은 저장 전에 별도 경고와 확인을 표시합니다. 저장된 AP 비밀번호 원문은 조회 API나 브라우저에 다시 노출하지 않습니다.
+
+v2.1.0부터 기능은 OTA 전환형 세 프로필로 분리됩니다.
+
+| 프로필 | 포함 기능 | Release 자산 |
+|---|---|---|
+| CORE | 디데이·시계·문구·대시보드·기기 정보 | `MILESTONE_Core.bin`, `MILESTONE_Core.json` |
+| MEDIA | 저장 미디어·라이브 스트리밍 | `MILESTONE_Media.bin`, `MILESTONE_Media.json` |
+| NOW | iPhone/iPad Apple Media Service Now Playing | `MILESTONE_Now.bin`, `MILESTONE_Now.json` |
+
+Bluetooth는 NOW에만 포함되고 항상 켜집니다. CORE와 MEDIA에는 BLE 런타임 자체가 들어가지 않아 메모리와 무선 부담이 없습니다. 설정 포털의 **펌웨어 업데이트 및 기능 전환**에서 NOW를 선택해 확인한 뒤, OLED에 대상이 표시되는 15초 동안 ESP32의 **BOOT 버튼을 짧게 눌러야** 실제 전환됩니다. v2.0.8 이하에는 NOW 자산 이름을 모르는 이전 전환 코드가 있으므로 먼저 현재 CORE 또는 MEDIA를 v2.1.0으로 같은 프로필 OTA 업데이트한 뒤 NOW로 전환하십시오.
 
 1. **주변 Wi-Fi 검색**을 누르고 사용할 **2.4GHz Wi-Fi**를 선택합니다.
 2. 일반 가정용 Wi-Fi는 `Personal / Open`, 학교·기관의 WPA2-Enterprise 계정형 Wi-Fi는 `WPA2-Enterprise (PEAP)`를 선택합니다. 지원 가능한 Enterprise AP가 감지되면 자동 선택됩니다. WPA3-Enterprise/CA 필수 AP는 검색 결과에서 지원 불가로 표시됩니다.
@@ -91,12 +101,12 @@ v1.11.0부터 **무선 및 설정 AP** 카드에서 기존 AP 방식을 그대�
 
 설정 포털의 두 초기화 기능은 서로 다릅니다.
 
-| 기능 | 일반·AP·Bluetooth 설정 | 저장된 Wi-Fi | 진단 이력 | 커스텀 미디어 | 재부팅 |
+| 기능 | 일반·AP 설정 | 저장된 Wi-Fi | 진단 이력 | 커스텀 미디어 | 재부팅 |
 |---|---|---|---|---|---|
 | 설정 기본값 복원 | 기본값으로 복원 | 유지 | 유지 | 유지 | 하지 않음 |
 | 공장 초기화 | 기본값으로 복원 | 모두 삭제 | 모두 삭제 | 모두 삭제 | 실행 |
 
-설정 기본값 복원은 마지막 시간 동기화 시각과 오프라인용 디데이 계산값도 유지하며, 고정 AP 설정과 Bluetooth Now Playing은 기본값인 꺼짐으로 돌아갑니다. 공장 초기화는 ESP32 Wi-Fi 드라이버에 남을 수 있는 자격 증명까지 삭제합니다.
+설정 기본값 복원은 마지막 시간 동기화 시각과 오프라인용 디데이 계산값도 유지하며 고정 AP 설정은 기본값으로 돌아갑니다. NOW의 Bluetooth는 프로필 정책상 항상 켜져 있으며 설정 기본값의 영향을 받지 않습니다. 공장 초기화는 ESP32 Wi-Fi 드라이버에 남을 수 있는 자격 증명까지 삭제합니다.
 
 ## 5. BOOT 버튼 조작
 
@@ -278,13 +288,13 @@ PC의 현재 프로젝트를 직접 수정한 경우에는 **MILESTONE_Core 프�
 
 ```bash
 cd /run/media/citron/T7/Documents/Dev/MILESTONE_Core
-milestone-release local 2.0.8 "Stabilize stored MEDIA playback and reset diagnosis"
+milestone-release local 2.1.0 "Split Bluetooth into the dedicated NOW profile"
 ```
 
 Tailscale Taildrop으로 `MILESTONE_Core_1.10.6.zip`을 받은 경우에는 교체 대상 프로젝트 디렉터리 밖의 정상적으로 존재하는 디렉터리에서 실행합니다. 기존 프로젝트가 교체될 때 현재 셸 경로가 사라지는 문제를 방지하기 위해 `/tmp`로 이동하는 방식을 권장합니다.
 
 ```bash
-cd /tmp && milestone-release taildrop 2.0.8 "Stabilize stored MEDIA playback and reset diagnosis"
+cd /tmp && milestone-release taildrop 2.1.0 "Split Bluetooth into the dedicated NOW profile"
 ```
 
 Taildrop 모드는 ZIP을 라이브 프로젝트에 바로 덮어쓰지 않습니다. 별도 staging 디렉터리에서 구조·버전·Git 상태를 검사하고 테스트와 ESP32 릴리즈 빌드까지 성공한 뒤에만 프로젝트를 교체합니다. GitHub 게시 전 실패하면 기존 프로젝트를 자동 복구합니다. `--dry-run`은 테스트/빌드까지만 수행하고 로컬 프로젝트·Git·GitHub를 변경하지 않습니다. `--yes`를 사용하지 않는 기본 동작은 최종 게시 직전에 한 번 확인합니다.
@@ -301,18 +311,20 @@ Taildrop 모드는 ZIP을 라이브 프로젝트에 바로 덮어쓰지 않습�
 
 ```bash
 chmod +x tools/make-release.sh
-./tools/make-release.sh 2.0.8 "Stabilize stored MEDIA playback and reset diagnosis"
+./tools/make-release.sh 2.1.0 "Split Bluetooth into the dedicated NOW profile"
 ```
 
-기본 설명을 사용하려면 `./tools/make-release.sh 2.0.8`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
+기본 설명을 사용하려면 `./tools/make-release.sh 2.1.0`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
 
-다음 네 파일이 `release/`에 생성됩니다.
+다음 여섯 파일이 `release/`에 생성됩니다.
 
 ```text
 release/MILESTONE_Core.bin
 release/MILESTONE_Core.json
 release/MILESTONE_Media.bin
 release/MILESTONE_Media.json
+release/MILESTONE_Now.bin
+release/MILESTONE_Now.json
 ```
 
 스크립트가 BIN의 실제 바이트 수와 SHA-256을 계산하므로 JSON을 손으로 수정하지 않는 것이 안전합니다. 릴리스 빌드 전에 `tools/test-core.sh`가 자동 실행되어 하드웨어 독립 핵심 로직과 포털/API 계약, **문서 기준 버전·README 버전 이력 순서 동기화**까지 모두 통과해야 다음 단계로 진행됩니다. 테스트만 따로 실행하려면 다음 명령을 사용합니다.
@@ -326,15 +338,15 @@ release/MILESTONE_Media.json
 일반적인 게시에는 위의 `milestone-release`를 사용합니다. 아래 수동 절차는 자동화 도구를 복구하거나 디버깅해야 할 때만 참고합니다.
 
 1. 저장소의 `Releases`에서 `Draft a new release`를 선택합니다.
-2. 버전과 동일한 태그를 만듭니다. 예: `v2.0.8`
-3. Release 제목을 `MILESTONE Core v2.0.8`로 지정합니다.
-4. CORE/MEDIA의 BIN과 JSON 네 파일을 모두 첨부합니다.
+2. 버전과 동일한 태그를 만듭니다. 예: `v2.1.0`
+3. Release 제목을 `MILESTONE Core v2.1.0`로 지정합니다.
+4. CORE/MEDIA/NOW의 BIN과 JSON 여섯 파일을 모두 첨부합니다.
 5. Pre-release가 아닌 최신 정식 Release로 게시합니다.
-6. 이전 버전이 설치된 기기에서 2.0.8 CORE/MEDIA OTA, 저장 영상의 단일 항목 연속 루프·다중 항목 경계 전환, 프레임 실패 백오프, reset reason 표시와 기존 설정·Wi-Fi·롤백 보호·진단 이력·커스텀 미디어 보존을 검증합니다.
+6. 2.0.8 CORE/MEDIA 기기에서 같은 프로필 2.1.0 OTA 후 CORE↔MEDIA↔NOW 전환, NOW AMS 연결·한글/일본어 메타데이터, 기존 설정·Wi-Fi·롤백 보호·진단 이력·커스텀 미디어 보존을 검증합니다.
 
-네 파일의 이름은 모든 Release에서 정확히 같아야 합니다. 초안이나 Pre-release는 `latest` 업데이트 대상으로 사용하지 않습니다.
+여섯 파일의 이름은 모든 Release에서 정확히 같아야 합니다. 초안이나 Pre-release는 `latest` 업데이트 대상으로 사용하지 않습니다.
 
-Taildrop ZIP의 `milestone-release`가 현재 설치본보다 새로우면, 게시 전에 받은 명령으로 실행을 인계합니다. 따라서 새 프로필이 추가된 첫 릴리스에서도 구버전 게시 로직이 자산을 빼먹지 않습니다. 이미 만들어진 동일 태그의 Release가 불완전하면 기존 자산의 SHA-256을 현재 빌드와 먼저 대조한 후 네 파일을 복구합니다. 게시 직후에도 네 자산을 다시 다운로드하여 이름·SHA-256을 검증합니다.
+Taildrop ZIP의 `milestone-release`가 현재 설치본보다 새로우면, 게시 전에 받은 명령으로 실행을 인계합니다. 따라서 새 프로필이 추가된 첫 릴리스에서도 구버전 게시 로직이 자산을 빼먹지 않습니다. 이미 만들어진 동일 태그의 Release가 불완전하면 기존 자산의 SHA-256을 현재 빌드와 먼저 대조한 후 여섯 파일을 복구합니다. 게시 직후에도 여섯 자산을 다시 다운로드하여 이름·SHA-256을 검증합니다.
 
 최초 1.5.0 배포에서는 먼저 1.5.0 BIN과 manifest를 정식 Release로 게시한 뒤 Arduino IDE 일반 업로드를 실행하는 순서를 권장합니다. USB 업로드 직후 자동 재부팅될 때 이미 1.5.0 manifest가 존재하므로 정상적으로 `최신 버전과 동일` 판정을 확인할 수 있습니다. Release를 나중에 게시해도 기기가 손상되지는 않지만, 첫 부팅에서는 manifest HTTP 404 오류가 표시됩니다.
 
@@ -382,6 +394,22 @@ Taildrop ZIP의 `milestone-release`가 현재 설치본보다 새로우면, 게�
 - STREAM_MODE에서 일반 백그라운드 기능을 격리하고 PSRAM 240프레임 링버퍼·X/Y dirty-tile OLED 갱신·적응형 출력 주기·프레임 드롭·80°C 스트림 상한으로 영상 수신/표시에 집중
 - 라이브 송신은 96프레임 초기 충전 후 큐 64프레임 이하에서 최대 8프레임씩 144프레임 이상으로 보충하며 ESP32가 소스 시간축과 OLED 출력 클록을 분리해 관리
 - 비차단 3초 부팅 로고와 우상단 NTP `T`·업데이트 `U` 상태 아이콘
+
+## v2.1.0 업데이트 안내
+
+v2.1.0은 Bluetooth Now Playing을 CORE에서 완전히 분리해 세 번째 **NOW** 프로필로 제공합니다. CORE는 디데이·시계·문구만, MEDIA는 저장 미디어·스트리밍만, NOW는 iPhone/iPad Apple Media Service 연결과 재생 정보만 실행합니다. 따라서 Bluetooth를 쓰지 않는 CORE/MEDIA에서는 BLE 런타임과 광고·연결 작업이 제거되어 메모리와 무선 부담이 줄어듭니다.
+
+NOW에서는 Bluetooth가 별도 설정 없이 항상 켜지며, 연결 전에는 광고/페어링/AMS 상태를 OLED에 표시하고 연결 뒤 제목·아티스트·앨범·진행률을 표시합니다. 한글이 포함된 메타데이터는 한국어 폰트, 그 외 일본어·영문 메타데이터는 일본어 폰트로 렌더링합니다. 프로필 전환은 기존 안전 절차대로 OLED의 `버전 @ 프로필` 대상을 확인한 뒤 물리 BOOT 버튼을 짧게 눌러 확정합니다.
+
+- `MILESTONE_Now.bin`·`MILESTONE_Now.json` OTA 자산 추가
+- CORE/MEDIA BIN에서 NimBLE·AMS 런타임 제거, NOW BIN에만 포함
+- NOW의 항상 켜진 BLE 광고·AMS 연결 상태 전용 화면
+- 제목·아티스트·앨범의 한글/일본어 UTF-8 폰트 자동 선택
+- 설정 포털에서 CORE·MEDIA·NOW 세 프로필 확인 및 BOOT 확정 전환
+- 빌드가 MEDIA 구현은 MEDIA에만, BLE 구현은 NOW에만 존재하는지 BIN 검사
+- 설정 스키마 10 유지; Wi-Fi·CORE 화면 설정·진단·저장 미디어 보존
+
+정식 버전: `2.1.0`
 
 ## v2.0.8 업데이트 안내
 

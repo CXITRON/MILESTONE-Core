@@ -1,7 +1,7 @@
 #include <Arduino.h>
 #include "FirmwareProfile.h"
 #if MILESTONE_HAS_BLUETOOTH && !defined(CONFIG_NIMBLE_ENABLED)
-#error "The CORE firmware requires an Arduino-ESP32 build with NimBLE enabled"
+#error "The NOW firmware requires an Arduino-ESP32 build with NimBLE enabled"
 #endif
 #include <Wire.h>
 #include <U8g2lib.h>
@@ -73,7 +73,7 @@ SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 
 namespace Milestone {
 
-constexpr char FIRMWARE_VERSION[] = "2.0.8";
+constexpr char FIRMWARE_VERSION[] = "2.1.0";
 constexpr char FIRMWARE_PROFILE[] = MILESTONE_FIRMWARE_PROFILE;
 constexpr char FIRMWARE_PROFILE_LABEL[] = MILESTONE_FIRMWARE_PROFILE_LABEL;
 constexpr char FIRMWARE_PROFILE_MARKER[] = MILESTONE_PROFILE_MARKER;
@@ -514,17 +514,21 @@ uint64_t uptimeSeconds() {
 }
 
 bool validFirmwareProfile(const String &profile) {
-  return profile == "core" || profile == "media";
+  return profile == "core" || profile == "media" || profile == "now";
 }
 
 const char *manifestAssetForProfile(const String &profile) {
   if (profile == FIRMWARE_PROFILE) return UPDATE_MANIFEST_ASSET;
-  return profile == "media" ? "MILESTONE_Media.json" : "MILESTONE_Core.json";
+  if (profile == "media") return "MILESTONE_Media.json";
+  if (profile == "now") return "MILESTONE_Now.json";
+  return "MILESTONE_Core.json";
 }
 
 const char *firmwareAssetForProfile(const String &profile) {
   if (profile == FIRMWARE_PROFILE) return UPDATE_ASSET_NAME;
-  return profile == "media" ? "MILESTONE_Media.bin" : "MILESTONE_Core.bin";
+  if (profile == "media") return "MILESTONE_Media.bin";
+  if (profile == "now") return "MILESTONE_Now.bin";
+  return "MILESTONE_Core.bin";
 }
 
 String firmwareIdentity(const String &version, const String &profile) {
