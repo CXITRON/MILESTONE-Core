@@ -999,27 +999,14 @@ void setNowPlayingTextFont(const String &text) {
                     : u8g2_font_unifont_t_japanese2);
 }
 
-void drawBluetoothNowPlayingScreen() {
-  if (!oledReady) return;
-  display.clearBuffer();
-  display.setFont(u8g2_font_6x10_tf);
-  drawCenteredStr(bluetoothNowPlayingIsPlaying() ? "NOW PLAYING" : "PAUSED", 10);
-  display.drawHLine(0, 14, 128);
-
-  const String title = bluetoothNowPlayingTitle();
-  const String artist = bluetoothNowPlayingArtist();
-  setNowPlayingTextFont(title);
-  drawScrollingUtf8(title, 48, 2, 124, true, 2);
-  setNowPlayingTextFont(artist);
-  drawScrollingUtf8(artist, 73, 2, 124, true);
-
+void drawNowPlayingProgress(uint8_t frameY, uint8_t footerY) {
   const float duration = bluetoothNowPlayingDurationSeconds();
   const float elapsedSeconds = bluetoothCurrentElapsedSeconds();
-  display.drawFrame(7, 87, 114, 8);
+  display.drawFrame(7, frameY, 114, 8);
   if (duration > 0.0f) {
     int progress = static_cast<int>((elapsedSeconds / duration) * 110.0f);
     progress = clampInt(progress, 0, 110);
-    if (progress > 0) display.drawBox(9, 89, progress, 4);
+    if (progress > 0) display.drawBox(9, frameY + 2, progress, 4);
   }
   const int elapsedWhole = static_cast<int>(elapsedSeconds);
   const int durationWhole = static_cast<int>(duration);
@@ -1031,7 +1018,74 @@ void drawBluetoothNowPlayingScreen() {
     snprintf(footer, sizeof(footer), "%d:%02d", elapsedWhole / 60, elapsedWhole % 60);
   }
   display.setFont(u8g2_font_6x10_tf);
-  drawCenteredStr(footer, 118);
+  drawCenteredStr(footer, footerY);
+}
+
+void drawNowArtworkPlaceholder(uint8_t x, uint8_t y, uint8_t size) {
+  display.drawFrame(x, y, size, size);
+  display.drawLine(x, y, x + size - 1, y + size - 1);
+  display.drawLine(x + size - 1, y, x, y + size - 1);
+  display.setFont(u8g2_font_5x8_tf);
+  String state = nowArtworkStatus();
+  state.toUpperCase();
+  if (state.length() > 15) state = state.substring(0, 15);
+  const int width = display.getStrWidth(state.c_str());
+  display.setDrawColor(0);
+  display.drawBox(x + 1, y + size / 2 - 5, size - 2, 10);
+  display.setDrawColor(1);
+  display.drawStr(x + max(1, (static_cast<int>(size) - width) / 2), y + size / 2 + 3,
+                  state.c_str());
+}
+
+void drawBluetoothNowPlayingScreen() {
+  if (!oledReady) return;
+  display.clearBuffer();
+  display.setFont(u8g2_font_6x10_tf);
+  drawCenteredStr(bluetoothNowPlayingIsPlaying() ? "NOW PLAYING" : "PAUSED", 10);
+  display.drawHLine(0, 14, 128);
+
+  const String title = bluetoothNowPlayingTitle();
+  const String artist = bluetoothNowPlayingArtist();
+  const String album = bluetoothNowPlayingAlbum();
+  switch (config.nowLayout) {
+    case NowLayout::TITLE_ONLY:
+      setNowPlayingTextFont(title);
+      drawScrollingUtf8(title, 62, 2, 124, true, 2);
+      drawNowPlayingProgress(87, 118);
+      break;
+    case NowLayout::TITLE_ARTIST:
+      setNowPlayingTextFont(title);
+      drawScrollingUtf8(title, 48, 2, 124, true, 2);
+      setNowPlayingTextFont(artist);
+      drawScrollingUtf8(artist, 73, 2, 124, true);
+      drawNowPlayingProgress(87, 118);
+      break;
+    case NowLayout::TITLE_ARTIST_ALBUM:
+      setNowPlayingTextFont(title);
+      drawScrollingUtf8(title, 40, 2, 124, true, 2);
+      setNowPlayingTextFont(artist);
+      drawScrollingUtf8(artist, 64, 2, 124, true);
+      setNowPlayingTextFont(album);
+      drawScrollingUtf8(album.length() ? album : String("-"), 81, 2, 124, true);
+      drawNowPlayingProgress(90, 118);
+      break;
+    case NowLayout::TITLE_ARTWORK: {
+      const uint8_t *art = nowArtworkSmallBitmap();
+      if (nowArtworkAvailable() && art) display.drawXBMP(34, 16, NOW_ART_SMALL_W, NOW_ART_SMALL_H, art);
+      else drawNowArtworkPlaceholder(34, 16, NOW_ART_SMALL_W);
+      setNowPlayingTextFont(title);
+      drawScrollingUtf8(title, 87, 2, 124, true);
+      drawNowPlayingProgress(94, 122);
+      break;
+    }
+    case NowLayout::ARTWORK_ONLY: {
+      const uint8_t *art = nowArtworkLargeBitmap();
+      if (nowArtworkAvailable() && art) display.drawXBMP(20, 15, NOW_ART_LARGE_W, NOW_ART_LARGE_H, art);
+      else drawNowArtworkPlaceholder(20, 15, NOW_ART_LARGE_W);
+      drawNowPlayingProgress(105, 126);
+      break;
+    }
+  }
   display.sendBuffer();
 }
 

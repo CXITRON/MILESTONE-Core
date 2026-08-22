@@ -631,6 +631,47 @@ void handleGetRadioConfig() {
   sendJson(200, json);
 }
 
+#if MILESTONE_HAS_NOW_VIEW
+const char *nowLayoutName(NowLayout layout) {
+  switch (layout) {
+    case NowLayout::TITLE_ONLY: return "곡명만";
+    case NowLayout::TITLE_ARTIST: return "곡명 + 아티스트";
+    case NowLayout::TITLE_ARTIST_ALBUM: return "곡명 + 아티스트 + 앨범명";
+    case NowLayout::TITLE_ARTWORK: return "곡명 + 앨범 표지";
+    case NowLayout::ARTWORK_ONLY: return "앨범 표지 중심";
+  }
+  return "알 수 없음";
+}
+
+void handleGetNowConfig() {
+  if (!requireSetupApRequest()) return;
+  String json = "{\"layout\":" + String(static_cast<uint8_t>(config.nowLayout));
+  json += ",\"layout_name\":\"" + jsonEscape(nowLayoutName(config.nowLayout)) + "\"";
+  json += ",\"artwork_available\":" + String(nowArtworkAvailable() ? "true" : "false");
+  json += ",\"artwork_status\":\"" + jsonEscape(nowArtworkStatus()) + "\"}";
+  sendJson(200, json);
+}
+
+void handlePostNowConfig() {
+  if (!authorizePortalRequest()) return;
+  if (!server.hasArg("layout")) return sendJson(400, "{\"error\":\"NOW 표시 구성이 누락되었습니다.\"}");
+  const int layout = server.arg("layout").toInt();
+  if (layout < 0 || layout > static_cast<int>(NowLayout::ARTWORK_ONLY) ||
+      String(layout) != server.arg("layout")) {
+    return sendJson(400, "{\"error\":\"NOW 표시 구성 값이 올바르지 않습니다.\"}");
+  }
+  const Config previous = config;
+  config.nowLayout = static_cast<NowLayout>(layout);
+  if (!saveGeneralConfig()) {
+    config = previous;
+    return sendJson(500, "{\"error\":\"NOW 표시 구성을 저장하지 못했습니다.\"}");
+  }
+  scrollStartedMs = millis();
+  wakeDisplay();
+  sendJson(200, "{\"ok\":true}");
+}
+#endif
+
 void handlePostRadioConfig() {
   if (!authorizePortalRequest()) return;
   if (rejectPortalWorkDuringStream()) return;
@@ -1354,9 +1395,15 @@ void registerPortalRoutes() {
 #endif
   server.on("/api/config", HTTP_GET, handleGetConfig);
   server.on("/api/radio-config", HTTP_GET, handleGetRadioConfig);
+#if MILESTONE_HAS_NOW_VIEW
+  server.on("/api/now-config", HTTP_GET, handleGetNowConfig);
+#endif
   server.on("/api/wifi/scan", HTTP_GET, handleWifiScan);
   server.on("/api/config", HTTP_POST, handlePostConfig);
   server.on("/api/radio-config", HTTP_POST, handlePostRadioConfig);
+#if MILESTONE_HAS_NOW_VIEW
+  server.on("/api/now-config", HTTP_POST, handlePostNowConfig);
+#endif
   server.on("/api/wifi/test", HTTP_POST, handleWifiTest);
   server.on("/api/wifi/delete", HTTP_POST, handleDeleteSavedWifi);
   server.on("/api/time/sync", HTTP_POST, handleTimeSync);

@@ -51,7 +51,7 @@ void finishNormalNtpSuccess() {
     wifiSleepDeferredForUpdate = config.wifiSleep;
     updateCheckNotBeforeMs = millis() + UPDATE_NETWORK_SETTLE_MS;
     requestFirmwareUpdateCheck(UpdateCheckReason::WEEKLY);
-  } else if (config.wifiSleep) {
+  } else if (config.wifiSleep && !nowArtworkNeedsNetwork()) {
     enterWifiSleep();
   } else {
     // Always-connected mode prioritizes network reliability. Do not silently
@@ -301,7 +301,8 @@ void processNetwork() {
       stationNetworkReady() && !portalActive && !ntpRequestActive &&
       pendingUpdateCheckReason == UpdateCheckReason::NONE && !updateInstallRequested &&
       !updatePromptVisible && updateCanPause && !bootUpdateCheckPending &&
-      !updateCheckAfterNetworkReady && !firmwareUpdateCheckDue() && !updateRetryDue) {
+      !updateCheckAfterNetworkReady && !firmwareUpdateCheckDue() && !updateRetryDue &&
+      !nowArtworkNeedsNetwork()) {
     wifiSleepDeferredForUpdate = false;
     enterWifiSleep();
   }
@@ -324,6 +325,9 @@ void processFirmwareUpdate() {
   // LittleFS upload and OTA both perform long flash writes. Never start a new
   // firmware operation while the setup portal is receiving custom media.
   if (mediaTransferBusy()) return;
+  // Album-art HTTPS uses the same constrained TLS/internal-RAM pool. Keep a
+  // queued update pending until the bounded background lookup has exited.
+  if (nowArtworkTransferBusy()) return;
 
   if (updateState == UpdateState::CURRENT && updateCurrentVisibleMs != 0 &&
       elapsed(now, updateCurrentVisibleMs, UPDATE_CURRENT_HOLD_MS)) {
@@ -674,6 +678,22 @@ void advanceView(bool persist) {
 #endif
 }
 
+void advanceNowLayout() {
+#if MILESTONE_HAS_NOW_VIEW
+  const Config previous = config;
+  const uint8_t next = (static_cast<uint8_t>(config.nowLayout) + 1U) % 5U;
+  config.nowLayout = static_cast<NowLayout>(next);
+  if (!saveGeneralConfig()) {
+    config = previous;
+    logLine("NOW layout change could not be persisted");
+    return;
+  }
+  scrollStartedMs = millis();
+  wakeDisplay();
+  logLine(String("NOW layout -> ") + String(next));
+#endif
+}
+
 void processCycle() {
   if (thermalSafeMode || bootSplashActive() || portalActive || resetConfirmation || buttonRawPressed ||
       buttonStablePressed || displaySleeping || firmwareUpdateBusy() || updatePromptVisible) return;
@@ -766,7 +786,11 @@ void handleButtonRelease(uint32_t heldMs) {
     return;
   }
   if (heldMs < 1000) {
+#if MILESTONE_HAS_NOW_VIEW
+    advanceNowLayout();
+#else
     advanceView(true);
+#endif
   } else if (heldMs < 3000) {
     // Deliberate no-op zone: prevents accidental setup entry.
   } else if (heldMs < 8000) {
@@ -1112,6 +1136,7 @@ void loopFirmware() {
 #endif
   processFirmwareUpdate();
   if (MILESTONE_HAS_BLUETOOTH) processBluetoothNowPlaying();
+  processNowArtwork();
   processDiagnostics();
   processCycle();
   processDisplay();

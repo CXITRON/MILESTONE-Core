@@ -201,6 +201,7 @@ bool saveGeneralConfig() {
   if (prefs.putBool("ap_fixed", config.fixedApSecurity) != sizeof(bool)) success = false;
   if (!putStringVerified("ap_pass", config.fixedApPassword)) success = false;
   if (prefs.putBool("ble_media", config.bluetoothNowPlaying) != sizeof(bool)) success = false;
+  if (prefs.putUChar("now_layout", static_cast<uint8_t>(config.nowLayout)) != sizeof(uint8_t)) success = false;
   if (prefs.putUChar("bright", config.brightness) != sizeof(uint8_t)) success = false;
   if (prefs.putUChar("night_lvl", config.nightLevel) != sizeof(uint8_t)) success = false;
   if (prefs.putBool("led_en", config.ledEnabled) != sizeof(bool)) success = false;
@@ -350,6 +351,10 @@ bool loadConfig() {
     }
     config.bluetoothNowPlaying = prefs.getBool("ble_media", false);
   }
+  const uint8_t storedNowLayout = prefs.getUChar(
+      "now_layout", static_cast<uint8_t>(NowLayout::TITLE_ARTIST));
+  config.nowLayout = storedNowLayout <= static_cast<uint8_t>(NowLayout::ARTWORK_ONLY)
+      ? static_cast<NowLayout>(storedNowLayout) : NowLayout::TITLE_ARTIST;
   config.brightness = clampInt(prefs.getUChar("bright", 180), 1, 255);
   config.nightLevel = clampInt(prefs.getUChar("night_lvl", 45), 1, 255);
   config.ledEnabled = prefs.getBool("led_en", true);

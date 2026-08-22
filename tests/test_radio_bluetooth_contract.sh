@@ -18,7 +18,7 @@ reject() {
   fi
 }
 
-require 'FIRMWARE_VERSION\[\] = "2\.1\.1"' MILESTONE_Core.ino 'firmware version is not 2.1.1'
+require 'FIRMWARE_VERSION\[\] = "2\.2\.0"' MILESTONE_Core.ino 'firmware version is not 2.2.0'
 require 'CONFIG_VERSION = 10' MILESTONE_Core.ino 'configuration schema is not 10'
 require 'bool fixedApSecurity = false;' MILESTONE_Core.ino 'fixed AP security must default off'
 require 'String fixedApPassword;' MILESTONE_Core.ino 'fixed AP password setting missing'
@@ -27,6 +27,7 @@ require 'prefs\.putBool\("ap_fixed", config\.fixedApSecurity\)' CoreConfig.inc '
 require 'putStringVerified\("ap_pass", config\.fixedApPassword\)' CoreConfig.inc 'fixed AP password is not persisted transactionally'
 require 'prefs\.putBool\("ble_media", config\.bluetoothNowPlaying\)' CoreConfig.inc 'Bluetooth setting is not persisted'
 require 'const bool migrateToV10 = version < 10;' CoreConfig.inc 'schema 10 migration gate missing'
+require 'prefs\.putUChar\("now_layout"' CoreConfig.inc 'NOW layout is not persisted'
 require 'config\.fixedApSecurity = false;' CoreConfig.inc 'older schemas must default fixed AP mode off'
 require 'config\.bluetoothNowPlaying = false;' CoreConfig.inc 'older schemas must default Bluetooth off'
 
@@ -95,8 +96,17 @@ require 'if \(bluetoothNowPlayingVisible\(\)\)' CoreDisplay.inc 'Now Playing mus
 require 'u8g2_font_unifont_t_japanese2' CoreDisplay.inc 'NOW metadata Japanese font routing missing'
 require 'utf8ContainsHangul' CoreDisplay.inc 'NOW metadata Korean font routing missing'
 require 'drawUTF8X2' CoreDisplay.inc 'NOW title must render larger than the artist'
-reject 'bluetoothNowPlayingAlbum\(\)' CoreDisplay.inc 'NOW display must not render album metadata'
-reject 'AMS_TRACK_ALBUM' CoreBluetooth.inc 'NOW must not subscribe to unused album metadata'
+require 'bluetoothNowPlayingAlbum\(\)' CoreDisplay.inc 'album layout must render AMS album metadata'
+require 'AMS_TRACK_ALBUM' CoreBluetooth.inc 'album layout needs AMS album metadata subscription'
+require 'MILESTONE_NOW_ARTWORK_RUNTIME_V1' CoreArtwork.inc 'NOW artwork runtime marker missing'
+require 'xTaskCreate\(nowArtworkWorker' CoreArtwork.inc 'artwork lookup must stay off the cooperative main loop'
+require 'NOW_ART_TRACK_SETTLE_MS' CoreArtwork.inc 'rapid track changes need a settle/debounce window'
+require 'NOW_ART_CACHE_SLOTS = 6' CoreArtwork.inc 'recent artwork cache is missing'
+require 'MusicBrainz|musicbrainz\.org' CoreArtwork.inc 'direct MusicBrainz lookup missing'
+require 'coverartarchive\.org' CoreArtwork.inc 'direct Cover Art Archive lookup missing'
+require 'esp_jpeg_decode' CoreArtwork.inc 'on-device JPEG decoding missing'
+require 'advanceNowLayout\(\)' CoreRuntime.inc 'BOOT NOW layout cycling missing'
+require 'server\.on\("/api/now-config"' CorePortal.inc 'NOW layout portal API missing'
 require 'constexpr uint8_t VIEW_COUNT = 8;' MILESTONE_Core.ino 'existing eight-view cycle contract must remain unchanged'
 
 require 'server\.on\("/api/radio-config", HTTP_GET, handleGetRadioConfig\)' CorePortal.inc 'radio config GET route missing'

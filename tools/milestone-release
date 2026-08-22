@@ -54,9 +54,9 @@ Options:
 
 Examples:
   cd /run/media/citron/T7/Documents/Dev/MILESTONE_Core
-  milestone-release local 2.1.1 "Harden NOW update checks and refine metadata layout"
+  milestone-release local 2.2.0 "Add selectable NOW layouts and on-device album artwork"
 
-  cd /tmp && milestone-release taildrop 2.1.1 "Harden NOW update checks and refine metadata layout"
+  cd /tmp && milestone-release taildrop 2.2.0 "Add selectable NOW layouts and on-device album artwork"
 USAGE
 }
 

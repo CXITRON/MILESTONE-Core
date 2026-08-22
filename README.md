@@ -115,7 +115,7 @@ Bluetooth는 NOW에만 포함되고 항상 켜집니다. CORE와 MEDIA에는 BLE
 | 누른 시간 | 동작 |
 |---|---|
 | 50ms 미만 | 무시 |
-| 50ms 이상 1초 미만 | 다음 화면, 현재 화면 저장 |
+| 50ms 이상 1초 미만 | CORE/MEDIA: 다음 화면 · NOW: 다섯 표시 구성 순환 및 저장 |
 | 1초 이상 3초 미만 | 아무 동작 없음 |
 | 3초 이상 8초 미만 | 설정 Wi-Fi 열기 |
 | 8초 이상 | 초기화 확인 화면 |
@@ -132,12 +132,16 @@ Bluetooth는 NOW에만 포함되고 항상 켜집니다. CORE와 MEDIA에는 BLE
 
 스키마 10은 고정 AP 사용 여부·고정 AP 비밀번호·Bluetooth Now Playing 사용 여부를 추가합니다. 이전 설정을 마이그레이션할 때 두 기능은 모두 기본적으로 꺼지므로 기존의 임의 AP 비밀번호 동작과 기존 화면 순서는 그대로 유지됩니다.
 
+v2.2.0의 NOW 표시 구성은 스키마 10 안의 선택적 `now_layout` 키로 저장합니다. 키가 없는 기존 기기는 v2.1.1과 같은 **곡명 + 아티스트**를 기본으로 사용하고, v2.1.1로 롤백하면 구버전은 이 키를 무시합니다. Wi-Fi, CORE 화면 순서, AP 보안, 진단과 저장 미디어는 그대로 유지됩니다.
+
 
 ## 7. Bluetooth Now Playing (iPhone/iPad)
 
 NOW 프로필은 iPhone/iPad의 **Apple Media Service(AMS)** 를 이용해 Bluetooth Now Playing을 표시합니다. 별도의 MILESTONE 전용 앱은 필요하지 않으며 NOW에서는 Bluetooth가 항상 켜집니다. CORE와 MEDIA에는 Bluetooth 런타임이 포함되지 않습니다.
 
-연결과 AMS 구독이 준비되면 곡 제목, 아티스트, 재생/일시정지 상태와 재생 진행률을 표시합니다. 제목은 아티스트보다 2배 크게 표시하고 앨범명은 구독하거나 표시하지 않습니다. 긴 한글·일본어·영문 텍스트는 UTF-8 스크롤 렌더러를 사용합니다. NOW는 기존 8비트 CORE 순환 마스크와 저장된 화면 순서를 변경하지 않습니다.
+연결과 AMS 구독이 준비되면 곡 제목, 아티스트, 앨범명, 재생/일시정지 상태와 재생 진행률을 사용할 수 있습니다. NOW에서 BOOT 버튼을 1초 미만으로 누르거나 설정 포털의 **NOW 표시**에서 `곡명만`, `곡명 + 아티스트`, `곡명 + 아티스트 + 앨범명`, `곡명 + 앨범 표지`, `앨범 표지 중심`을 선택합니다. 모든 구성에 진행 막대와 재생/전체 시간이 남고, 텍스트 구성에서는 곡 제목을 아티스트보다 크게 표시합니다. 긴 한글·일본어·영문 텍스트는 UTF-8 스크롤 렌더러를 사용합니다. NOW는 기존 8비트 CORE 순환 마스크와 저장된 화면 순서를 변경하지 않습니다.
+
+표지 구성은 중계 서버나 별도 API 키 없이 ESP32가 MusicBrainz에서 release-group을 찾고 Cover Art Archive의 250px 표지를 직접 받습니다. 앨범명 + 아티스트를 우선 사용하고 앨범명이 없을 때 곡명 + 아티스트로 검색합니다. JPEG는 ESP32 내부에서 RGB565로 축소 디코딩한 뒤 1비트 OLED 이미지로 변환하며 최근 6곡을 PSRAM에 보관합니다. 곡을 연속으로 넘길 때는 마지막 메타데이터 변경 후 1.4초가 지난 최신 곡만 조회하고, 늦게 끝난 이전 결과는 폐기합니다. 조회 실패·표지 없음·오프라인·메모리 부족이어도 AMS 텍스트와 진행률은 계속 표시됩니다.
 
 NOW의 업데이트 확인·설치는 TLS용 내부 RAM을 확보하기 전에 iPhone 연결 종료를 요청하고, 일치하는 GAP disconnect 완료 이벤트를 확인한 뒤에만 NimBLE 스택을 해제합니다. 2.5초 안에 확인되지 않거나 종료 요청이 실패하면 업데이트 작업을 미루고 스택 해제를 거부해 PANIC을 방지합니다.
 
@@ -288,13 +292,13 @@ PC의 현재 프로젝트를 직접 수정한 경우에는 **MILESTONE_Core 프�
 
 ```bash
 cd /run/media/citron/T7/Documents/Dev/MILESTONE_Core
-milestone-release local 2.1.1 "Harden NOW update checks and refine metadata layout"
+milestone-release local 2.2.0 "Add selectable NOW layouts and on-device album artwork"
 ```
 
 Tailscale Taildrop으로 `MILESTONE_Core_1.10.6.zip`을 받은 경우에는 교체 대상 프로젝트 디렉터리 밖의 정상적으로 존재하는 디렉터리에서 실행합니다. 기존 프로젝트가 교체될 때 현재 셸 경로가 사라지는 문제를 방지하기 위해 `/tmp`로 이동하는 방식을 권장합니다.
 
 ```bash
-cd /tmp && milestone-release taildrop 2.1.1 "Harden NOW update checks and refine metadata layout"
+cd /tmp && milestone-release taildrop 2.2.0 "Add selectable NOW layouts and on-device album artwork"
 ```
 
 Taildrop 모드는 ZIP을 라이브 프로젝트에 바로 덮어쓰지 않습니다. 별도 staging 디렉터리에서 구조·버전·Git 상태를 검사하고 테스트와 ESP32 릴리즈 빌드까지 성공한 뒤에만 프로젝트를 교체합니다. GitHub 게시 전 실패하면 기존 프로젝트를 자동 복구합니다. `--dry-run`은 테스트/빌드까지만 수행하고 로컬 프로젝트·Git·GitHub를 변경하지 않습니다. `--yes`를 사용하지 않는 기본 동작은 최종 게시 직전에 한 번 확인합니다.
@@ -311,10 +315,10 @@ Taildrop 모드는 ZIP을 라이브 프로젝트에 바로 덮어쓰지 않습�
 
 ```bash
 chmod +x tools/make-release.sh
-./tools/make-release.sh 2.1.1 "Harden NOW update checks and refine metadata layout"
+./tools/make-release.sh 2.2.0 "Add selectable NOW layouts and on-device album artwork"
 ```
 
-기본 설명을 사용하려면 `./tools/make-release.sh 2.1.1`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
+기본 설명을 사용하려면 `./tools/make-release.sh 2.2.0`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
 
 다음 여섯 파일이 `release/`에 생성됩니다.
 
@@ -338,11 +342,11 @@ release/MILESTONE_Now.json
 일반적인 게시에는 위의 `milestone-release`를 사용합니다. 아래 수동 절차는 자동화 도구를 복구하거나 디버깅해야 할 때만 참고합니다.
 
 1. 저장소의 `Releases`에서 `Draft a new release`를 선택합니다.
-2. 버전과 동일한 태그를 만듭니다. 예: `v2.1.1`
-3. Release 제목을 `MILESTONE Core v2.1.1`로 지정합니다.
+2. 버전과 동일한 태그를 만듭니다. 예: `v2.2.0`
+3. Release 제목을 `MILESTONE Core v2.2.0`로 지정합니다.
 4. CORE/MEDIA/NOW의 BIN과 JSON 여섯 파일을 모두 첨부합니다.
 5. Pre-release가 아닌 최신 정식 Release로 게시합니다.
-6. 2.1.0 CORE/MEDIA/NOW 기기에서 같은 프로필 2.1.1 OTA, 연결된 NOW의 업데이트 확인, 제목/아티스트 레이아웃과 기존 설정·Wi-Fi·롤백 보호·진단 이력·커스텀 미디어 보존을 검증합니다.
+6. 2.1.1 CORE/MEDIA/NOW 기기에서 같은 프로필 2.2.0 OTA, 연결된 NOW의 업데이트 확인, 다섯 NOW 구성·BOOT 순환·표지 폴백과 기존 설정·Wi-Fi·롤백 보호·진단 이력·커스텀 미디어 보존을 검증합니다.
 
 여섯 파일의 이름은 모든 Release에서 정확히 같아야 합니다. 초안이나 Pre-release는 `latest` 업데이트 대상으로 사용하지 않습니다.
 
@@ -394,6 +398,21 @@ Taildrop ZIP의 `milestone-release`가 현재 설치본보다 새로우면, 게�
 - STREAM_MODE에서 일반 백그라운드 기능을 격리하고 PSRAM 240프레임 링버퍼·X/Y dirty-tile OLED 갱신·적응형 출력 주기·프레임 드롭·80°C 스트림 상한으로 영상 수신/표시에 집중
 - 라이브 송신은 96프레임 초기 충전 후 큐 64프레임 이하에서 최대 8프레임씩 144프레임 이상으로 보충하며 ESP32가 소스 시간축과 OLED 출력 클록을 분리해 관리
 - 비차단 3초 부팅 로고와 우상단 NTP `T`·업데이트 `U` 상태 아이콘
+
+## v2.2.0 업데이트 안내
+
+v2.2.0은 NOW 화면을 다섯 가지로 선택할 수 있게 하고, 중계 서버 없이 ESP32가 직접 앨범 표지를 조회·변환하는 기능을 추가합니다.
+
+- NOW에서 BOOT 버튼을 짧게 눌러 `곡명만` → `곡명 + 아티스트` → `곡명 + 아티스트 + 앨범명` → `곡명 + 앨범 표지` → `앨범 표지 중심` 순환
+- 기존 설정 포털에 NOW 전용 표시 카드와 별도 저장 API 추가
+- 모든 구성에서 재생 상태, 진행 막대와 재생/전체 시간 유지
+- AMS 앨범명을 활용한 MusicBrainz release-group 검색과 Cover Art Archive 직접 HTTPS 조회
+- ESP32 내장 JPEG 디코더로 RGB565 축소 후 60×60/88×88 1비트 OLED 변환
+- 마지막 곡 변경 1.4초 안정화, 오래된 결과 폐기, 최근 6곡 PSRAM 캐시로 연속 넘김 대응
+- 표지 작업과 OTA HTTPS를 직렬화하고, 표지 실패 시 텍스트·진행률로 안전하게 폴백
+- 설정 스키마 10을 유지하고 기존 v2.1.1 화면과 같은 `곡명 + 아티스트`를 기본값으로 적용해 롤백 호환성 보존
+
+정식 버전: `2.2.0`
 
 ## v2.1.1 업데이트 안내
 

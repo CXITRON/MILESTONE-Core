@@ -1,6 +1,6 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v2.1.1
+> Current baseline: MILESTONE Core v2.2.0
 > Hardware: Waveshare ESP32-S3-Zero + SH1107 128×128 OLED
 > Repository: `CXITRON/MILESTONE-Core`
 
@@ -89,13 +89,13 @@ The `*.inc` runtime files are intentionally included into the sketch as one tran
 Firmware and persistent schema versions are separate concepts.
 
 ```cpp
-FIRMWARE_VERSION = "2.1.1"
+FIRMWARE_VERSION = "2.2.0"
 CONFIG_VERSION = 10
 ```
 
 Increment `CONFIG_VERSION` only when persistent NVS layout/meaning changes and implement a migration path. A firmware version change by itself must not force a schema reset.
 
-Schema 9 appends `CUSTOM_MEDIA` as View 7 and TopMode 8 without renumbering the existing values. The v8→v9 migration appends View 7 to the saved order but leaves cycle-mask bit 7 off, preserving the user's previous visible cycle until explicitly enabled. Schema 10 adds `ap_fixed`, `ap_pass`, and `ble_media`. The v9→v10 migration defaults fixed AP security and BLE Now Playing to off, so existing devices keep the previous random 8-character setup-AP password behavior until the user explicitly changes it.
+Schema 9 appends `CUSTOM_MEDIA` as View 7 and TopMode 8 without renumbering the existing values. The v8→v9 migration appends View 7 to the saved order but leaves cycle-mask bit 7 off, preserving the user's previous visible cycle until explicitly enabled. Schema 10 adds `ap_fixed`, `ap_pass`, and `ble_media`. The v9→v10 migration defaults fixed AP security and BLE Now Playing to off, so existing devices keep the previous random 8-character setup-AP password behavior until the user explicitly changes it. v2.2.0 stores `now_layout` as an optional backward-compatible key while retaining schema 10: v2.1.1 ignores it during rollback, and its absent-key default is title + artist.
 
 ## 4. Runtime architecture
 
@@ -160,6 +160,8 @@ v2.0.8 hardens stored MEDIA playback. The catalog display interval is a minimum 
 v2.1.0 moves AMS Bluetooth out of CORE into the third NOW application profile. CORE contains only general views, MEDIA contains only stored/live media, and NOW contains only the always-on AMS connection and metadata screen. The common portal can check/install all three fixed assets, while a profile switch still requires a short physical BOOT confirmation. Release inspection rejects Bluetooth markers outside NOW and media/stream markers outside MEDIA. The configuration schema remains 10 and profile switches preserve Wi-Fi, CORE views, diagnostics, and stored media.
 
 v2.1.1 hardens NOW firmware operations after a v2.0.7 CORE PANIC was observed during update checking. A connected iPhone is terminated first and the matching GAP disconnect event must arrive before `BLEDevice::deinit(false)` can delete the server and stop NimBLE tasks. The wait is bounded; timeout or termination failure refuses unsafe deinitialization and defers the firmware operation instead of risking a PANIC. The NOW screen removes unused album metadata and renders the title at 2× the artist size.
+
+v2.2.0 adds five persistent NOW layouts and restores AMS album metadata only for layouts that need it. Artwork layouts query MusicBrainz directly, prefer album + artist matching, fetch a Cover Art Archive release-group thumbnail, decode JPEG inside the NOW image, and create 60×60/88×88 one-bit bitmaps. A 1.4-second latest-track debounce and six-entry PSRAM cache absorb rapid skipping. Artwork HTTPS runs in a bounded background task, is serialized against firmware HTTPS, and remains optional: lookup, allocation, download, or decode failure leaves AMS text and playback progress operational.
 
 Do not split the OTA transaction merely because the function is long. Its sequential structure encodes safety assumptions.
 

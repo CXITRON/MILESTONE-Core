@@ -3,7 +3,7 @@ set -euo pipefail
 
 if (( $# < 1 || $# > 2 )); then
   echo "사용법: $0 VERSION [NOTES]" >&2
-  echo "예: $0 2.1.1 'Harden NOW update checks and refine metadata layout'" >&2
+  echo "예: $0 2.2.0 'Add selectable NOW layouts and on-device album artwork'" >&2
   exit 2
 fi
 
@@ -66,6 +66,7 @@ asset_stems=(MILESTONE_Core MILESTONE_Media MILESTONE_Now)
 markers=(MILESTONE_PROFILE_CORE MILESTONE_PROFILE_MEDIA MILESTONE_PROFILE_NOW)
 media_binary_markers=(/api/media/upload /api/stream/start /media/upload.tmp)
 ble_runtime_marker=MILESTONE_BLE_AMS_RUNTIME_V3
+artwork_runtime_marker=MILESTONE_NOW_ARTWORK_RUNTIME_V1
 
 echo "고정 빌드 설정: $fqbn"
 for index in "${!profiles[@]}"; do
@@ -132,6 +133,18 @@ for index in "${!profiles[@]}"; do
   fi
   if [[ $profile != now && $ble_marker_found == true ]]; then
     echo "오류: [$profile] BLE AMS 런타임 구현이 BIN에 포함됐습니다." >&2
+    exit 2
+  fi
+  artwork_marker_found=false
+  if strings -a -- "$source_bin" | grep -F -- "$artwork_runtime_marker" >/dev/null; then
+    artwork_marker_found=true
+  fi
+  if [[ $profile == now && $artwork_marker_found == false ]]; then
+    echo "오류: [now] 앨범 표지 런타임 구현을 BIN에서 찾지 못했습니다." >&2
+    exit 2
+  fi
+  if [[ $profile != now && $artwork_marker_found == true ]]; then
+    echo "오류: [$profile] NOW 앨범 표지 런타임이 BIN에 포함됐습니다." >&2
     exit 2
   fi
 

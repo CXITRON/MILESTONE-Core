@@ -29,6 +29,9 @@
 #include "esp_app_desc.h"
 #include "esp_sntp.h"
 #include "esp_system.h"
+#if MILESTONE_HAS_NOW_VIEW
+#include <jpeg_decoder.h>
+#endif
 #if MILESTONE_HAS_BLUETOOTH
 #include <BLEDevice.h>
 #include <BLEServer.h>
@@ -73,7 +76,7 @@ SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 
 namespace Milestone {
 
-constexpr char FIRMWARE_VERSION[] = "2.1.1";
+constexpr char FIRMWARE_VERSION[] = "2.2.0";
 constexpr char FIRMWARE_PROFILE[] = MILESTONE_FIRMWARE_PROFILE;
 constexpr char FIRMWARE_PROFILE_LABEL[] = MILESTONE_FIRMWARE_PROFILE_LABEL;
 constexpr char FIRMWARE_PROFILE_MARKER[] = MILESTONE_PROFILE_MARKER;
@@ -281,6 +284,14 @@ struct SavedNetwork {
   String identity;
 };
 
+enum class NowLayout : uint8_t {
+  TITLE_ONLY = 0,
+  TITLE_ARTIST = 1,
+  TITLE_ARTIST_ALBUM = 2,
+  TITLE_ARTWORK = 3,
+  ARTWORK_ONLY = 4
+};
+
 struct Config {
   uint16_t version = CONFIG_VERSION;
   SavedNetwork savedNetworks[MAX_SAVED_NETWORKS];
@@ -306,6 +317,7 @@ struct Config {
   bool fixedApSecurity = false;
   String fixedApPassword;
   bool bluetoothNowPlaying = false;
+  NowLayout nowLayout = NowLayout::TITLE_ARTIST;
   uint8_t brightness = 180;
   uint8_t nightLevel = 45;
   bool ledEnabled = true;
@@ -634,6 +646,9 @@ void setRuntimeState(RuntimeState next) {
 const char *resetReasonName(esp_reset_reason_t reason);
 void drawCenteredStr(const char *text, int baseline, int8_t offsetX);
 bool bootSplashActive();
+void wakeDisplay();
+bool stationNetworkReady();
+void startSavedWifiSequence(bool preserveAp);
 void recordDiagnostic(MilestoneDiagnostics::Event event, int16_t detail,
                       int32_t value, bool force);
 #if MILESTONE_HAS_MEDIA
@@ -650,6 +665,11 @@ void leaveMediaStreamPerformanceMode();
 #include "CoreDiagnostics.inc"
 #include "CoreRollback.inc"
 #include "CoreBluetooth.inc"
+#if MILESTONE_HAS_NOW_VIEW
+#include "CoreArtwork.inc"
+#else
+#include "CoreArtworkDisabled.inc"
+#endif
 #include "CoreDisplay.inc"
 #include "CoreNetwork.inc"
 #include "CoreUpdate.inc"
