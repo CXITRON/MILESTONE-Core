@@ -310,6 +310,51 @@ String nowArtworkSearchUrl(bool albumQuery, const String &value, const String &a
   return query;
 }
 
+bool nowArtworkReadAppleUrl(HTTPClient &http, String &url, bool &complete, bool &timedOut,
+                            uint32_t generation) {
+  WiFiClient *stream = http.getStreamPtr();
+  const int announced = http.getSize();
+  complete = false;
+  timedOut = false;
+  if (!stream) return false;
+  size_t total = 0;
+  url = "";
+  MilestoneCoreLogic::AppleArtworkUrlParser parser;
+  MilestoneCoreLogic::resetAppleArtworkUrlParser(parser);
+  uint8_t chunk[256];
+  uint32_t lastDataMs = millis();
+  while (total < NOW_ART_MAX_LOOKUP_BYTES &&
+         (announced < 0 || total < static_cast<size_t>(announced))) {
+    if (nowArtworkWorkerCancelled(generation)) return false;
+    const size_t available = stream->available();
+    if (!available) {
+      if (!http.connected()) break;
+      if (elapsed(millis(), lastDataMs, NOW_ART_LOOKUP_TIMEOUT_MS)) {
+        timedOut = true;
+        return false;
+      }
+      delay(1);
+      continue;
+    }
+    const size_t take = min(available, min(sizeof(chunk), NOW_ART_MAX_LOOKUP_BYTES - total));
+    const int received = stream->readBytes(chunk, take);
+    if (received <= 0) {
+      timedOut = http.connected();
+      return false;
+    }
+    lastDataMs = millis();
+    total += static_cast<size_t>(received);
+    if (MilestoneCoreLogic::feedAppleArtworkUrlParser(
+            parser, chunk, static_cast<size_t>(received))) {
+      url = parser.value;
+      complete = true;
+      return url.startsWith("https://");
+    }
+  }
+  complete = announced >= 0 ? total == static_cast<size_t>(announced) : !http.connected();
+  return false;
+}
+
 void nowArtworkWorker(void *) {
   const uint32_t generation = nowArtworkWorkerGeneration;
   bool success = false;
@@ -319,6 +364,7 @@ void nowArtworkWorker(void *) {
   uint8_t attemptsUsed = 0;
   String candidates[NOW_ART_MAX_CANDIDATES];
   uint8_t candidateCount = 0;
+  uint32_t lastLookupRequestMs = 0;
   nowArtworkRtcMagic = NOW_ART_RTC_MAGIC;
   nowArtworkRtcStage = 1;
   const String title = nowArtworkLuceneEscape(nowArtworkWorkerTitle);
@@ -329,7 +375,51 @@ void nowArtworkWorker(void *) {
   if (album.length()) queries[queryCount++] = nowArtworkSearchUrl(true, album, artist);
   if (title.length()) queries[queryCount++] = nowArtworkSearchUrl(false, title, artist);
 
-  for (uint8_t queryIndex = 0; queryIndex < queryCount && !candidateCount; ++queryIndex) {
+  String appleTerm = String(nowArtworkWorkerTitle) + " " + nowArtworkWorkerArtist;
+  if (nowArtworkWorkerAlbum[0]) appleTerm += String(" ") + nowArtworkWorkerAlbum;
+  String appleQuery = "https://itunes.apple.com/search?country=KR&media=music&entity=song&limit=1&term=";
+  appleQuery += nowArtworkUrlEncode(appleTerm.c_str());
+  NetworkClientSecure appleClient;
+  appleClient.setCACert(MILESTONE_UPDATE_ROOT_CA);
+  appleClient.setHandshakeTimeout(8);
+  HTTPClient appleHttp;
+  appleHttp.setConnectTimeout(NOW_ART_LOOKUP_CONNECT_TIMEOUT_MS);
+  appleHttp.setTimeout(NOW_ART_LOOKUP_TIMEOUT_MS);
+  appleHttp.setAcceptEncoding("identity");
+  if (appleHttp.begin(appleClient, appleQuery)) {
+    appleHttp.addHeader("User-Agent", String("MILESTONE-Now/") + FIRMWARE_VERSION);
+    const int response = appleHttp.GET();
+    finalHttpCode = static_cast<int16_t>(response);
+    if (response == HTTP_CODE_OK) {
+      String artworkUrl;
+      bool appleComplete = false;
+      bool appleTimedOut = false;
+      const bool foundAppleArtwork = nowArtworkReadAppleUrl(
+          appleHttp, artworkUrl, appleComplete, appleTimedOut, generation);
+      appleHttp.end();
+      if (foundAppleArtwork && !nowArtworkWorkerCancelled(generation)) {
+        nowArtworkRtcStage = 2;
+        uint8_t *jpeg = nullptr;
+        size_t jpegSize = 0;
+        const NowArtworkDownloadResult download = nowArtworkReadJpeg(
+            artworkUrl, jpeg, jpegSize, finalDownloadCode, generation);
+        if (download == NowArtworkDownloadResult::READY) {
+          nowArtworkRtcStage = 3;
+          success = !nowArtworkWorkerCancelled(generation) &&
+                    nowArtworkDecodeJpeg(jpeg, jpegSize);
+          heap_caps_free(jpeg);
+          if (success) {
+            result = NowArtworkWorkerResult::READY;
+            candidateCount = 1;
+          }
+        }
+      }
+    } else appleHttp.end();
+  }
+
+  nowArtworkRtcStage = 1;
+  for (uint8_t queryIndex = 0; !success && queryIndex < queryCount && !candidateCount;
+       ++queryIndex) {
     bool definitiveNoMatch = false;
     for (uint8_t attempt = 1; attempt <= NOW_ART_LOOKUP_ATTEMPTS; ++attempt) {
       if (nowArtworkWorkerCancelled(generation)) break;
@@ -348,6 +438,16 @@ void nowArtworkWorker(void *) {
       } else {
         http.addHeader("User-Agent", String("MILESTONE-Now/") + FIRMWARE_VERSION +
                                      " (https://github.com/CXITRON/MILESTONE-Core)");
+        while (lastLookupRequestMs &&
+               !elapsed(millis(), lastLookupRequestMs, NOW_ART_LOOKUP_RETRY_MS)) {
+          if (nowArtworkWorkerCancelled(generation)) break;
+          delay(20);
+        }
+        if (nowArtworkWorkerCancelled(generation)) {
+          http.end();
+          break;
+        }
+        lastLookupRequestMs = millis();
         const int response = http.GET();
         finalHttpCode = static_cast<int16_t>(response);
         if (response == HTTP_CODE_OK) {
@@ -378,18 +478,13 @@ void nowArtworkWorker(void *) {
           nowArtworkWorkerCancelled(generation)) break;
       logLine(String("NOW artwork lookup retry after code=") + finalHttpCode +
               " attempt=" + attempt);
-      const uint32_t retryStartedMs = millis();
-      while (!elapsed(millis(), retryStartedMs, NOW_ART_LOOKUP_RETRY_MS)) {
-        if (nowArtworkWorkerCancelled(generation)) break;
-        delay(20);
-      }
     }
     // Only a real zero-result response may advance from album matching to
     // title + artist matching. Transport and server failures keep their diagnosis.
     if (!candidateCount && !definitiveNoMatch) break;
   }
 
-  if (candidateCount && !nowArtworkWorkerCancelled(generation)) {
+  if (!success && candidateCount && !nowArtworkWorkerCancelled(generation)) {
     bool sawDownloadFailure = false;
     bool sawDecodeFailure = false;
     bool allNotFound = true;

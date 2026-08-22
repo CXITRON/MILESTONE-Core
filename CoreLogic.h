@@ -35,4 +35,16 @@ bool feedMusicBrainzReleaseGroupParser(MusicBrainzReleaseGroupParser &parser,
                                       const uint8_t *data, size_t length,
                                       char mbid[37]);
 
+struct AppleArtworkUrlParser {
+  char value[512];
+  uint16_t length;
+  uint8_t keyMatched;
+  uint8_t state;
+  bool escaped;
+};
+
+void resetAppleArtworkUrlParser(AppleArtworkUrlParser &parser);
+bool feedAppleArtworkUrlParser(AppleArtworkUrlParser &parser,
+                               const uint8_t *data, size_t length);
+
 }  // namespace MilestoneCoreLogic

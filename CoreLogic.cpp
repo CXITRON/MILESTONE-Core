@@ -273,4 +273,56 @@ bool feedMusicBrainzReleaseGroupParser(MusicBrainzReleaseGroupParser &parser,
   return false;
 }
 
+void resetAppleArtworkUrlParser(AppleArtworkUrlParser &parser) {
+  parser.value[0] = '\0';
+  parser.length = 0;
+  parser.keyMatched = 0;
+  parser.state = 0;
+  parser.escaped = false;
+}
+
+bool feedAppleArtworkUrlParser(AppleArtworkUrlParser &parser,
+                               const uint8_t *data, size_t length) {
+  if (data == nullptr) return false;
+  static const char key[] = "\"artworkUrl100\"";
+  for (size_t index = 0; index < length; ++index) {
+    const char c = static_cast<char>(data[index]);
+    if (parser.state == 0) {
+      if (c == key[parser.keyMatched]) {
+        if (++parser.keyMatched == sizeof(key) - 1U) parser.state = 1;
+      } else parser.keyMatched = c == key[0] ? 1U : 0U;
+      continue;
+    }
+    if (parser.state == 1) {
+      if (c == ':') parser.state = 2;
+      else if (!isspace(static_cast<unsigned char>(c))) resetAppleArtworkUrlParser(parser);
+      continue;
+    }
+    if (parser.state == 2) {
+      if (c == '"') parser.state = 3;
+      else if (!isspace(static_cast<unsigned char>(c))) resetAppleArtworkUrlParser(parser);
+      continue;
+    }
+    if (parser.escaped) {
+      if (c != '/' && c != '\\' && c != '"') {
+        resetAppleArtworkUrlParser(parser);
+        continue;
+      }
+      if (parser.length + 1U >= sizeof(parser.value)) {
+        resetAppleArtworkUrlParser(parser);
+        continue;
+      }
+      parser.value[parser.length++] = c;
+      parser.escaped = false;
+    } else if (c == '\\') parser.escaped = true;
+    else if (c == '"') {
+      parser.value[parser.length] = '\0';
+      return parser.length > 0;
+    } else if (parser.length + 1U < sizeof(parser.value)) {
+      parser.value[parser.length++] = c;
+    } else resetAppleArtworkUrlParser(parser);
+  }
+  return false;
+}
+
 }  // namespace MilestoneCoreLogic

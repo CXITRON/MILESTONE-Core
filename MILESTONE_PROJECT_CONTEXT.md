@@ -1,6 +1,6 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v2.2.8
+> Current baseline: MILESTONE Core v2.2.9
 > Hardware: Waveshare ESP32-S3-Zero + SH1107 128×128 OLED
 > Repository: `CXITRON/MILESTONE-Core`
 
@@ -89,7 +89,7 @@ The `*.inc` runtime files are intentionally included into the sketch as one tran
 Firmware and persistent schema versions are separate concepts.
 
 ```cpp
-FIRMWARE_VERSION = "2.2.8"
+FIRMWARE_VERSION = "2.2.9"
 CONFIG_VERSION = 10
 ```
 
@@ -178,6 +178,8 @@ v2.2.6 prevents the update-check LED state from repeatedly interrupting an activ
 v2.2.7 hardens direct MusicBrainz artwork lookup after live measurements showed valid 200 responses varying from under one second to more than thirteen seconds. The query requests only the first result actually consumed, extends the bounded lookup timeout to fifteen seconds, and retries one transient transport/429/5xx failure after the required 1.2-second spacing. Slow reads are labeled `lookup-timeout` rather than generic `network-failed`; the NOW portal reports the last HTTP/transport code and attempt count. Placeholder status text switches to a smaller font when necessary and is centered from the image frame's real origin on both axes.
 
 v2.2.8 improves NOW artwork matching without introducing a relay service. An album + artist zero-result response falls back to title + artist, while transport and server failures retain their original diagnosis. Each query and Cover Art Archive pass is bounded to three distinct release-group candidates, allowing an alternate release to supply a cover when the top MusicBrainz result has none. The portal separates MusicBrainz response code/attempts from Cover Art Archive response code/candidate count, and all-candidate HTTP 404 is labeled `art-not-found` instead of a generic download failure.
+
+v2.2.9 handles localized Apple Music metadata by querying Apple's public iTunes Search endpoint first with the exact AMS title, artist, and album, then streaming the first `artworkUrl100` from a bounded response directly into the existing JPEG path. This resolves names such as `요네즈 켄시`, which neither the MusicBrainz recording artist phrase nor its token query matches even though the artist record contains a differently ordered Korean alias. Apple lookup and image hosts chain to the already embedded DigiCert Global Root G2. MusicBrainz/CAA remains the no-result or transport fallback, and every MusicBrainz request, including album-to-recording fallback, is paced at least 1.2 seconds from the previous request start.
 
 Do not split the OTA transaction merely because the function is long. Its sequential structure encodes safety assumptions.
 

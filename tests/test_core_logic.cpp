@@ -1,5 +1,6 @@
 #include "../CoreLogic.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
@@ -144,6 +145,29 @@ void testMusicBrainzReleaseGroupParser() {
   EXPECT_EQ(found, 2U);
 }
 
+void testAppleArtworkUrlParser() {
+  MilestoneCoreLogic::AppleArtworkUrlParser parser;
+  MilestoneCoreLogic::resetAppleArtworkUrlParser(parser);
+  const char *json = "{\"resultCount\":1,\"results\":[{\"artistName\":\"요네즈 켄시\","
+                     "\"artworkUrl100\" : \"https:\\/\\/is1-ssl.mzstatic.com\\/cover.jpg\"}]}";
+  bool found = false;
+  for (size_t offset = 0; offset < std::strlen(json); offset += 7U) {
+    const size_t take = std::min<size_t>(7U, std::strlen(json) - offset);
+    if (MilestoneCoreLogic::feedAppleArtworkUrlParser(
+            parser, reinterpret_cast<const uint8_t *>(json + offset), take)) {
+      found = true;
+      break;
+    }
+  }
+  EXPECT_TRUE(found);
+  EXPECT_TRUE(std::strcmp(parser.value, "https://is1-ssl.mzstatic.com/cover.jpg") == 0);
+
+  MilestoneCoreLogic::resetAppleArtworkUrlParser(parser);
+  const char *empty = "{\"resultCount\":0,\"results\":[]}";
+  EXPECT_FALSE(MilestoneCoreLogic::feedAppleArtworkUrlParser(
+      parser, reinterpret_cast<const uint8_t *>(empty), std::strlen(empty)));
+}
+
 }  // namespace
 
 int main() {
@@ -154,6 +178,7 @@ int main() {
   testJsonEscapes();
   testUtf8HangulDetection();
   testMusicBrainzReleaseGroupParser();
+  testAppleArtworkUrlParser();
 
   if (failures != 0) {
     std::cerr << failures << " core logic test(s) failed\n";
