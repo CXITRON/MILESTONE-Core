@@ -276,6 +276,7 @@ void requestFirmwareUpdateCheck(UpdateCheckReason reason, const String &profile)
   latestFirmwareVersion = "";
   latestFirmwareProfile = "";
   latestFirmwareAsset = "";
+  latestFirmwareDownloadUrl = "";
   latestFirmwareSha256 = "";
   latestFirmwareNotes = "";
   latestFirmwareSize = 0;
@@ -323,12 +324,16 @@ UpdateCheckAttemptResult checkFirmwareManifestAttempt(UpdateCheckReason reason, 
   http.setReuse(false);
   http.setAcceptEncoding("identity");
   http.setUserAgent(String("MILESTONE-") + FIRMWARE_PROFILE_LABEL + '/' + FIRMWARE_VERSION);
-  const String manifestUrl = String(UPDATE_LATEST_BASE_URL) + manifestAssetForProfile(requestedUpdateProfile);
-  if (!http.begin(secureClient, manifestUrl)) {
+  // The GitHub Release API supplies tag_name plus each asset's size and
+  // sha256 digest in one direct response. The former latest/download manifest
+  // path traversed github.com twice before reaching its CDN and was repeatedly
+  // refused on the ESP32 even while the fifth unchanged attempt succeeded.
+  if (!http.begin(secureClient, UPDATE_RELEASE_API_URL)) {
     failure = "manifest request setup failed";
     return UpdateCheckAttemptResult::FATAL_FAILURE;
   }
-  http.addHeader("Accept", "application/json");
+  http.addHeader("Accept", "application/vnd.github+json");
+  http.addHeader("X-GitHub-Api-Version", "2022-11-28");
   http.addHeader("Cache-Control", "no-cache");
   const int response = http.GET();
   if (response != HTTP_CODE_OK) {
@@ -343,25 +348,45 @@ UpdateCheckAttemptResult checkFirmwareManifestAttempt(UpdateCheckReason reason, 
   http.end();
   if (bodyResult != UpdateCheckAttemptResult::SUCCESS) return bodyResult;
 
-  String version, profile, asset, sha256, notes;
+  String tagName, version, asset, assetApiUrl, digest;
   uint32_t size = 0;
   uint16_t versionParts[3];
-  if (!parseJsonStringField(manifest, "version", version) || !parseSemanticVersion(version, versionParts) ||
-      !parseJsonStringField(manifest, "profile", profile) || profile != requestedUpdateProfile ||
-      !parseJsonStringField(manifest, "asset", asset) || asset != firmwareAssetForProfile(profile) ||
-      !parseJsonUintField(manifest, "size", size) || size == 0 ||
-      !parseJsonStringField(manifest, "sha256", sha256) || !validSha256(sha256)) {
+  asset = firmwareAssetForProfile(requestedUpdateProfile);
+  const String assetLiteral = String('"') + asset + '"';
+  const int assetNamePosition = manifest.indexOf(assetLiteral);
+  const int assetStartPosition = assetNamePosition < 0
+                                   ? -1
+                                   : manifest.lastIndexOf("\"url\"", assetNamePosition);
+  const int assetEndPosition = assetNamePosition < 0
+                                 ? -1
+                                 : manifest.indexOf("\"browser_download_url\"", assetNamePosition);
+  const String assetFields = assetStartPosition >= 0 && assetEndPosition > assetNamePosition
+                               ? manifest.substring(assetStartPosition, assetEndPosition)
+                               : String();
+  if (!parseJsonStringField(manifest, "tag_name", tagName) || !tagName.startsWith("v")) {
     failure = "invalid release manifest";
     return UpdateCheckAttemptResult::FATAL_FAILURE;
   }
-  parseJsonStringField(manifest, "notes", notes);
+  version = tagName.substring(1);
+  if (!parseSemanticVersion(version, versionParts) || assetFields.length() == 0 ||
+      !parseJsonStringField(assetFields, "url", assetApiUrl) ||
+      !assetApiUrl.startsWith(UPDATE_RELEASE_ASSET_API_BASE) ||
+      !parseJsonUintField(assetFields, "size", size) || size == 0 ||
+      !parseJsonStringField(assetFields, "digest", digest) || !digest.startsWith("sha256:") ||
+      !validSha256(digest.substring(7))) {
+    failure = "invalid release manifest";
+    return UpdateCheckAttemptResult::FATAL_FAILURE;
+  }
+  const String profile = requestedUpdateProfile;
+  String sha256 = digest.substring(7);
   sha256.toLowerCase();
   latestFirmwareVersion = version;
   latestFirmwareProfile = profile;
   latestFirmwareAsset = asset;
+  latestFirmwareDownloadUrl = assetApiUrl;
   latestFirmwareSize = size;
   latestFirmwareSha256 = sha256;
-  latestFirmwareNotes = notes;
+  latestFirmwareNotes = String("GitHub Release v") + version;
   lastUpdateCheckEpoch = static_cast<uint64_t>(time(nullptr));
   if (prefs.putULong64("ota_last_ok", lastUpdateCheckEpoch) != sizeof(uint64_t) ||
       !putStringVerified("ota_latest", latestFirmwareVersion) ||
@@ -372,13 +397,13 @@ UpdateCheckAttemptResult checkFirmwareManifestAttempt(UpdateCheckReason reason, 
   nextUpdateRetryMs = 0;
   updateError = "";
 
-  const bool profileSwitch = latestFirmwareProfile != FIRMWARE_PROFILE;
+  const bool profileSwitchAvailable = latestFirmwareProfile != FIRMWARE_PROFILE;
   const int versionComparison = compareSemanticVersions(FIRMWARE_VERSION, latestFirmwareVersion);
-  if (profileSwitch && versionComparison > 0) {
+  if (profileSwitchAvailable && versionComparison > 0) {
     failure = "target profile release is older than running firmware";
     return UpdateCheckAttemptResult::FATAL_FAILURE;
   }
-  if (profileSwitch || versionComparison < 0) {
+  if (profileSwitchAvailable || versionComparison < 0) {
     // An available release is one of the two update-check outcomes that should
     // deliberately interrupt the OLED (the other is a check error). Do this for
     // both automatic and portal-initiated checks so a manual check cannot hide
@@ -386,7 +411,7 @@ UpdateCheckAttemptResult checkFirmwareManifestAttempt(UpdateCheckReason reason, 
     updatePromptVisible = true;
     updatePromptStartedMs = millis();
     setUpdateState(UpdateState::AVAILABLE);
-    logLine(String(profileSwitch ? "firmware profile switch available: " : "firmware update available: ") +
+    logLine(String(profileSwitchAvailable ? "firmware profile switch available: " : "firmware update available: ") +
             currentFirmwareIdentity() + " -> " +
             firmwareIdentity(latestFirmwareVersion, latestFirmwareProfile));
     failure = "";
@@ -404,6 +429,7 @@ UpdateCheckAttemptResult checkFirmwareManifestAttempt(UpdateCheckReason reason, 
 bool installFirmwareUpdate() {
   if (updateState != UpdateState::AVAILABLE || latestFirmwareVersion.length() == 0 ||
       latestFirmwareProfile.length() == 0 || latestFirmwareAsset.length() == 0 ||
+      !latestFirmwareDownloadUrl.startsWith(UPDATE_RELEASE_ASSET_API_BASE) ||
       latestFirmwareSize == 0 || !validSha256(latestFirmwareSha256)) {
     failFirmwareUpdate("release metadata unavailable");
     return false;
@@ -459,7 +485,6 @@ bool installFirmwareUpdate() {
   setUpdateState(UpdateState::DOWNLOADING);
   drawUpdateScreen();
 
-  const String firmwareUrl = String(UPDATE_RELEASE_BASE_URL) + latestFirmwareVersion + '/' + latestFirmwareAsset;
   NetworkClientSecure secureClient;
   secureClient.setCACert(MILESTONE_UPDATE_ROOT_CA);
   secureClient.setHandshakeTimeout(UPDATE_TLS_HANDSHAKE_TIMEOUT_SEC);
@@ -471,17 +496,29 @@ bool installFirmwareUpdate() {
   http.setReuse(false);
   http.setAcceptEncoding("identity");
   http.setUserAgent(String("MILESTONE-") + FIRMWARE_PROFILE_LABEL + '/' + FIRMWARE_VERSION);
-  if (!http.begin(secureClient, firmwareUrl)) {
-    failFirmwareUpdate("firmware request setup failed");
-    return false;
-  }
-  http.addHeader("Accept", "application/octet-stream");
-  int response = http.GET();
-  if (response != HTTP_CODE_OK) {
-    const String failure = describeHttpFailure("firmware", response, secureClient);
+  int response = 0;
+  String connectionFailure;
+  for (uint8_t attempt = 1; attempt <= UPDATE_CHECK_MAX_ATTEMPTS; ++attempt) {
+    logLine(String("firmware HTTPS attempt ") + String(attempt) + "/" +
+            String(UPDATE_CHECK_MAX_ATTEMPTS));
+    if (!http.begin(secureClient, latestFirmwareDownloadUrl)) {
+      failFirmwareUpdate("firmware request setup failed");
+      return false;
+    }
+    http.addHeader("Accept", "application/octet-stream");
+    http.addHeader("X-GitHub-Api-Version", "2022-11-28");
+    response = http.GET();
+    if (response == HTTP_CODE_OK) break;
+    connectionFailure = describeHttpFailure("firmware", response, secureClient);
     http.end();
-    failFirmwareUpdate(failure);
-    return false;
+    secureClient.stop();
+    if (!transientHttpFailure(response) || attempt == UPDATE_CHECK_MAX_ATTEMPTS) {
+      failFirmwareUpdate(connectionFailure);
+      return false;
+    }
+    const uint32_t retryDelay = UPDATE_CHECK_ATTEMPT_BACKOFF_MS * attempt;
+    logLine(String("firmware connect retry in ") + String(retryDelay) + " ms");
+    delay(retryDelay);
   }
   int responseSize = http.getSize();
   if (responseSize < 0) {

@@ -1,6 +1,6 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v2.0.5
+> Current baseline: MILESTONE Core v2.0.6
 > Hardware: Waveshare ESP32-S3-Zero + SH1107 128×128 OLED
 > Repository: `CXITRON/MILESTONE-Core`
 
@@ -89,7 +89,7 @@ The `*.inc` runtime files are intentionally included into the sketch as one tran
 Firmware and persistent schema versions are separate concepts.
 
 ```cpp
-FIRMWARE_VERSION = "2.0.5"
+FIRMWARE_VERSION = "2.0.6"
 CONFIG_VERSION = 10
 ```
 
@@ -150,6 +150,8 @@ v2.0.3 isolates optional CORE Bluetooth before manifest TLS and firmware downloa
 v2.0.4 fixes the portal-only manifest gate: the setup screen intentionally renders its AP indicator instead of the normal U icon, so manual update checks and CORE↔MEDIA profile checks must not wait for `updateCheckIndicatorRendered`. Bluetooth isolation now starts only immediately before the actual HTTPS attempt. Portal-originated manifest requests also use shorter connect/read/TLS limits so the synchronous request cannot leave captive-portal HTTP and DNS service unresponsive for the full autonomous-update timeout.
 
 v2.0.5 fixes setup-AP idle-time evaluation after a portal request. `processNetwork()` captures its ordinary loop timestamp before calling `server.handleClient()`, but an authenticated handler refreshes `portalStartedMs` inside that call. The timeout check must re-sample `millis()` after request handling; subtracting the refreshed activity time from the older loop timestamp underflows and can falsely close the AP immediately. That false stop also changes AP+STA to STA immediately before the queued GitHub HTTPS request, explaining the coupled manifest/profile-check failures. Portal timeout ordering and bounded NTP provider rotation are covered by source contract tests.
+
+v2.0.6 follows the v2.0.5 hardware verification result: the first four `github.com/releases/latest/download` TCP/TLS connections could be refused while an unchanged fifth attempt succeeded, and extending the NimBLE teardown pause did not change that pattern. The release check now uses one direct `api.github.com` response and validates its `tag_name` plus the selected CORE/MEDIA BIN asset's API URL, `size`, and GitHub-provided `sha256:` digest. Installation uses that verified asset API URL to redirect once to the CDN, retries only pre-Flash transport failures, and retains the existing streamed size/SHA-256/Update transaction. Legacy profile manifests continue to be published for older firmware.
 
 Do not split the OTA transaction merely because the function is long. Its sequential structure encodes safety assumptions.
 
@@ -325,7 +327,7 @@ cd /tmp && milestone-release --dry-run taildrop X.Y.Z "short release note"
 
 Use `--yes` only when an unattended final publish is explicitly desired.
 
-## 8. Areas intentionally not refactored through v2.0.5
+## 8. Areas intentionally not refactored through v2.0.6
 
 The following broad refactors were deliberately rejected because their regression risk exceeded their immediate value:
 

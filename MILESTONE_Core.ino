@@ -73,7 +73,7 @@ SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 
 namespace Milestone {
 
-constexpr char FIRMWARE_VERSION[] = "2.0.5";
+constexpr char FIRMWARE_VERSION[] = "2.0.6";
 constexpr char FIRMWARE_PROFILE[] = MILESTONE_FIRMWARE_PROFILE;
 constexpr char FIRMWARE_PROFILE_LABEL[] = MILESTONE_FIRMWARE_PROFILE_LABEL;
 constexpr char FIRMWARE_PROFILE_MARKER[] = MILESTONE_PROFILE_MARKER;
@@ -81,8 +81,8 @@ constexpr char AP_SSID[] = "MILESTONE-D1-SETUP";
 constexpr char HOSTNAME[] = "milestone-d1";
 constexpr char PREFS_NS[] = "milestone";
 constexpr char DIAGNOSTICS_PREFS_NS[] = "milestone_diag";
-constexpr char UPDATE_LATEST_BASE_URL[] = "https://github.com/CXITRON/MILESTONE-Core/releases/latest/download/";
-constexpr char UPDATE_RELEASE_BASE_URL[] = "https://github.com/CXITRON/MILESTONE-Core/releases/download/v";
+constexpr char UPDATE_RELEASE_API_URL[] = "https://api.github.com/repos/CXITRON/MILESTONE-Core/releases/latest";
+constexpr char UPDATE_RELEASE_ASSET_API_BASE[] = "https://api.github.com/repos/CXITRON/MILESTONE-Core/releases/assets/";
 constexpr char UPDATE_ASSET_NAME[] = MILESTONE_FIRMWARE_ASSET;
 constexpr char UPDATE_MANIFEST_ASSET[] = MILESTONE_MANIFEST_ASSET;
 constexpr uint16_t CONFIG_VERSION = 10;
@@ -149,7 +149,7 @@ constexpr uint32_t UPDATE_HTTP_TIMEOUT_MS = 12UL * 1000UL;
 constexpr uint32_t UPDATE_PORTAL_HTTP_CONNECT_TIMEOUT_MS = 4UL * 1000UL;
 constexpr uint32_t UPDATE_PORTAL_HTTP_TIMEOUT_MS = 6UL * 1000UL;
 constexpr uint32_t UPDATE_CHECK_ATTEMPT_BACKOFF_MS = 1500UL;
-constexpr uint8_t UPDATE_CHECK_MAX_ATTEMPTS = 3;
+constexpr uint8_t UPDATE_CHECK_MAX_ATTEMPTS = 5;
 constexpr uint8_t UPDATE_REDIRECT_LIMIT = 5;
 constexpr uint8_t UPDATE_TLS_HANDSHAKE_TIMEOUT_SEC = 10;
 constexpr uint8_t UPDATE_PORTAL_TLS_HANDSHAKE_TIMEOUT_SEC = 5;
@@ -159,7 +159,7 @@ constexpr uint32_t UPDATE_DOWNLOAD_STALL_MS = 20UL * 1000UL;
 // loopTask and temporarily pauses portal polling.
 constexpr uint32_t UPDATE_INSTALL_RESPONSE_HOLD_MS = 1500UL;
 constexpr uint32_t OTA_BOOT_CONFIRM_MS = 10UL * 1000UL;
-constexpr size_t UPDATE_MANIFEST_MAX_BYTES = 2048;
+constexpr size_t UPDATE_MANIFEST_MAX_BYTES = 16UL * 1024UL;
 constexpr size_t UPDATE_DOWNLOAD_BUFFER_BYTES = 2048;
 constexpr uint32_t UPDATE_MIN_FREE_HEAP = 55000;
 constexpr uint32_t UPDATE_MIN_LARGEST_BLOCK = 32768;
@@ -375,6 +375,7 @@ UpdateCheckReason pendingUpdateCheckReason = UpdateCheckReason::NONE;
 String latestFirmwareVersion;
 String latestFirmwareProfile;
 String latestFirmwareAsset;
+String latestFirmwareDownloadUrl;
 String latestFirmwareSha256;
 String latestFirmwareNotes;
 String updateError;

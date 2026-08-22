@@ -3,7 +3,7 @@ set -euo pipefail
 
 if (( $# < 1 || $# > 2 )); then
   echo "사용법: $0 VERSION [NOTES]" >&2
-  echo "예: $0 2.0.5 'Fix setup AP OTA checks and bound NTP failover'" >&2
+  echo "예: $0 2.0.6 'Stabilize GitHub checks after BLE teardown'" >&2
   exit 2
 fi
 

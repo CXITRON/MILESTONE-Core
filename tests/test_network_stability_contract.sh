@@ -18,10 +18,16 @@ reject() {
   fi
 }
 
-require 'FIRMWARE_VERSION\[\] = "2\.0\.5"' MILESTONE_Core.ino 'firmware version is not 2.0.5'
+require 'FIRMWARE_VERSION\[\] = "2\.0\.6"' MILESTONE_Core.ino 'firmware version is not 2.0.6'
 require 'if \(oledReady && !portalActive && !updateCheckIndicatorRendered\) return;' CoreRuntime.inc 'portal manifest checks can deadlock waiting for the non-portal U icon'
 require 'UPDATE_PORTAL_HTTP_CONNECT_TIMEOUT_MS' CoreUpdate.inc 'portal manifest checks need a bounded connect timeout'
 require 'UPDATE_PORTAL_TLS_HANDSHAKE_TIMEOUT_SEC' CoreUpdate.inc 'portal manifest checks need a bounded TLS timeout'
+require 'UPDATE_CHECK_MAX_ATTEMPTS = 5' MILESTONE_Core.ino 'transient GitHub transport failures need hardware-verified retry headroom'
+require 'UPDATE_RELEASE_API_URL' CoreUpdate.inc 'update checks must use the direct GitHub Release API path'
+require 'application/vnd\.github\+json' CoreUpdate.inc 'GitHub Release API media type missing'
+require 'parseJsonStringField\(assetFields, "digest", digest\)' CoreUpdate.inc 'GitHub asset SHA-256 digest is not validated'
+require 'latestFirmwareDownloadUrl = assetApiUrl' CoreUpdate.inc 'OTA install does not retain the verified GitHub asset API URL'
+require 'firmware HTTPS attempt' CoreUpdate.inc 'OTA BIN connection lacks bounded transport retries'
 require 'const uint32_t portalNow = millis\(\);' CoreRuntime.inc 'portal timeout must re-sample time after request handlers'
 require 'elapsed\(portalNow, portalStartedMs, AP_TIMEOUT_MS\)' CoreRuntime.inc 'portal timeout still compares an older loop timestamp with refreshed activity'
 python3 - <<'PY_PORTAL_UPDATE_ORDER'
