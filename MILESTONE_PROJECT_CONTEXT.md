@@ -1,6 +1,6 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v2.0.6
+> Current baseline: MILESTONE Core v2.0.7
 > Hardware: Waveshare ESP32-S3-Zero + SH1107 128×128 OLED
 > Repository: `CXITRON/MILESTONE-Core`
 
@@ -89,7 +89,7 @@ The `*.inc` runtime files are intentionally included into the sketch as one tran
 Firmware and persistent schema versions are separate concepts.
 
 ```cpp
-FIRMWARE_VERSION = "2.0.6"
+FIRMWARE_VERSION = "2.0.7"
 CONFIG_VERSION = 10
 ```
 
@@ -135,7 +135,7 @@ The portal UI tolerates transient HTTP loss while the single ESP32-S3 radio is o
 
 A successful portal Wi-Fi/NTP test keeps the setup AP and browser session active instead of arming the former three-second shutdown. The connected STA may provide internet concurrently while the user completes the remaining settings; only the normal 10-minute idle timeout or a safety/runtime stop closes the portal. While the portal is active, the runtime also checks the AP radio mode and SoftAP IP once per second. If another radio transition unexpectedly removes the AP, recovery reasserts AP+STA mode, restarts the configured SoftAP, and rebinds captive DNS with a bounded retry cadence.
 
-Manual time synchronization has an explicit portal-visible pending/result state and is polled until success or failure. Each bounded request restarts lwIP SNTP for a fresh callback, then stops it after completion so the configured manual/periodic cadence remains authoritative and stale callbacks cannot satisfy a later request. v2.0.5 configures one independent NTP provider at a time and advances after 10 seconds instead of inheriting lwIP's fixed 15-second receive delay for every unresponsive server; three providers therefore complete or fail within 30 seconds. STREAM_MODE cannot begin during NTP, and automatic boot/weekly manifest checks are deferred while the setup portal is active so a completed time sync does not immediately block the captive portal with synchronous HTTPS work.
+Manual time synchronization has an explicit portal-visible pending/result state and is polled until success or failure. Each bounded request restarts lwIP SNTP for a fresh callback, then stops it after completion so the configured manual/periodic cadence remains authoritative and stale callbacks cannot satisfy a later request. v2.0.7 configures one independent NTP provider at a time and advances after 7 seconds instead of inheriting lwIP's fixed 15-second receive delay for every unresponsive server; three providers therefore complete or fail within 21 seconds. Portal update/profile actions stop after that bounded failure instead of silently remaining queued through another quick-retry cycle. STREAM_MODE cannot begin during NTP, and automatic boot/weekly manifest checks are deferred while the setup portal is active so a completed time sync does not immediately block the captive portal with synchronous HTTPS work.
 
 ### Bluetooth advertising recovery and diagnostics (v1.11.2)
 
@@ -152,6 +152,8 @@ v2.0.4 fixes the portal-only manifest gate: the setup screen intentionally rende
 v2.0.5 fixes setup-AP idle-time evaluation after a portal request. `processNetwork()` captures its ordinary loop timestamp before calling `server.handleClient()`, but an authenticated handler refreshes `portalStartedMs` inside that call. The timeout check must re-sample `millis()` after request handling; subtracting the refreshed activity time from the older loop timestamp underflows and can falsely close the AP immediately. That false stop also changes AP+STA to STA immediately before the queued GitHub HTTPS request, explaining the coupled manifest/profile-check failures. Portal timeout ordering and bounded NTP provider rotation are covered by source contract tests.
 
 v2.0.6 follows the v2.0.5 hardware verification result: the first four `github.com/releases/latest/download` TCP/TLS connections could be refused while an unchanged fifth attempt succeeded, and extending the NimBLE teardown pause did not change that pattern. The release check now uses one direct `api.github.com` response and validates its `tag_name` plus the selected CORE/MEDIA BIN asset's API URL, `size`, and GitHub-provided `sha256:` digest. Installation uses that verified asset API URL to redirect once to the CDN, retries only pre-Flash transport failures, and retains the existing streamed size/SHA-256/Update transaction. Legacy profile manifests continue to be published for older firmware.
+
+v2.0.7 makes setup-portal firmware actions own their network prerequisites. A manual update or CORE↔MEDIA check queues the exact requested profile before reconnecting the preferred saved Wi-Fi, then continues through DHCP stabilization, bounded NTP, and Release API verification without a second browser action. Profile switching remains a physical-confirmation transaction: the OLED shows source and target identities and only a short BOOT press authorizes installation; the web install endpoint rejects cross-profile confirmation. The boot splash and ready-to-reboot screen show both semantic version and CORE/MEDIA identity. Same-profile web installation retains a target-qualified two-step confirmation, and an already confirmed install can reconnect/NTP automatically without asking the user to confirm again.
 
 Do not split the OTA transaction merely because the function is long. Its sequential structure encodes safety assumptions.
 
@@ -327,7 +329,7 @@ cd /tmp && milestone-release --dry-run taildrop X.Y.Z "short release note"
 
 Use `--yes` only when an unattended final publish is explicitly desired.
 
-## 8. Areas intentionally not refactored through v2.0.6
+## 8. Areas intentionally not refactored through v2.0.7
 
 The following broad refactors were deliberately rejected because their regression risk exceeded their immediate value:
 

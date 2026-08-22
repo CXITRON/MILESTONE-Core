@@ -18,7 +18,7 @@ reject() {
   fi
 }
 
-require 'FIRMWARE_VERSION\[\] = "2\.0\.6"' MILESTONE_Core.ino 'firmware version is not 2.0.6'
+require 'FIRMWARE_VERSION\[\] = "2\.0\.7"' MILESTONE_Core.ino 'firmware version is not 2.0.7'
 require 'if \(oledReady && !portalActive && !updateCheckIndicatorRendered\) return;' CoreRuntime.inc 'portal manifest checks can deadlock waiting for the non-portal U icon'
 require 'UPDATE_PORTAL_HTTP_CONNECT_TIMEOUT_MS' CoreUpdate.inc 'portal manifest checks need a bounded connect timeout'
 require 'UPDATE_PORTAL_TLS_HANDSHAKE_TIMEOUT_SEC' CoreUpdate.inc 'portal manifest checks need a bounded TLS timeout'
@@ -76,9 +76,27 @@ require 'setup AP remains active' CorePortal.inc 'successful Wi-Fi test must kee
 require 'MILESTONE 설정 AP는 계속 유지됩니다' PortalPage.h 'portal must confirm that AP remains after provisioning'
 require 'bool beginNtpRequest\(\)' CoreNetwork.inc 'NTP start must report whether the network was ready'
 require 'stopNtpService\(\)' CoreNetwork.inc 'bounded NTP cleanup helper missing'
-require 'NTP_SERVER_ATTEMPT_MS = 10UL \* 1000UL' MILESTONE_Core.ino 'NTP per-server failover bound missing'
+require 'NTP_SERVER_ATTEMPT_MS = 7UL \* 1000UL' MILESTONE_Core.ino 'NTP per-server failover bound missing'
 require 'advanceNtpServerIfDue\(now\)' CoreRuntime.inc 'runtime does not advance an unresponsive NTP provider'
 require 'configTzTime\(TZ_INFO, NTP_SERVERS\[ntpServerIndex\], nullptr, nullptr\)' CoreNetwork.inc 'NTP must isolate each provider from lwIP fixed failover delays'
+require 'portalFirmwareWait' CoreRuntime.inc 'portal update/profile checks can remain queued across repeated NTP timeouts'
+require 'failPortalFirmwareNetworkWait' CoreRuntime.inc 'portal firmware actions can remain queued after Wi-Fi connection failure'
+require 'updateInstallAfterNetworkReady' CoreRuntime.inc 'confirmed install is not resumed after automatic Wi-Fi/NTP recovery'
+require 'update_check_pending' CorePortal.inc 'portal cannot poll automatic Wi-Fi/NTP/update progress'
+python3 - <<'PY_PORTAL_PROFILE_RECONNECT_ORDER'
+from pathlib import Path
+s = Path('CorePortal.inc').read_text()
+update_start = s.index('void handleUpdateCheck()')
+start = s.index('void handleProfileSwitch()')
+end = s.index('\n\nvoid handleUpdateInstall()', start)
+body = s[start:end]
+update_body = s[update_start:start]
+assert '인터넷에 연결된 Wi-Fi가 필요합니다' not in update_body
+assert '인터넷에 연결된 Wi-Fi가 필요합니다' not in body
+queued = body.index('requestFirmwareUpdateCheck(UpdateCheckReason::MANUAL, profile);')
+connect = body.index('startSavedWifiSequence(true);', queued)
+assert queued < connect, 'target profile must be preserved before automatic Wi-Fi reconnect starts'
+PY_PORTAL_PROFILE_RECONNECT_ORDER
 require 'time_sync_pending' CorePortal.inc 'manual time-sync progress state missing from status API'
 require 'timeSyncPolling' PortalPage.h 'manual time-sync UI must poll through completion'
 require 'pendingUpdateCheckReason != UpdateCheckReason::MANUAL' CoreRuntime.inc 'automatic update checks must defer while setup portal is active'

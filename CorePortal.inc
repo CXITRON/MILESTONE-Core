@@ -66,11 +66,14 @@ void handleStatus() {
   json += "\"latest_firmware\":\"" + jsonEscape(latestFirmwareVersion) + "\",";
   json += "\"latest_profile\":\"" + jsonEscape(latestFirmwareProfile) + "\",";
   json += "\"update_available\":" + String(updateState == UpdateState::AVAILABLE ? "true" : "false") + ",";
+  json += "\"update_check_pending\":" +
+          String(pendingUpdateCheckReason != UpdateCheckReason::NONE ? "true" : "false") + ",";
   const bool updateInstallReady = updateState == UpdateState::AVAILABLE && latestFirmwareVersion.length() > 0 &&
                                   validFirmwareProfile(latestFirmwareProfile) && latestFirmwareAsset.length() > 0 &&
                                   latestFirmwareSize > 0 && validSha256(latestFirmwareSha256);
   json += "\"update_install_ready\":" + String(updateInstallReady ? "true" : "false") + ",";
-  json += "\"update_install_pending\":" + String(updateInstallRequested ? "true" : "false") + ",";
+  json += "\"update_install_pending\":" +
+          String((updateInstallRequested || updateInstallAfterNetworkReady) ? "true" : "false") + ",";
   const uint32_t updateProgress = latestFirmwareSize > 0
                                     ? static_cast<uint32_t>((updateDownloadedBytes * 100ULL) / latestFirmwareSize) : 0;
   json += "\"update_progress\":" + String(updateProgress) + ",";
@@ -1168,12 +1171,17 @@ void handleUpdateCheck() {
     return sendJson(409, "{\"error\":\"온도 보호 상태에서는 업데이트를 확인할 수 없습니다.\"}");
   }
   if (!stationNetworkReady()) {
-    return sendJson(409, "{\"error\":\"인터넷에 연결된 Wi-Fi가 필요합니다.\"}");
+    if (config.savedNetworkCount == 0) {
+      return sendJson(409, "{\"error\":\"저장된 Wi-Fi가 없습니다. 먼저 Wi-Fi를 시험·저장하세요.\"}");
+    }
+    requestFirmwareUpdateCheck(UpdateCheckReason::MANUAL, FIRMWARE_PROFILE);
+    startSavedWifiSequence(true);
+    return sendJson(202, "{\"ok\":true,\"state\":\"reconnecting\"}");
   }
   if (!timeIsValid() || !freshNtpSinceBoot) {
-    updateCheckAfterNetworkReady = true;
+    requestFirmwareUpdateCheck(UpdateCheckReason::MANUAL, FIRMWARE_PROFILE);
     if (!beginNtpRequest()) {
-      updateCheckAfterNetworkReady = false;
+      pendingUpdateCheckReason = UpdateCheckReason::NONE;
       return sendJson(409, "{\"error\":\"Wi-Fi의 IP·게이트웨이·DNS 준비가 끝난 뒤 다시 시도하세요.\"}");
     }
     setRuntimeState(RuntimeState::TIME_SYNCING);
@@ -1201,10 +1209,23 @@ void handleProfileSwitch() {
     return sendJson(409, "{\"error\":\"온도 보호 상태에서는 프로필을 전환할 수 없습니다.\"}");
   }
   if (!stationNetworkReady()) {
-    return sendJson(409, "{\"error\":\"인터넷에 연결된 Wi-Fi가 필요합니다.\"}");
+    if (config.savedNetworkCount == 0) {
+      return sendJson(409, "{\"error\":\"저장된 Wi-Fi가 없습니다. 먼저 Wi-Fi를 시험·저장하세요.\"}");
+    }
+    requestFirmwareUpdateCheck(UpdateCheckReason::MANUAL, profile);
+    startSavedWifiSequence(true);
+    return sendJson(202, String("{\"ok\":true,\"state\":\"reconnecting\",\"profile\":\"") +
+                         profile + "\"}");
   }
   if (!timeIsValid() || !freshNtpSinceBoot) {
-    return sendJson(409, "{\"error\":\"먼저 시간 동기화를 완료한 뒤 다시 시도하세요.\"}");
+    requestFirmwareUpdateCheck(UpdateCheckReason::MANUAL, profile);
+    if (!beginNtpRequest()) {
+      pendingUpdateCheckReason = UpdateCheckReason::NONE;
+      return sendJson(409, "{\"error\":\"시간 동기화를 시작할 네트워크 정보가 준비되지 않았습니다.\"}");
+    }
+    setRuntimeState(RuntimeState::TIME_SYNCING);
+    return sendJson(202, String("{\"ok\":true,\"state\":\"time_syncing\",\"profile\":\"") +
+                         profile + "\"}");
   }
   if (updateState == UpdateState::CURRENT || updateState == UpdateState::ERROR_STATE) {
     setUpdateState(UpdateState::IDLE);
@@ -1228,6 +1249,15 @@ void handleUpdateInstall() {
       latestFirmwareSize == 0 || !validSha256(latestFirmwareSha256)) {
     return sendJson(409, "{\"error\":\"설치할 새 펌웨어가 확인되지 않았습니다.\"}");
   }
+  const String targetIdentity = firmwareIdentity(latestFirmwareVersion, latestFirmwareProfile);
+  if (latestFirmwareProfile != FIRMWARE_PROFILE) {
+    return sendJson(409, String("{\"error\":\"프로필 전환은 ESP32 화면의 대상을 확인한 뒤 기기 BOOT 버튼으로 확정하세요.\",\"target\":\"") +
+                         jsonEscape(targetIdentity) + "\"}");
+  }
+  if (server.arg("confirm") != targetIdentity) {
+    return sendJson(400, String("{\"error\":\"설치 확인 대상이 현재 펌웨어 후보와 일치하지 않습니다. 다시 확인하세요.\",\"target\":\"") +
+                         jsonEscape(targetIdentity) + "\"}");
+  }
   if (thermalSafeMode || temperatureSensorFault || thermalWarning) {
     return sendJson(409, "{\"error\":\"온도 보호 상태에서는 업데이트할 수 없습니다.\"}");
   }
@@ -1235,9 +1265,12 @@ void handleUpdateInstall() {
     if (config.savedNetworkCount == 0) {
       return sendJson(409, "{\"error\":\"인터넷에 연결된 Wi-Fi가 필요합니다.\"}");
     }
-    updateCheckAfterNetworkReady = true;
+    updateInstallAfterNetworkReady = true;
+    updateInstallNetworkDeadlineMs = millis() + UPDATE_INSTALL_NETWORK_TIMEOUT_MS;
     startSavedWifiSequence(true);
-    return sendJson(202, "{\"ok\":true,\"state\":\"reconnecting\"}");
+    logLine(String("confirmed portal install waiting for network/NTP: target=") + targetIdentity);
+    return sendJson(202, String("{\"ok\":true,\"state\":\"reconnecting\",\"target\":\"") +
+                         jsonEscape(targetIdentity) + "\"}");
   }
   updateInstallRequested = true;
   updateInstallNotBeforeMs = millis() + UPDATE_INSTALL_RESPONSE_HOLD_MS;

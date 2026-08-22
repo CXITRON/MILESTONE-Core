@@ -20,7 +20,7 @@ void drawBootSplashFrame() {
   drawCenteredStr("CYTRON//MILESTONE", 52);
   drawCenteredStr("MILESTONE D1", 72);
   display.setFont(u8g2_font_5x8_tf);
-  String version = String("CORE ") + FIRMWARE_VERSION;
+  String version = String(FIRMWARE_VERSION) + " @ " + FIRMWARE_PROFILE_LABEL;
   drawCenteredStr(version.c_str(), 94);
   display.sendBuffer();
 }
@@ -937,11 +937,15 @@ void drawUpdateScreen() {
   display.clearBuffer();
   display.setFont(u8g2_font_7x14B_tf);
   if (updateState == UpdateState::AVAILABLE && updatePromptVisible) {
-    drawCenteredStr("UPDATE AVAILABLE", 25);
+    const bool profileSwitch = latestFirmwareProfile != FIRMWARE_PROFILE;
+    drawCenteredStr(profileSwitch ? "PROFILE SWITCH" : "UPDATE AVAILABLE", 25);
     display.setFont(u8g2_font_6x10_tf);
-    String versions = String(FIRMWARE_VERSION) + " -> " + latestFirmwareVersion;
-    drawCenteredStr(versions.c_str(), 52);
-    drawCenteredStr("Tap BOOT: install", 78);
+    String current = String(FIRMWARE_VERSION) + " @ " + FIRMWARE_PROFILE_LABEL;
+    String target = latestFirmwareVersion + " @ " + latestFirmwareProfile;
+    target.toUpperCase();
+    drawCenteredStr(current.c_str(), 48);
+    drawCenteredStr(target.c_str(), 65);
+    drawCenteredStr("Tap BOOT: confirm", 86);
     uint32_t left = UPDATE_PROMPT_MS > millis() - updatePromptStartedMs
                       ? (UPDATE_PROMPT_MS - (millis() - updatePromptStartedMs) + 999) / 1000 : 0;
     String footer = String("Later in ") + left + " sec";
@@ -969,7 +973,8 @@ void drawUpdateScreen() {
     drawCenteredStr("UPDATE READY", 40);
     display.setFont(u8g2_font_6x10_tf);
     drawCenteredStr("Rebooting into", 72);
-    String version = String("version ") + latestFirmwareVersion;
+    String version = latestFirmwareVersion + " @ " + latestFirmwareProfile;
+    version.toUpperCase();
     drawCenteredStr(version.c_str(), 94);
   } else if (updateState == UpdateState::ERROR_STATE) {
     drawCenteredStr("UPDATE ERROR", 27);

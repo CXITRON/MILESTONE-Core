@@ -73,7 +73,7 @@ SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 
 namespace Milestone {
 
-constexpr char FIRMWARE_VERSION[] = "2.0.6";
+constexpr char FIRMWARE_VERSION[] = "2.0.7";
 constexpr char FIRMWARE_PROFILE[] = MILESTONE_FIRMWARE_PROFILE;
 constexpr char FIRMWARE_PROFILE_LABEL[] = MILESTONE_FIRMWARE_PROFILE_LABEL;
 constexpr char FIRMWARE_PROFILE_MARKER[] = MILESTONE_PROFILE_MARKER;
@@ -110,7 +110,7 @@ constexpr uint32_t WIFI_QUICK_RETRY_MS = 15UL * 1000UL;
 // synchronization take close to a minute. Each fresh SNTP start can add up to
 // five seconds of randomized startup delay, leaving another five seconds for
 // DNS and the UDP reply before advancing to the next independent provider.
-constexpr uint32_t NTP_SERVER_ATTEMPT_MS = 10UL * 1000UL;
+constexpr uint32_t NTP_SERVER_ATTEMPT_MS = 7UL * 1000UL;
 constexpr const char *NTP_SERVERS[] = {
   "time.cloudflare.com",
   "time.google.com",
@@ -158,6 +158,7 @@ constexpr uint32_t UPDATE_DOWNLOAD_STALL_MS = 20UL * 1000UL;
 // and render the accepted state before the synchronous OTA download occupies
 // loopTask and temporarily pauses portal polling.
 constexpr uint32_t UPDATE_INSTALL_RESPONSE_HOLD_MS = 1500UL;
+constexpr uint32_t UPDATE_INSTALL_NETWORK_TIMEOUT_MS = 90UL * 1000UL;
 constexpr uint32_t OTA_BOOT_CONFIRM_MS = 10UL * 1000UL;
 constexpr size_t UPDATE_MANIFEST_MAX_BYTES = 16UL * 1024UL;
 constexpr size_t UPDATE_DOWNLOAD_BUFFER_BYTES = 2048;
@@ -393,7 +394,9 @@ bool bootUpdateCheckPending = true;
 bool updateCheckAfterNetworkReady = false;
 bool updatePromptVisible = false;
 bool updateInstallRequested = false;
+bool updateInstallAfterNetworkReady = false;
 uint32_t updateInstallNotBeforeMs = 0;
+uint32_t updateInstallNetworkDeadlineMs = 0;
 bool updateCheckIndicatorRendered = false;
 bool wifiSleepDeferredForUpdate = false;
 bool bluetoothFirmwareOperationIsolated = false;

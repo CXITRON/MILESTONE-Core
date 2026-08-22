@@ -19,6 +19,16 @@ void finishNormalNtpSuccess() {
   setRuntimeState(portalActive ? RuntimeState::SETUP_AP : RuntimeState::RUNNING_ONLINE);
   startMdns();
   if (portalActive) {
+    if (updateInstallAfterNetworkReady) {
+      updateInstallAfterNetworkReady = false;
+      updateInstallNetworkDeadlineMs = 0;
+      updateInstallRequested = true;
+      updateInstallNotBeforeMs = millis() + 250UL;
+      logLine(String("confirmed portal install resumed after network/NTP: target=") +
+              firmwareIdentity(latestFirmwareVersion, latestFirmwareProfile));
+      WiFi.setSleep(false);
+      return;
+    }
     // Only a portal action that explicitly requested an update may continue
     // into HTTPS here. Automatic boot/weekly checks wait until setup closes so
     // a successful time sync cannot freeze the captive portal unexpectedly.
@@ -73,6 +83,20 @@ bool stationNetworkStable(uint32_t now) {
     return false;
   }
   return elapsed(now, wifiNetworkReadySinceMs, WIFI_IP_STABLE_MS);
+}
+
+void failPortalFirmwareNetworkWait(const String &reason) {
+  if (!portalActive) return;
+  if (pendingUpdateCheckReason == UpdateCheckReason::MANUAL) {
+    pendingUpdateCheckReason = UpdateCheckReason::NONE;
+    updateError = reason;
+    setUpdateState(UpdateState::ERROR_STATE);
+  }
+  if (updateInstallAfterNetworkReady) {
+    updateInstallAfterNetworkReady = false;
+    updateInstallNetworkDeadlineMs = 0;
+    updateError = reason + " 설치를 시작하지 않았습니다.";
+  }
 }
 
 void processNetwork() {
@@ -165,6 +189,7 @@ void processNetwork() {
         initialStationAttempt = false;
         if (beginNtpRequest()) setRuntimeState(RuntimeState::TIME_SYNCING);
         else {
+          failPortalFirmwareNetworkWait("시간 동기화를 시작할 네트워크 정보가 준비되지 않았습니다.");
           setRuntimeState(RuntimeState::RUNNING_OFFLINE);
           scheduleRetry(true);
         }
@@ -172,6 +197,7 @@ void processNetwork() {
     } else if (savedWifiScanActive) {
       if (!finishSavedWifiScanAndConnect()) {
         finishPortalTimeSyncTracking(false, "저장된 Wi-Fi에 연결하지 못했습니다.");
+        failPortalFirmwareNetworkWait("저장된 Wi-Fi를 찾거나 연결하지 못했습니다.");
         initialStationAttempt = false;
         setRuntimeState(RuntimeState::RUNNING_OFFLINE);
         scheduleRetry();
@@ -182,6 +208,7 @@ void processNetwork() {
     } else if (deadlineReached(now, wifiDeadlineMs)) {
       if (tryNextSavedWifiCandidate()) return;
       finishPortalTimeSyncTracking(false, "저장된 Wi-Fi 연결 시간이 초과되었습니다.");
+      failPortalFirmwareNetworkWait("저장된 Wi-Fi 연결 시간이 초과되었습니다.");
       initialStationAttempt = false;
       setRuntimeState(RuntimeState::RUNNING_OFFLINE);
       scheduleRetry();
@@ -197,6 +224,7 @@ void processNetwork() {
     if (!stationNetworkReady()) {
       stopNtpService();
       finishPortalTimeSyncTracking(false, "시간 동기화 중 Wi-Fi가 끊겼습니다.");
+      failPortalFirmwareNetworkWait("시간 동기화 중 Wi-Fi 연결이 끊겼습니다.");
       recordDiagnostic(MilestoneDiagnostics::Event::WIFI_DISCONNECTED,
                        static_cast<int16_t>(lastWifiDisconnectReason));
       internetVerified = false;
@@ -214,13 +242,26 @@ void processNetwork() {
       recordDiagnostic(MilestoneDiagnostics::Event::NTP_TIMEOUT);
       internetVerified = false;
       ntpFailed = true;
+      const bool portalFirmwareWait = portalActive &&
+                                      pendingUpdateCheckReason == UpdateCheckReason::MANUAL;
+      const bool portalInstallWait = portalActive && updateInstallAfterNetworkReady;
+      if (portalFirmwareWait) {
+        pendingUpdateCheckReason = UpdateCheckReason::NONE;
+        updateError = "시간 동기화가 21초 안에 완료되지 않아 확인을 중단했습니다.";
+        setUpdateState(UpdateState::ERROR_STATE);
+      }
+      if (portalInstallWait) {
+        updateInstallAfterNetworkReady = false;
+        updateInstallNetworkDeadlineMs = 0;
+        updateError = "시간 동기화가 21초 안에 완료되지 않아 설치를 시작하지 않았습니다.";
+      }
       setRuntimeState(RuntimeState::RUNNING_OFFLINE);
       // Before the first successful NTP exchange of this boot, time/DDAY sync
       // remains the highest-priority network task. Keep the existing STA/DHCP
       // lease and retry NTP quickly instead of waiting the normal configured
       // offline interval. Periodic failures after a successful boot sync still
       // respect the user's normal retry interval.
-      const bool quickNtpRetry = !freshNtpSinceBoot;
+      const bool quickNtpRetry = !freshNtpSinceBoot && !portalFirmwareWait && !portalInstallWait;
       const uint32_t retrySeconds = quickNtpRetry ? WIFI_QUICK_RETRY_MS / 1000UL
                                                   : (config.retryPeriodSec < 30 ? 30 : config.retryPeriodSec);
       scheduleRetry(quickNtpRetry);
@@ -270,6 +311,15 @@ void processFirmwareUpdate() {
   const uint32_t now = millis();
 
   processRollbackConfirmation();
+
+  if (updateInstallAfterNetworkReady &&
+      deadlineReached(now, updateInstallNetworkDeadlineMs)) {
+    updateInstallAfterNetworkReady = false;
+    updateInstallNetworkDeadlineMs = 0;
+    updateError = "설치 확인 후 Wi-Fi/NTP 연결 시간이 초과되었습니다.";
+    wakeDisplay();
+    logLine("confirmed portal install expired before network/NTP became ready");
+  }
 
   // LittleFS upload and OTA both perform long flash writes. Never start a new
   // firmware operation while the setup portal is receiving custom media.
@@ -409,6 +459,8 @@ void enterThermalSafeMode(bool sensorFault = false) {
   thermalWarning = true;
   thermalRecoveryStartedMs = 0;
   stopNtpService();
+  updateInstallAfterNetworkReady = false;
+  updateInstallNetworkDeadlineMs = 0;
   wifiTestState = WifiTestState::IDLE;
   wifiTestError = "";
   pendingSsid = "";

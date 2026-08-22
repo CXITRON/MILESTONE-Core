@@ -131,7 +131,9 @@ MilestoneDiagnostics::OtaFailure classifyOtaFailure(const String &reason) {
 void failFirmwareCheck(const String &reason, bool transient) {
   updateError = reason;
   updateInstallRequested = false;
+  updateInstallAfterNetworkReady = false;
   updateInstallNotBeforeMs = 0;
+  updateInstallNetworkDeadlineMs = 0;
   updatePromptVisible = false;
   nextUpdateRetryMs = millis() + (transient ? UPDATE_CHECK_TRANSIENT_RETRY_MS : UPDATE_FAILURE_RETRY_MS);
   if (!putStringVerified("ota_check", "failed")) logLine("OTA check failure metadata save failed");
@@ -146,7 +148,9 @@ void failFirmwareCheck(const String &reason, bool transient) {
 void failFirmwareUpdate(const String &reason) {
   updateError = reason;
   updateInstallRequested = false;
+  updateInstallAfterNetworkReady = false;
   updateInstallNotBeforeMs = 0;
+  updateInstallNetworkDeadlineMs = 0;
   updatePromptVisible = false;
   nextUpdateRetryMs = millis() + UPDATE_FAILURE_RETRY_MS;
   lastOtaResult = "failed";
@@ -164,7 +168,9 @@ void failFirmwareUpdate(const String &reason) {
 void deferFirmwareInstall(const String &reason) {
   updateError = reason;
   updateInstallRequested = false;
+  updateInstallAfterNetworkReady = false;
   updateInstallNotBeforeMs = 0;
+  updateInstallNetworkDeadlineMs = 0;
   updatePromptVisible = false;
   lastOtaResult = "not-installed";
   if (!putStringVerified("ota_result", lastOtaResult)) logLine("OTA deferral result save failed");

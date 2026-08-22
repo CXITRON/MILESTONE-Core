@@ -252,7 +252,7 @@ https://github.com/CXITRON/MILESTONE-Core
 
 기기는 부팅 후 Wi-Fi 연결과 NTP 동기화를 먼저 완료해 시간과 디데이를 확정합니다. 최신 정식 Release 확인은 새 부팅에서 실제 NTP 응답을 받아 외부 연결을 확인한 뒤 시작하며, 확인 중에는 일반 화면을 유지하고 우상단에 `U`를 표시합니다. 계속 켜져 있는 경우 마지막 정상 확인 시각으로부터 7일 뒤 다시 확인합니다. DNS·TLS·일시적 HTTP 오류는 짧은 백오프로 최대 3회 확인한 뒤 10분 후 자동 재시도하며, 명백한 비정상 Release 응답이나 실제 OTA 설치 실패는 6시간 뒤 재시도합니다. 자동 확인은 설치까지 자동으로 실행하지 않습니다.
 
-부팅 로고는 네트워크 응답을 기다리지 않고 약 3초 뒤 종료됩니다. NTP 서버 응답이 느리면 일반 화면의 우상단에 `T`를 표시한 채 백그라운드에서 서버별 최대 10초, 전체 최대 30초 동안 서로 다른 제공자를 순서대로 시도합니다. 저해상도 OLED에서 시간 동기화와 업데이트 확인을 혼동하지 않도록 두 상태를 각각 `T`와 `U` 문자로 구분합니다. NTP 성공 전에는 GitHub 업데이트 확인을 시작하지 않습니다.
+부팅 로고는 네트워크 응답을 기다리지 않고 약 3초 뒤 종료됩니다. NTP 서버 응답이 느리면 일반 화면의 우상단에 `T`를 표시한 채 백그라운드에서 서버별 최대 7초, 전체 최대 21초 동안 서로 다른 제공자를 순서대로 시도합니다. 설정 포털에서 시작한 업데이트·프로필 확인은 이 제한 안에 동기화되지 않으면 명확히 실패 처리하며 자동 재시도에 매달려 1~2분간 대기하지 않습니다. 저해상도 OLED에서 시간 동기화와 업데이트 확인을 혼동하지 않도록 두 상태를 각각 `T`와 `U` 문자로 구분합니다. NTP 성공 전에는 GitHub 업데이트 확인을 시작하지 않습니다.
 
 업데이트 확인이 정상적으로 끝나 현재 버전이 최신이면 별도 전체 화면을 표시하지 않습니다. 확인 실패 또는 새 버전 발견 때만 OLED 전체 화면에 안내가 나타나며, 새 버전 안내는 15초 동안 유지됩니다.
 
@@ -278,13 +278,13 @@ PC의 현재 프로젝트를 직접 수정한 경우에는 **MILESTONE_Core 프�
 
 ```bash
 cd /run/media/citron/T7/Documents/Dev/MILESTONE_Core
-milestone-release local 2.0.6 "Stabilize GitHub checks after BLE teardown"
+milestone-release local 2.0.7 "Reconnect portal OTA and confirm profile switches with BOOT"
 ```
 
 Tailscale Taildrop으로 `MILESTONE_Core_1.10.6.zip`을 받은 경우에는 교체 대상 프로젝트 디렉터리 밖의 정상적으로 존재하는 디렉터리에서 실행합니다. 기존 프로젝트가 교체될 때 현재 셸 경로가 사라지는 문제를 방지하기 위해 `/tmp`로 이동하는 방식을 권장합니다.
 
 ```bash
-cd /tmp && milestone-release taildrop 2.0.6 "Stabilize GitHub checks after BLE teardown"
+cd /tmp && milestone-release taildrop 2.0.7 "Reconnect portal OTA and confirm profile switches with BOOT"
 ```
 
 Taildrop 모드는 ZIP을 라이브 프로젝트에 바로 덮어쓰지 않습니다. 별도 staging 디렉터리에서 구조·버전·Git 상태를 검사하고 테스트와 ESP32 릴리즈 빌드까지 성공한 뒤에만 프로젝트를 교체합니다. GitHub 게시 전 실패하면 기존 프로젝트를 자동 복구합니다. `--dry-run`은 테스트/빌드까지만 수행하고 로컬 프로젝트·Git·GitHub를 변경하지 않습니다. `--yes`를 사용하지 않는 기본 동작은 최종 게시 직전에 한 번 확인합니다.
@@ -301,10 +301,10 @@ Taildrop 모드는 ZIP을 라이브 프로젝트에 바로 덮어쓰지 않습�
 
 ```bash
 chmod +x tools/make-release.sh
-./tools/make-release.sh 2.0.6 "Stabilize GitHub checks after BLE teardown"
+./tools/make-release.sh 2.0.7 "Reconnect portal OTA and confirm profile switches with BOOT"
 ```
 
-기본 설명을 사용하려면 `./tools/make-release.sh 2.0.6`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
+기본 설명을 사용하려면 `./tools/make-release.sh 2.0.7`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
 
 다음 네 파일이 `release/`에 생성됩니다.
 
@@ -326,11 +326,11 @@ release/MILESTONE_Media.json
 일반적인 게시에는 위의 `milestone-release`를 사용합니다. 아래 수동 절차는 자동화 도구를 복구하거나 디버깅해야 할 때만 참고합니다.
 
 1. 저장소의 `Releases`에서 `Draft a new release`를 선택합니다.
-2. 버전과 동일한 태그를 만듭니다. 예: `v2.0.6`
-3. Release 제목을 `MILESTONE Core v2.0.6`로 지정합니다.
+2. 버전과 동일한 태그를 만듭니다. 예: `v2.0.7`
+3. Release 제목을 `MILESTONE Core v2.0.7`로 지정합니다.
 4. CORE/MEDIA의 BIN과 JSON 네 파일을 모두 첨부합니다.
 5. Pre-release가 아닌 최신 정식 Release로 게시합니다.
-6. 이전 버전이 설치된 기기에서 2.0.6 CORE/MEDIA 업데이트, 설정 AP 요청 직후 AP 유지와 CORE↔MEDIA 전환, BLE 종료 후 GitHub 재시도, 기존 설정·Wi-Fi·롤백 보호·진단 이력·커스텀 미디어 보존을 검증합니다.
+6. 이전 버전이 설치된 기기에서 2.0.7 CORE/MEDIA 업데이트, Wi-Fi OFF 상태의 자동 재연결, 21초 NTP 상한, OLED 대상 표시와 BOOT 물리 확인, 기존 설정·Wi-Fi·롤백 보호·진단 이력·커스텀 미디어 보존을 검증합니다.
 
 네 파일의 이름은 모든 Release에서 정확히 같아야 합니다. 초안이나 Pre-release는 `latest` 업데이트 대상으로 사용하지 않습니다.
 
@@ -382,6 +382,21 @@ Taildrop ZIP의 `milestone-release`가 현재 설치본보다 새로우면, 게�
 - STREAM_MODE에서 일반 백그라운드 기능을 격리하고 PSRAM 240프레임 링버퍼·X/Y dirty-tile OLED 갱신·적응형 출력 주기·프레임 드롭·80°C 스트림 상한으로 영상 수신/표시에 집중
 - 라이브 송신은 96프레임 초기 충전 후 큐 64프레임 이하에서 최대 8프레임씩 144프레임 이상으로 보충하며 ESP32가 소스 시간축과 OLED 출력 클록을 분리해 관리
 - 비차단 3초 부팅 로고와 우상단 NTP `T`·업데이트 `U` 상태 아이콘
+
+## v2.0.7 업데이트 안내
+
+v2.0.7은 설정 포털에서 업데이트 확인이나 CORE↔MEDIA 전환을 눌렀을 때 Wi-Fi가 꺼져 있으면 즉시 실패하던 흐름을 수정합니다. 요청한 프로필을 먼저 고정한 뒤 저장된 Wi-Fi에 자동 연결하고, DHCP 안정화·NTP·GitHub Release API 확인을 이어서 수행합니다. 사용자가 다시 버튼을 누를 필요가 없습니다.
+
+프로필 전환의 설치 확인은 웹 버튼 연속 클릭이 아니라 ESP32의 물리 BOOT 버튼입니다. 확인이 끝나면 OLED에 현재 `버전 @ 프로필`과 대상 `버전 @ 프로필`을 표시하고, 15초 안에 BOOT 버튼을 짧게 눌러야 설치합니다. 웹 설치 API는 다른 프로필 설치를 거부합니다. 일반적인 같은 프로필 업데이트만 웹의 대상 일치 2단계 확인을 사용할 수 있습니다.
+
+- Wi-Fi OFF 상태의 업데이트·프로필 확인에서 저장된 Wi-Fi 자동 재연결
+- 재연결 전에 CORE/MEDIA 확인 대상을 보존해 NTP 성공 뒤 현재 프로필로 바뀌던 오류 제거
+- NTP 제공자별 7초·전체 21초 상한 및 포털 요청의 반복 quick-retry 차단
+- 프로필 전환은 OLED 대상 확인 후 ESP32 BOOT 짧은 입력으로만 설치 승인
+- 부팅 로고와 업데이트 재부팅 화면에 `2.0.7 @ CORE` 또는 `2.0.7 @ MEDIA` 표시
+- 같은 프로필의 웹 설치는 `버전@프로필` 대상이 일치해야 두 번째 확인을 접수
+
+정식 버전: `2.0.7`
 
 ## v2.0.6 업데이트 안내
 
