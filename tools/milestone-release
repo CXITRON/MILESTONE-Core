@@ -54,9 +54,9 @@ Options:
 
 Examples:
   cd /run/media/citron/T7/Documents/Dev/MILESTONE_Core
-  milestone-release local 2.2.11 "Fix NOW automatic update check deadlock"
+  milestone-release local 2.2.12 "Protect BLE during NOW artwork lookup"
 
-  cd /tmp && milestone-release taildrop 2.2.11 "Fix NOW automatic update check deadlock"
+  cd /tmp && milestone-release taildrop 2.2.12 "Protect BLE during NOW artwork lookup"
 USAGE
 }
 

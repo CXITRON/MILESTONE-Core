@@ -18,7 +18,7 @@ reject() {
   fi
 }
 
-require 'FIRMWARE_VERSION\[\] = "2\.2\.11"' MILESTONE_Core.ino 'firmware version is not 2.2.11'
+require 'FIRMWARE_VERSION\[\] = "2\.2\.12"' MILESTONE_Core.ino 'firmware version is not 2.2.12'
 require 'CONFIG_VERSION = 10' MILESTONE_Core.ino 'configuration schema is not 10'
 require 'bool fixedApSecurity = false;' MILESTONE_Core.ino 'fixed AP security must default off'
 require 'String fixedApPassword;' MILESTONE_Core.ino 'fixed AP password setting missing'
@@ -131,6 +131,12 @@ require 'utf8ContainsHangul' CoreDisplay.inc 'NOW metadata Korean font routing m
 require 'drawUTF8X2' CoreDisplay.inc 'NOW title must render larger than the artist'
 require 'bluetoothNowPlayingAlbum\(\)' CoreArtwork.inc 'artwork lookup still needs AMS album metadata'
 require 'AMS_TRACK_ALBUM' CoreBluetooth.inc 'album layout needs AMS album metadata subscription'
+require 'AMS_CONN_INTERVAL_MIN = 32' CoreBluetooth.inc 'AMS connection interval is not coexistence-safe during artwork HTTPS'
+require 'AMS_CONN_INTERVAL_MAX = 64' CoreBluetooth.inc 'AMS maximum connection interval is too sparse during artwork HTTPS'
+require 'AMS_CONN_LATENCY = 0' CoreBluetooth.inc 'AMS peripheral latency can starve BLE during artwork HTTPS'
+require 'AMS_CONN_TIMEOUT = 1200' CoreBluetooth.inc 'AMS supervision timeout is too short for Wi-Fi TLS coexistence'
+require 'event->disconnect\.reason' CoreBluetooth.inc 'BLE disconnect reason is not captured for coexistence diagnosis'
+require 'bluetooth_disconnect_reason' CorePortal.inc 'portal must expose the last BLE disconnect reason'
 require 'MILESTONE_NOW_ARTWORK_RUNTIME_V1' CoreArtwork.inc 'NOW artwork runtime marker missing'
 require 'xTaskCreate\(nowArtworkWorker' CoreArtwork.inc 'artwork lookup must stay off the cooperative main loop'
 require 'NOW_ART_TRACK_SETTLE_MS' CoreArtwork.inc 'rapid track changes need a settle/debounce window'
@@ -171,6 +177,8 @@ require 'THERMAL_WARNING_C = MILESTONE_HAS_NOW_VIEW \? 75\.0f : 70\.0f' MILESTON
 require 'THERMAL_THROTTLE_C = MILESTONE_HAS_NOW_VIEW \? 85\.0f : 80\.0f' MILESTONE_Core.ino 'NOW thermal throttle policy missing'
 require 'THERMAL_CRITICAL_C = MILESTONE_HAS_NOW_VIEW \? 95\.0f : 90\.0f' MILESTONE_Core.ino 'NOW thermal protection policy missing'
 require 'NOW_ART_CACHE_SLOTS = 6' CoreArtwork.inc 'recent artwork cache is missing'
+require 'NOW_ART_BLE_MIN_FREE_HEAP = 80UL \* 1024UL' CoreArtwork.inc 'BLE artwork lookup lacks protected internal-RAM headroom'
+require 'NOW_ART_BLE_MIN_LARGEST_BLOCK = 32UL \* 1024UL' CoreArtwork.inc 'BLE artwork lookup lacks contiguous internal-RAM headroom'
 require 'MusicBrainz|musicbrainz\.org' CoreArtwork.inc 'direct MusicBrainz lookup missing'
 require 'coverartarchive\.org' CoreArtwork.inc 'direct Cover Art Archive lookup missing'
 require 'esp_jpeg_decode' CoreArtwork.inc 'on-device JPEG decoding missing'

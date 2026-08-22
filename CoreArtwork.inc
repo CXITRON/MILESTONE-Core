@@ -20,6 +20,8 @@ constexpr uint32_t NOW_ART_LOOKUP_CONNECT_TIMEOUT_MS = 8000UL;
 constexpr uint32_t NOW_ART_LOOKUP_TIMEOUT_MS = 15000UL;
 constexpr size_t NOW_ART_MAX_JPEG_BYTES = 220UL * 1024UL;
 constexpr size_t NOW_ART_MAX_LOOKUP_BYTES = 48UL * 1024UL;
+constexpr size_t NOW_ART_BLE_MIN_FREE_HEAP = 80UL * 1024UL;
+constexpr size_t NOW_ART_BLE_MIN_LARGEST_BLOCK = 32UL * 1024UL;
 constexpr uint32_t NOW_ART_WORKER_STACK_BYTES = 14UL * 1024UL;
 constexpr uint32_t NOW_ART_RTC_MAGIC = 0x4E415254UL;  // "NART"
 
@@ -705,7 +707,11 @@ void processNowArtwork() {
     }
     return;
   }
-  if (ESP.getFreeHeap() < 55 * 1024UL || ESP.getMaxAllocHeap() < 24 * 1024UL || !nowArtworkCacheBytes) {
+  const bool liveBluetooth = bluetoothNowPlayingHasLiveConnection();
+  const size_t minimumFreeHeap = liveBluetooth ? NOW_ART_BLE_MIN_FREE_HEAP : 55UL * 1024UL;
+  const size_t minimumLargestBlock = liveBluetooth ? NOW_ART_BLE_MIN_LARGEST_BLOCK : 24UL * 1024UL;
+  if (ESP.getFreeHeap() < minimumFreeHeap || ESP.getMaxAllocHeap() < minimumLargestBlock ||
+      !nowArtworkCacheBytes) {
     nowArtworkState = "low-memory";
     nowArtworkRetryAtMs = millis() + NOW_ART_RETRY_MS;
     return;

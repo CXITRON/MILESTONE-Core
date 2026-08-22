@@ -63,6 +63,8 @@ void handleStatus() {
   json += "\"bluetooth_stage\":\"" + jsonEscape(bluetoothNowPlayingStage()) + "\",";
   json += "\"bluetooth_error\":\"" + jsonEscape(bluetoothNowPlayingError()) + "\",";
   json += "\"bluetooth_error_code\":" + String(bluetoothNowPlayingErrorCode()) + ",";
+  json += "\"bluetooth_disconnect_reason\":" +
+          String(bluetoothNowPlayingDisconnectReason()) + ",";
   json += "\"bluetooth_security_elapsed_ms\":" +
           String(bluetoothNowPlayingSecurityElapsedMs()) + ",";
   json += "\"bluetooth_address\":\"" + jsonEscape(bluetoothNowPlayingAddress()) + "\",";

@@ -20,10 +20,10 @@ constexpr uint8_t AMS_TRACK_TITLE = 2;
 constexpr uint8_t AMS_TRACK_DURATION = 3;
 constexpr uint8_t AMS_FLAG_TRUNCATED = 0x01;
 constexpr uint32_t AMS_DISCOVERY_RETRY_MS = 5000UL;
-constexpr uint16_t AMS_CONN_INTERVAL_MIN = 80;   // 100 ms in 1.25 ms units.
-constexpr uint16_t AMS_CONN_INTERVAL_MAX = 160;  // 200 ms.
-constexpr uint16_t AMS_CONN_LATENCY = 3;
-constexpr uint16_t AMS_CONN_TIMEOUT = 600;       // 6 seconds in 10 ms units.
+constexpr uint16_t AMS_CONN_INTERVAL_MIN = 32;   // 40 ms in 1.25 ms units.
+constexpr uint16_t AMS_CONN_INTERVAL_MAX = 64;   // 80 ms.
+constexpr uint16_t AMS_CONN_LATENCY = 0;
+constexpr uint16_t AMS_CONN_TIMEOUT = 1200;      // 12 seconds in 10 ms units.
 constexpr size_t AMS_NOTIFICATION_MAX = 244;
 constexpr uint8_t AMS_NOTIFICATION_QUEUE = 6;
 constexpr uint32_t BLE_ADVERTISING_RETRY_MS = 5000UL;
@@ -120,6 +120,7 @@ volatile bool bluetoothConnectFailedEvent = false;
 volatile uint16_t bluetoothEventConnHandle = BLE_HS_CONN_HANDLE_NONE;
 volatile int bluetoothEncryptionStatus = 0;
 volatile int bluetoothConnectFailureStatus = 0;
+volatile int bluetoothLastDisconnectReason = 0;
 
 const char *bluetoothRuntimeStageName(BluetoothRuntimeStage stage) {
   switch (stage) {
@@ -245,6 +246,7 @@ int milestoneBluetoothGapEvent(struct ble_gap_event *event, void *) {
       break;
     case BLE_GAP_EVENT_DISCONNECT:
       bluetoothEventConnHandle = event->disconnect.conn.conn_handle;
+      bluetoothLastDisconnectReason = event->disconnect.reason;
       bluetoothDisconnectedEvent = true;
       break;
     case BLE_GAP_EVENT_ENC_CHANGE:
@@ -798,7 +800,7 @@ void processBluetoothNowPlaying() {
     resetAmsHandles();
     clearBluetoothNowPlayingMetadata();
     if (!bluetoothNowPlaying.suspended) startBluetoothAdvertising();
-    logLine("BLE iPhone disconnected");
+    logLine(String("BLE iPhone disconnected reason=") + bluetoothLastDisconnectReason);
   }
 
   AmsNotificationPacket packet;
@@ -863,6 +865,7 @@ bool bluetoothNowPlayingAdvertising() {
 const char *bluetoothNowPlayingStage() { return bluetoothRuntimeStageName(bluetoothNowPlaying.stage); }
 const char *bluetoothNowPlayingError() { return bluetoothNowPlaying.lastError; }
 int bluetoothNowPlayingErrorCode() { return bluetoothNowPlaying.lastErrorCode; }
+int bluetoothNowPlayingDisconnectReason() { return bluetoothLastDisconnectReason; }
 uint32_t bluetoothNowPlayingSecurityElapsedMs() {
   return bluetoothNowPlaying.securityStartedMs == 0
       ? 0 : millis() - bluetoothNowPlaying.securityStartedMs;
@@ -914,6 +917,7 @@ const char *bluetoothNowPlayingError() {
 #endif
 }
 int bluetoothNowPlayingErrorCode() { return 0; }
+int bluetoothNowPlayingDisconnectReason() { return 0; }
 uint32_t bluetoothNowPlayingSecurityElapsedMs() { return 0; }
 const char *bluetoothNowPlayingAddress() { return ""; }
 const char *bluetoothNowPlayingTitle() { return ""; }
