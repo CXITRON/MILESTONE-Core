@@ -18,7 +18,7 @@ reject() {
   fi
 }
 
-require 'FIRMWARE_VERSION\[\] = "2\.2\.4"' MILESTONE_Core.ino 'firmware version is not 2.2.4'
+require 'FIRMWARE_VERSION\[\] = "2\.2\.5"' MILESTONE_Core.ino 'firmware version is not 2.2.5'
 require 'if \(oledReady && !portalActive && !updateCheckIndicatorRendered\) return;' CoreRuntime.inc 'portal manifest checks can deadlock waiting for the non-portal U icon'
 require 'UPDATE_PORTAL_HTTP_CONNECT_TIMEOUT_MS' CoreUpdate.inc 'portal manifest checks need a bounded connect timeout'
 require 'UPDATE_PORTAL_TLS_HANDSHAKE_TIMEOUT_SEC' CoreUpdate.inc 'portal manifest checks need a bounded TLS timeout'
@@ -26,7 +26,7 @@ require 'UPDATE_CHECK_MAX_ATTEMPTS = 5' MILESTONE_Core.ino 'transient GitHub tra
 require 'UPDATE_RELEASE_API_URL' CoreUpdate.inc 'update checks must use the direct GitHub Release API path'
 require 'application/vnd\.github\+json' CoreUpdate.inc 'GitHub Release API media type missing'
 require 'parseJsonStringField\(assetFields, "digest", digest\)' CoreUpdate.inc 'GitHub asset SHA-256 digest is not validated'
-require 'latestFirmwareDownloadUrl = assetApiUrl' CoreUpdate.inc 'OTA install does not retain the verified GitHub asset API URL'
+require 'latestFirmwareDownloadUrl = candidate\.assetApiUrl' CoreUpdate.inc 'OTA install does not retain the verified GitHub asset API URL'
 require 'firmware HTTPS attempt' CoreUpdate.inc 'OTA BIN connection lacks bounded transport retries'
 require 'const uint32_t portalNow = millis\(\);' CoreRuntime.inc 'portal timeout must re-sample time after request handlers'
 require 'elapsed\(portalNow, portalStartedMs, AP_TIMEOUT_MS\)' CoreRuntime.inc 'portal timeout still compares an older loop timestamp with refreshed activity'
@@ -109,6 +109,10 @@ require 'lastError' PortalPage.h 'browser scan polling must tolerate transient A
 require 'server\.on\("/api/portal/close", HTTP_POST, handlePortalClose\)' CorePortal.inc 'explicit setup portal close API missing'
 require 'PORTAL_CLOSE_RESPONSE_HOLD_MS = 750UL' MILESTONE_Core.ino 'portal close must leave time for its HTTP response'
 require 'portalCloseRequested && deadlineReached\(portalNow, portalCloseNotBeforeMs\)' CoreRuntime.inc 'portal close request is not processed after HTTP service'
+require 'portalManifestWorker' CoreRuntime.inc 'portal manifest HTTPS must not block captive HTTP/DNS service'
+require 'BoundedStringWriter writer\(body, UPDATE_MANIFEST_MAX_BYTES\)' CoreUpdate.inc 'unknown-length release responses need a pre-allocation body limit'
+reject 'body = http\.getString\(\)' CoreUpdate.inc 'release body must not be fully allocated before its size limit is enforced'
+require 'AbortController' PortalPage.h 'portal API requests need bounded browser recovery'
 require 'onclick="closePortal\(\)"' PortalPage.h 'setup portal needs an explicit close button'
 
 echo "Network stability contract test passed"

@@ -3,6 +3,25 @@ RTC_DATA_ATTR uint32_t firmwareOperationRtcMagic = 0;
 RTC_DATA_ATTR uint8_t firmwareOperationRtcStage = 0;
 String firmwareInterruptedStage;
 
+struct FirmwareManifestCandidate {
+  String version;
+  String profile;
+  String asset;
+  String assetApiUrl;
+  String sha256;
+  uint32_t size = 0;
+  uint64_t checkedEpoch = 0;
+  bool profileSwitchAvailable = false;
+  int versionComparison = 0;
+};
+
+FirmwareManifestCandidate portalManifestCandidate;
+String portalManifestFailure;
+volatile bool portalManifestWorkerRunning = false;
+volatile bool portalManifestWorkerReady = false;
+volatile UpdateCheckAttemptResult portalManifestWorkerResult = UpdateCheckAttemptResult::RETRYABLE_FAILURE;
+portMUX_TYPE portalManifestMux = portMUX_INITIALIZER_UNLOCKED;
+
 void markFirmwareOperationStage(uint8_t stage) {
   firmwareOperationRtcMagic = FIRMWARE_OPERATION_RTC_MAGIC;
   firmwareOperationRtcStage = stage;
@@ -265,6 +284,35 @@ bool transientHttpFailure(int response) {
          (response >= 500 && response <= 599);
 }
 
+class BoundedStringWriter : public Stream {
+ public:
+  BoundedStringWriter(String &target, size_t limit) : target_(target), limit_(limit) {}
+  int available() override { return 0; }
+  int read() override { return -1; }
+  int peek() override { return -1; }
+  void flush() override {}
+  size_t write(uint8_t value) override { return write(&value, 1U); }
+  size_t write(const uint8_t *buffer, size_t size) override {
+    if (!buffer || overflow_ || target_.length() > limit_ || size > limit_ - target_.length()) {
+      overflow_ = true;
+      return 0;
+    }
+    if (!target_.concat(buffer, static_cast<unsigned int>(size))) {
+      allocationFailed_ = true;
+      return 0;
+    }
+    return size;
+  }
+  bool overflowed() const { return overflow_; }
+  bool allocationFailed() const { return allocationFailed_; }
+
+ private:
+  String &target_;
+  size_t limit_;
+  bool overflow_ = false;
+  bool allocationFailed_ = false;
+};
+
 UpdateCheckAttemptResult readManifestBody(HTTPClient &http, String &body, String &failure) {
   const int declaredLength = http.getSize();
   if (declaredLength > static_cast<int>(UPDATE_MANIFEST_MAX_BYTES)) {
@@ -272,15 +320,23 @@ UpdateCheckAttemptResult readManifestBody(HTTPClient &http, String &body, String
     return UpdateCheckAttemptResult::FATAL_FAILURE;
   }
 
-  // HTTPClient::getString() routes through writeToStream(), which correctly
-  // decodes both identity and chunked transfer encodings. The previous custom
-  // socket loop could mistake a valid unknown-length/chunked response for a
-  // timeout while a keep-alive connection remained open.
-  body = http.getString();
-  const int decodedLength = http.getSize();
-  if (body.length() > UPDATE_MANIFEST_MAX_BYTES) {
+  body = "";
+  if (declaredLength > 0) body.reserve(static_cast<size_t>(declaredLength));
+  BoundedStringWriter writer(body, UPDATE_MANIFEST_MAX_BYTES);
+  // writeToStream() performs HTTPClient's chunk decoding while the sink enforces
+  // a real allocation bound before bytes enter the String.
+  const int written = http.writeToStream(&writer);
+  if (writer.overflowed()) {
     failure = "manifest too large";
     return UpdateCheckAttemptResult::FATAL_FAILURE;
+  }
+  if (writer.allocationFailed()) {
+    failure = "manifest allocation failed";
+    return UpdateCheckAttemptResult::FATAL_FAILURE;
+  }
+  if (written < 0) {
+    failure = "manifest body incomplete or timed out";
+    return UpdateCheckAttemptResult::RETRYABLE_FAILURE;
   }
   if (body.length() == 0) {
     failure = "manifest body empty or timed out";
@@ -290,16 +346,10 @@ UpdateCheckAttemptResult readManifestBody(HTTPClient &http, String &body, String
     failure = "manifest body incomplete";
     return UpdateCheckAttemptResult::RETRYABLE_FAILURE;
   }
-  if (decodedLength >= 0 && body.length() != static_cast<size_t>(decodedLength)) {
-    failure = "manifest decoded length mismatch";
-    return UpdateCheckAttemptResult::RETRYABLE_FAILURE;
-  }
   body.trim();
-  // getString() intentionally hides writeToStream()'s return code. A transfer
-  // interrupted while using an unknown-length response can therefore leave a
-  // non-empty partial String. Require a complete JSON object envelope before
-  // trusting any fields so a truncated 200 response is retried rather than
-  // accidentally accepted as a valid release manifest.
+  // An unknown-length transfer can still stop after a non-empty partial body.
+  // Require a complete JSON object envelope before trusting any fields so a
+  // truncated 200 response is retried instead of accidentally being accepted.
   if (!body.startsWith("{") || !body.endsWith("}")) {
     failure = "manifest body incomplete";
     return UpdateCheckAttemptResult::RETRYABLE_FAILURE;
@@ -326,7 +376,10 @@ void requestFirmwareUpdateCheck(UpdateCheckReason reason, const String &profile)
   updateError = "";
 }
 
-UpdateCheckAttemptResult checkFirmwareManifestAttempt(UpdateCheckReason reason, String &failure) {
+UpdateCheckAttemptResult checkFirmwareManifestAttempt(UpdateCheckReason reason, String &failure,
+                                                       FirmwareManifestCandidate &candidate) {
+  (void)reason;
+  candidate = FirmwareManifestCandidate();
   if (thermalSafeMode || temperatureSensorFault || thermalWarning) {
     failure = "temperature protection active";
     return UpdateCheckAttemptResult::FATAL_FAILURE;
@@ -421,14 +474,37 @@ UpdateCheckAttemptResult checkFirmwareManifestAttempt(UpdateCheckReason reason, 
   const String profile = requestedUpdateProfile;
   String sha256 = digest.substring(7);
   sha256.toLowerCase();
-  latestFirmwareVersion = version;
-  latestFirmwareProfile = profile;
-  latestFirmwareAsset = asset;
-  latestFirmwareDownloadUrl = assetApiUrl;
-  latestFirmwareSize = size;
-  latestFirmwareSha256 = sha256;
-  latestFirmwareNotes = String("GitHub Release v") + version;
-  lastUpdateCheckEpoch = static_cast<uint64_t>(time(nullptr));
+  const bool profileSwitchAvailable = profile != FIRMWARE_PROFILE;
+  const int versionComparison = compareSemanticVersions(FIRMWARE_VERSION, version);
+  if (profileSwitchAvailable && versionComparison > 0) {
+    failure = "target profile release is older than running firmware";
+    return UpdateCheckAttemptResult::FATAL_FAILURE;
+  }
+  // State is applied by loopTask after a portal worker has completely
+  // published this candidate, keeping portal readers away from Strings that
+  // are still being mutated.
+  candidate.version = version;
+  candidate.profile = profile;
+  candidate.asset = asset;
+  candidate.assetApiUrl = assetApiUrl;
+  candidate.size = size;
+  candidate.sha256 = sha256;
+  candidate.checkedEpoch = static_cast<uint64_t>(time(nullptr));
+  candidate.profileSwitchAvailable = profileSwitchAvailable;
+  candidate.versionComparison = versionComparison;
+  failure = "";
+  return UpdateCheckAttemptResult::SUCCESS;
+}
+
+void applyFirmwareManifestCandidate(const FirmwareManifestCandidate &candidate) {
+  latestFirmwareVersion = candidate.version;
+  latestFirmwareProfile = candidate.profile;
+  latestFirmwareAsset = candidate.asset;
+  latestFirmwareDownloadUrl = candidate.assetApiUrl;
+  latestFirmwareSize = candidate.size;
+  latestFirmwareSha256 = candidate.sha256;
+  latestFirmwareNotes = String("GitHub Release v") + candidate.version;
+  lastUpdateCheckEpoch = candidate.checkedEpoch;
   if (prefs.putULong64("ota_last_ok", lastUpdateCheckEpoch) != sizeof(uint64_t) ||
       !putStringVerified("ota_latest", latestFirmwareVersion) ||
       !putStringVerified("ota_check", "ok")) {
@@ -437,34 +513,35 @@ UpdateCheckAttemptResult checkFirmwareManifestAttempt(UpdateCheckReason reason, 
   bootUpdateCheckPending = false;
   nextUpdateRetryMs = 0;
   updateError = "";
-
-  const bool profileSwitchAvailable = latestFirmwareProfile != FIRMWARE_PROFILE;
-  const int versionComparison = compareSemanticVersions(FIRMWARE_VERSION, latestFirmwareVersion);
-  if (profileSwitchAvailable && versionComparison > 0) {
-    failure = "target profile release is older than running firmware";
-    return UpdateCheckAttemptResult::FATAL_FAILURE;
-  }
-  if (profileSwitchAvailable || versionComparison < 0) {
-    // An available release is one of the two update-check outcomes that should
-    // deliberately interrupt the OLED (the other is a check error). Do this for
-    // both automatic and portal-initiated checks so a manual check cannot hide
-    // the device-side notification.
+  if (candidate.profileSwitchAvailable || candidate.versionComparison < 0) {
     updatePromptVisible = true;
     updatePromptStartedMs = millis();
     setUpdateState(UpdateState::AVAILABLE);
-    logLine(String(profileSwitchAvailable ? "firmware profile switch available: " : "firmware update available: ") +
+    logLine(String(candidate.profileSwitchAvailable ? "firmware profile switch available: "
+                                                    : "firmware update available: ") +
             currentFirmwareIdentity() + " -> " +
             firmwareIdentity(latestFirmwareVersion, latestFirmwareProfile));
-    failure = "";
-    return UpdateCheckAttemptResult::SUCCESS;
+  } else {
+    updatePromptVisible = false;
+    setUpdateState(UpdateState::CURRENT);
+    updateCurrentVisibleMs = millis();
+    logLine(String("firmware is current: ") + currentFirmwareIdentity());
   }
+}
 
-  updatePromptVisible = false;
-  setUpdateState(UpdateState::CURRENT);
-  updateCurrentVisibleMs = millis();
-  logLine(String("firmware is current: ") + currentFirmwareIdentity());
-  failure = "";
-  return UpdateCheckAttemptResult::SUCCESS;
+void portalManifestWorker(void *parameter) {
+  const UpdateCheckReason reason = static_cast<UpdateCheckReason>(reinterpret_cast<uintptr_t>(parameter));
+  FirmwareManifestCandidate candidate;
+  String failure;
+  const UpdateCheckAttemptResult result = checkFirmwareManifestAttempt(reason, failure, candidate);
+  portalManifestCandidate = candidate;
+  portalManifestFailure = failure;
+  portENTER_CRITICAL(&portalManifestMux);
+  portalManifestWorkerResult = result;
+  portalManifestWorkerReady = true;
+  portalManifestWorkerRunning = false;
+  portEXIT_CRITICAL(&portalManifestMux);
+  vTaskDelete(nullptr);
 }
 
 bool installFirmwareUpdate() {

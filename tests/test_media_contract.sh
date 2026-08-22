@@ -125,6 +125,7 @@ require 'QUEUE_SAFETY_FRAMES=4' StreamPage.h 'stream sender must reserve ACK tra
 require 'HTTP RTT' StreamPage.h 'stream status must expose request RTT for supply diagnostics'
 require 'MAX_PUSH_FRAMES=8' StreamPage.h 'browser raw push bound missing'
 require 'async function convertAll\(' StreamPage.h 'full browser preconversion path missing'
+require 'MAX_PRECONVERT_BYTES=48\*1024\*1024' StreamPage.h 'live preconversion needs a browser memory ceiling'
 require 'Math\.ceil\(video\.duration\*fps\)' StreamPage.h 'full-video frame count must derive from duration and fps'
 require "'Content-Type':'application/octet-stream'" StreamPage.h 'stream page must send raw binary bodies'
 require "'X-MILESTONE-Session':String\(state\.session\)" StreamPage.h 'stream page must send session metadata as a collected header'

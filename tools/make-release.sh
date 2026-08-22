@@ -3,7 +3,7 @@ set -euo pipefail
 
 if (( $# < 1 || $# > 2 )); then
   echo "사용법: $0 VERSION [NOTES]" >&2
-  echo "예: $0 2.2.4 'Avoid NOW OTA BLE deinit panic'" >&2
+  echo "예: $0 2.2.5 'Stabilize portal OTA and NOW artwork'" >&2
   exit 2
 fi
 

@@ -530,20 +530,39 @@ bool initializeBluetoothNowPlaying() {
 }
 
 bool waitForBluetoothDisconnectBeforeShutdown() {
-  if (!bluetoothNowPlaying.connected || !bluetoothServer ||
-      bluetoothNowPlaying.connHandle == BLE_HS_CONN_HANDLE_NONE) return true;
+  if (!bluetoothServer) return true;
+  uint16_t connHandle = BLE_HS_CONN_HANDLE_NONE;
+  struct ble_gap_conn_desc connection = {};
+  if (bluetoothNowPlaying.connHandle != BLE_HS_CONN_HANDLE_NONE &&
+      ble_gap_conn_find(bluetoothNowPlaying.connHandle, &connection) == 0) {
+    connHandle = bluetoothNowPlaying.connHandle;
+  } else if (bluetoothEventConnHandle != BLE_HS_CONN_HANDLE_NONE &&
+             ble_gap_conn_find(bluetoothEventConnHandle, &connection) == 0) {
+    // A GAP CONNECT callback can arrive immediately before firmware isolation,
+    // before processBluetoothNowPlaying() has copied it into the app state.
+    connHandle = bluetoothEventConnHandle;
+  } else {
+    const std::map<uint16_t, conn_status_t> peers = bluetoothServer->getPeerDevices(false);
+    if (!peers.empty()) connHandle = peers.begin()->first;
+  }
+  if (connHandle == BLE_HS_CONN_HANDLE_NONE && bluetoothServer->getConnectedCount() == 0) return true;
+  if (connHandle == BLE_HS_CONN_HANDLE_NONE) {
+    logLine("BLE live connection handle unresolved; firmware isolation refused");
+    return false;
+  }
 
-  const uint16_t connHandle = bluetoothNowPlaying.connHandle;
   bluetoothDisconnectedEvent = false;
   const int disconnectResult = bluetoothServer->disconnect(connHandle);
-  if (disconnectResult == BLE_HS_ENOTCONN) return true;
-  if (disconnectResult != 0 && disconnectResult != BLE_HS_EALREADY) {
+  const bool alreadyDisconnected = disconnectResult == BLE_HS_ENOTCONN;
+  if (!alreadyDisconnected && disconnectResult != 0 && disconnectResult != BLE_HS_EALREADY) {
     logLine(String("BLE disconnect request failed before shutdown: ") + disconnectResult);
     return false;
   }
 
   const uint32_t startedMs = millis();
-  while (!(bluetoothDisconnectedEvent && bluetoothEventConnHandle == connHandle)) {
+  while (!alreadyDisconnected &&
+         !(bluetoothDisconnectedEvent && bluetoothEventConnHandle == connHandle) &&
+         bluetoothServer->getConnectedCount() != 0) {
     if (elapsed(millis(), startedMs, BLE_DISCONNECT_TIMEOUT_MS)) {
       logLine("BLE disconnect confirmation timed out; stack deinit refused");
       return false;
@@ -559,6 +578,21 @@ bool waitForBluetoothDisconnectBeforeShutdown() {
   clearBluetoothNowPlayingMetadata();
   logLine("BLE disconnect confirmed before stack shutdown");
   return true;
+}
+
+void clearBluetoothPendingEvents() {
+  portENTER_CRITICAL(&amsNotificationMux);
+  amsNotificationHead = 0;
+  amsNotificationTail = 0;
+  amsNotificationCount = 0;
+  portEXIT_CRITICAL(&amsNotificationMux);
+  bluetoothConnectedEvent = false;
+  bluetoothDisconnectedEvent = false;
+  bluetoothEncryptedEvent = false;
+  bluetoothConnectFailedEvent = false;
+  bluetoothEventConnHandle = BLE_HS_CONN_HANDLE_NONE;
+  bluetoothEncryptionStatus = 0;
+  bluetoothConnectFailureStatus = 0;
 }
 
 bool shutdownBluetoothNowPlaying() {
@@ -577,11 +611,7 @@ bool shutdownBluetoothNowPlaying() {
   bluetoothServer = nullptr;
   bluetoothAdvertising = nullptr;
   bluetoothNowPlaying = BluetoothNowPlayingState();
-  portENTER_CRITICAL(&amsNotificationMux);
-  amsNotificationHead = 0;
-  amsNotificationTail = 0;
-  amsNotificationCount = 0;
-  portEXIT_CRITICAL(&amsNotificationMux);
+  clearBluetoothPendingEvents();
   logLine("BLE Now Playing stopped");
   return true;
 }
@@ -601,6 +631,10 @@ bool isolateBluetoothForFirmwareOperation() {
       if (!bluetoothNowPlaying.connected) startBluetoothAdvertising();
       return false;
     }
+    // No callbacks belonging to the terminated connection may be replayed
+    // after HTTPS releases the BLE runtime again.
+    delay(BLE_SHUTDOWN_QUIESCE_MS);
+    clearBluetoothPendingEvents();
     // Keep the initialized NimBLE host/controller and GATT objects alive.
     // Arduino-ESP32 3.3.x BLEDevice::deinit() deletes its server before it
     // stops the host task, which can race queued GAP/GATT callbacks and PANIC.

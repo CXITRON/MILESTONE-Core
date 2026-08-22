@@ -143,7 +143,7 @@ NOW 프로필은 iPhone/iPad의 **Apple Media Service(AMS)** 를 이용해 Bluet
 
 표지 구성은 중계 서버나 별도 API 키 없이 ESP32가 MusicBrainz에서 release-group을 찾고 Cover Art Archive의 250px 표지를 직접 받습니다. 앨범명 + 아티스트를 우선 사용하고 앨범명이 없을 때 곡명 + 아티스트로 검색합니다. JPEG는 ESP32 내부에서 RGB565로 축소 디코딩한 뒤 1비트 OLED 이미지로 변환하며 최근 6곡을 PSRAM에 보관합니다. 곡을 연속으로 넘길 때는 마지막 메타데이터 변경 후 1.4초가 지난 최신 곡만 조회하고, 늦게 끝난 이전 결과는 폐기합니다. 조회 실패·표지 없음·오프라인·메모리 부족이어도 AMS 텍스트와 진행률은 계속 표시됩니다.
 
-NOW의 업데이트 확인·설치는 TLS용 내부 RAM을 확보하기 전에 iPhone 연결 종료를 요청하고, 일치하는 GAP disconnect 완료 이벤트를 확인한 뒤에만 NimBLE 스택을 해제합니다. 2.5초 안에 확인되지 않거나 종료 요청이 실패하면 업데이트 작업을 미루고 스택 해제를 거부해 PANIC을 방지합니다.
+NOW의 업데이트 확인·설치는 먼저 광고를 중단하고, 애플리케이션 플래그뿐 아니라 NimBLE 서버의 실제 peer와 GAP connection handle을 함께 확인해 살아 있는 iPhone 연결을 종료합니다. 연결 종료가 확인되면 NimBLE 객체는 삭제하지 않은 채 유지하고 오래된 AMS/GAP 이벤트를 비운 뒤 HTTPS를 시작합니다. 2.5초 안에 실제 연결이 사라지지 않거나 TLS용 내부 RAM이 부족하면 재부팅을 감수하지 않고 업데이트 작업을 미룹니다.
 
 현재 버전은 AMS 알림 안에 완전히 들어온 메타데이터를 표시합니다. iOS가 긴 문자열을 truncated로 표시한 경우 안전하게 수신된 접두부까지만 표시할 수 있으며, 전체 값을 별도 Entity Attribute 읽기로 다시 가져오는 확장은 후속 대상으로 남겨 두었습니다. 또한 ESP32-S3와 실제 iPhone 사이의 페어링·AMS 상호운용은 펌웨어 업로드 후 실기기에서 확인해야 합니다. Android의 범용 현재곡 표시를 이 기능의 지원 범위로 보장하지 않습니다.
 
@@ -191,13 +191,13 @@ v1.9.4에서는 실제 영상 선택 뒤 WebKit이 `cancel`과 `files=0`을 반�
 
 ### 8.2 실시간 스트리밍
 
-v1.10.5부터 **실시간 스트리밍**은 저장형 미디어와 분리된 `/stream` 전용 페이지와 독립 `STREAM_MODE`에서 동작합니다. 휴대폰·PC 브라우저가 영상을 먼저 128×128 1비트 프레임으로 전체 선변환한 뒤 정속으로 전송하므로, ESP32는 원본 영상 디코딩이나 전체 영상 저장을 하지 않습니다.
+v1.10.5부터 **실시간 스트리밍**은 저장형 미디어와 분리된 `/stream` 전용 페이지와 독립 `STREAM_MODE`에서 동작합니다. 휴대폰·PC 브라우저가 영상을 먼저 128×128 1비트 프레임으로 전체 선변환한 뒤 정속으로 전송하므로, ESP32는 원본 영상 디코딩이나 전체 영상 저장을 하지 않습니다. 브라우저 선변환 데이터는 최대 48MiB로 제한해 긴 영상이 iPhone Safari 탭을 종료시키는 메모리 폭주를 방지하며, 초과 시 선택한 FPS 기준의 최대 길이를 안내합니다.
 
 - 입력: 로컬 영상 파일 또는 브라우저가 직접 읽을 수 있고 CORS가 허용된 직접 영상 URL
 - FPS: 5 / 10 / 15 / 18 / 20fps, 24fps Experimental
 - 전송: `application/octet-stream` binary frame records + 작은 binary ACK. 첫 프레임은 RAW, 이후 프레임은 이득이 있을 때 MSM1과 같은 XOR-RLE delta를 사용하며, session/sequence/frame-count/encoded-byte 메타데이터는 명시적으로 수집한 `X-MILESTONE-*` 요청 헤더로 전달
 - 버퍼: PSRAM 240프레임(480KiB) 링버퍼, 96프레임 초기 선버퍼와 48프레임 재버퍼 기준, 장치 처리량에 맞춘 시간축 프레임 드롭
-- 저장 한도: MSM1의 1024프레임·160KiB 제한을 적용하지 않으며 스트림 프레임을 LittleFS/NVS에 쓰지 않음
+- 저장 한도: ESP32에는 MSM1의 1024프레임·160KiB 제한을 적용하지 않고 스트림 프레임도 LittleFS/NVS에 쓰지 않음. 단, 송신 브라우저의 전체 선변환 버퍼는 48MiB 이하
 - 실행 격리: 스트리밍 중 일반 NTP·OTA·진단·화면 순환·저장형 미디어·일반 LED 처리와 불필요한 포털 API를 차단하고 수신·버퍼·OLED·BOOT·온도/자원 보호에 집중
 - 열 정책: 75°C 경고, 80°C에서 스트림 중단, 85°C 이상은 기존 강제 과열 보호
 - 종료: 소스 EOF를 장치에 알린 뒤 PSRAM 큐를 실제로 비우고 STREAM_MODE를 종료
@@ -264,11 +264,13 @@ picocom -b 115200 /dev/ttyACM0
 https://github.com/CXITRON/MILESTONE-Core
 ```
 
-기기는 부팅 후 Wi-Fi 연결과 NTP 동기화를 먼저 완료해 시간과 디데이를 확정합니다. 최신 정식 Release 확인은 새 부팅에서 실제 NTP 응답을 받아 외부 연결을 확인한 뒤 시작하며, 확인 중에는 일반 화면을 유지하고 우상단에 `U`를 표시합니다. 계속 켜져 있는 경우 마지막 정상 확인 시각으로부터 7일 뒤 다시 확인합니다. DNS·TLS·일시적 HTTP 오류는 짧은 백오프로 최대 3회 확인한 뒤 10분 후 자동 재시도하며, 명백한 비정상 Release 응답이나 실제 OTA 설치 실패는 6시간 뒤 재시도합니다. 자동 확인은 설치까지 자동으로 실행하지 않습니다.
+기기는 부팅 후 Wi-Fi 연결과 NTP 동기화를 먼저 완료해 시간과 디데이를 확정합니다. 최신 정식 Release 확인은 새 부팅에서 실제 NTP 응답을 받아 외부 연결을 확인한 뒤 시작하며, 확인 중에는 일반 화면을 유지하고 우상단에 `U`를 표시합니다. 계속 켜져 있는 경우 마지막 정상 확인 시각으로부터 7일 뒤 다시 확인합니다. DNS·TLS·일시적 HTTP 오류는 짧은 백오프로 최대 5회 확인한 뒤 10분 후 자동 재시도하며, 명백한 비정상 Release 응답이나 실제 OTA 설치 실패는 6시간 뒤 재시도합니다. 자동 확인은 설치까지 자동으로 실행하지 않습니다.
 
 부팅 로고는 네트워크 응답을 기다리지 않고 약 3초 뒤 종료됩니다. NTP 서버 응답이 느리면 일반 화면의 우상단에 `T`를 표시한 채 백그라운드에서 서버별 최대 7초, 전체 최대 21초 동안 서로 다른 제공자를 순서대로 시도합니다. 설정 포털에서 시작한 업데이트·프로필 확인은 이 제한 안에 동기화되지 않으면 명확히 실패 처리하며 자동 재시도에 매달려 1~2분간 대기하지 않습니다. 저해상도 OLED에서 시간 동기화와 업데이트 확인을 혼동하지 않도록 두 상태를 각각 `T`와 `U` 문자로 구분합니다. NTP 성공 전에는 GitHub 업데이트 확인을 시작하지 않습니다.
 
 업데이트 확인이 정상적으로 끝나 현재 버전이 최신이면 별도 전체 화면을 표시하지 않습니다. 확인 실패 또는 새 버전 발견 때만 OLED 전체 화면에 안내가 나타나며, 새 버전 안내는 15초 동안 유지됩니다.
+
+설정 AP에서 시작한 Release 확인은 별도 작업에서 수행하므로 DNS/TLS 응답을 기다리는 동안에도 captive portal 요청과 AP 유휴시간 갱신을 계속 처리합니다. 포털의 API 호출 자체에도 제한시간이 있어 iPhone 브라우저가 무기한 대기하지 않습니다. Wi-Fi 검색·시험·삭제·수동 시간 동기화는 NOW 표지 다운로드가 진행 중일 때 동시에 무선 상태를 바꾸지 않고 잠시 후 다시 시도하도록 안내합니다.
 
 - BOOT 버튼을 1초 미만으로 짧게 눌렀다 놓기: 설치
 - 아무 조작 없이 15초 경과: 이번에는 보류
@@ -292,13 +294,13 @@ PC의 현재 프로젝트를 직접 수정한 경우에는 **MILESTONE_Core 프�
 
 ```bash
 cd /run/media/citron/T7/Documents/Dev/MILESTONE_Core
-milestone-release local 2.2.4 "Avoid NOW OTA BLE deinit panic"
+milestone-release local 2.2.5 "Stabilize portal OTA and NOW artwork"
 ```
 
 Tailscale Taildrop으로 `MILESTONE_Core_1.10.6.zip`을 받은 경우에는 교체 대상 프로젝트 디렉터리 밖의 정상적으로 존재하는 디렉터리에서 실행합니다. 기존 프로젝트가 교체될 때 현재 셸 경로가 사라지는 문제를 방지하기 위해 `/tmp`로 이동하는 방식을 권장합니다.
 
 ```bash
-cd /tmp && milestone-release taildrop 2.2.4 "Avoid NOW OTA BLE deinit panic"
+cd /tmp && milestone-release taildrop 2.2.5 "Stabilize portal OTA and NOW artwork"
 ```
 
 Taildrop 모드는 ZIP을 라이브 프로젝트에 바로 덮어쓰지 않습니다. 별도 staging 디렉터리에서 구조·버전·Git 상태를 검사하고 테스트와 ESP32 릴리즈 빌드까지 성공한 뒤에만 프로젝트를 교체합니다. GitHub 게시 전 실패하면 기존 프로젝트를 자동 복구합니다. `--dry-run`은 테스트/빌드까지만 수행하고 로컬 프로젝트·Git·GitHub를 변경하지 않습니다. `--yes`를 사용하지 않는 기본 동작은 최종 게시 직전에 한 번 확인합니다.
@@ -315,10 +317,10 @@ Taildrop 모드는 ZIP을 라이브 프로젝트에 바로 덮어쓰지 않습�
 
 ```bash
 chmod +x tools/make-release.sh
-./tools/make-release.sh 2.2.4 "Avoid NOW OTA BLE deinit panic"
+./tools/make-release.sh 2.2.5 "Stabilize portal OTA and NOW artwork"
 ```
 
-기본 설명을 사용하려면 `./tools/make-release.sh 2.2.4`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
+기본 설명을 사용하려면 `./tools/make-release.sh 2.2.5`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
 
 다음 여섯 파일이 `release/`에 생성됩니다.
 
@@ -342,11 +344,11 @@ release/MILESTONE_Now.json
 일반적인 게시에는 위의 `milestone-release`를 사용합니다. 아래 수동 절차는 자동화 도구를 복구하거나 디버깅해야 할 때만 참고합니다.
 
 1. 저장소의 `Releases`에서 `Draft a new release`를 선택합니다.
-2. 버전과 동일한 태그를 만듭니다. 예: `v2.2.4`
-3. Release 제목을 `MILESTONE Core v2.2.4`로 지정합니다.
+2. 버전과 동일한 태그를 만듭니다. 예: `v2.2.5`
+3. Release 제목을 `MILESTONE Core v2.2.5`로 지정합니다.
 4. CORE/MEDIA/NOW의 BIN과 JSON 여섯 파일을 모두 첨부합니다.
 5. Pre-release가 아닌 최신 정식 Release로 게시합니다.
-6. 2.2.3 CORE/MEDIA/NOW 기기에서 같은 프로필 2.2.4 OTA, 연결된 NOW의 업데이트 확인·설치, BLE 비파괴 격리·중단 단계 진단과 기존 설정·Wi-Fi·롤백 보호·진단 이력·커스텀 미디어 보존을 검증합니다.
+6. 2.2.4 CORE/MEDIA/NOW 기기에서 같은 프로필 2.2.5 OTA, 설정 AP를 유지한 업데이트 확인, 연결된 NOW의 실제 BLE peer 격리, 표지 연속 넘김·열 중단과 기존 설정·Wi-Fi·롤백 보호·진단 이력·커스텀 미디어 보존을 검증합니다.
 
 여섯 파일의 이름은 모든 Release에서 정확히 같아야 합니다. 초안이나 Pre-release는 `latest` 업데이트 대상으로 사용하지 않습니다.
 
@@ -398,6 +400,21 @@ Taildrop ZIP의 `milestone-release`가 현재 설치본보다 새로우면, 게�
 - STREAM_MODE에서 일반 백그라운드 기능을 격리하고 PSRAM 240프레임 링버퍼·X/Y dirty-tile OLED 갱신·적응형 출력 주기·프레임 드롭·80°C 스트림 상한으로 영상 수신/표시에 집중
 - 라이브 송신은 96프레임 초기 충전 후 큐 64프레임 이하에서 최대 8프레임씩 144프레임 이상으로 보충하며 ESP32가 소스 시간축과 OLED 출력 클록을 분리해 관리
 - 비차단 3초 부팅 로고와 우상단 NTP `T`·업데이트 `U` 상태 아이콘
+
+## v2.2.5 업데이트 안내
+
+v2.2.5는 설정 AP의 업데이트 확인과 NOW 앨범 표지·Bluetooth 경합, 그리고 긴 라이브 영상 변환의 메모리 안정성을 함께 보강합니다. 설정 스키마와 프로필별 OTA 자산 이름은 변경하지 않습니다.
+
+- 설정 AP의 GitHub Release 확인을 bounded 백그라운드 작업으로 옮겨 DNS/TLS 대기 중에도 포털과 AP가 계속 응답
+- 포털 API에 요청 제한시간을 추가하고, AP가 열려 있는 상태에서 완료된 작업 결과를 정상 루프가 안전하게 반영
+- Content-Length가 없는 매니페스트도 수신 전에 16KiB 상한을 적용하고 완전한 JSON envelope만 허용
+- OTA 격리에서 NimBLE의 실제 peer와 GAP connection handle을 확인하고, 종료 뒤 남은 AMS/GAP 이벤트 제거
+- MusicBrainz `release-group`의 XML 속성 순서와 작은 청크 경계를 무관하게 처리하며 Lucene 특수문자를 안전하게 escape
+- 연속 곡 넘김·고온·온도 센서 오류 때 이전 표지 작업을 취소하고, 표지 TLS 중 포털의 Wi-Fi 변경 작업 경합 차단
+- 실시간 영상의 브라우저 전체 선변환 버퍼를 48MiB로 제한해 iPhone Safari 메모리 종료 방지
+- CORE/MEDIA/NOW 호스트 계약 테스트와 고정 프로필 빌드 유지
+
+정식 버전: `2.2.5`
 
 ## v2.2.4 업데이트 안내
 

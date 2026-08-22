@@ -825,6 +825,9 @@ void handleGetConfig() {
 void handleWifiScan() {
   if (!authorizePortalRequest()) return;
   if (rejectPortalWorkDuringStream()) return;
+  if (nowArtworkTransferBusy()) {
+    return sendJson(409, "{\"error\":\"앨범 표지 조회가 끝난 뒤 Wi-Fi를 검색하세요.\"}");
+  }
   if (wifiTestState == WifiTestState::CONNECTING || wifiTestState == WifiTestState::TIME_SYNCING) {
     sendJson(409, "{\"error\":\"Wi-Fi 연결 시험이 진행 중입니다. 완료 후 검색하세요.\"}");
     return;
@@ -1058,6 +1061,9 @@ void handlePostConfig() {
 void handleWifiTest() {
   if (!authorizePortalRequest()) return;
   if (rejectPortalWorkDuringStream()) return;
+  if (nowArtworkTransferBusy()) {
+    return sendJson(409, "{\"error\":\"앨범 표지 조회가 끝난 뒤 Wi-Fi 연결을 시험하세요.\"}");
+  }
   String ssid = server.arg("ssid");
   String password = server.arg("pass");
   String securityText = server.arg("security");
@@ -1121,6 +1127,9 @@ void handleWifiTest() {
 void handleTimeSync() {
   if (!authorizePortalRequest()) return;
   if (rejectPortalWorkDuringStream()) return;
+  if (nowArtworkTransferBusy()) {
+    return sendJson(409, "{\"error\":\"앨범 표지 조회가 끝난 뒤 시간을 동기화하세요.\"}");
+  }
   if (wifiTestState == WifiTestState::CONNECTING || wifiTestState == WifiTestState::TIME_SYNCING) {
     return sendJson(409, "{\"error\":\"Wi-Fi 시험이 진행 중입니다. 완료 후 다시 시도하세요.\"}");
   }
@@ -1207,6 +1216,9 @@ void handleSettingsReset() {
 void handleDeleteSavedWifi() {
   if (!authorizePortalRequest()) return;
   if (rejectPortalWorkDuringStream()) return;
+  if (nowArtworkTransferBusy()) {
+    return sendJson(409, "{\"error\":\"앨범 표지 조회가 끝난 뒤 저장된 Wi-Fi를 변경하세요.\"}");
+  }
   String ssid = server.arg("ssid");
   int index = findSavedNetwork(ssid);
   if (index < 0) return sendJson(404, "{\"error\":\"저장된 Wi-Fi를 찾을 수 없습니다.\"}");

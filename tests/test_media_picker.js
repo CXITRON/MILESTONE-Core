@@ -98,6 +98,10 @@ const context = vm.createContext({
   Date,
   Math,
   Promise,
+  AbortController: class {
+    constructor(){this.signal={addEventListener(){},removeEventListener(){}}}
+    abort(){}
+  },
   navigator: {userAgent: 'MILESTONE picker unit test', clipboard: null},
   document: {
     visibilityState: 'visible',

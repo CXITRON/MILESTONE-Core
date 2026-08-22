@@ -394,20 +394,64 @@ void processFirmwareUpdate() {
     // Waiting for U while the portal is active would deadlock every manual or
     // profile manifest check. Outside setup, preserve the visible-U contract.
     if (oledReady && !portalActive && !updateCheckIndicatorRendered) return;
-    markFirmwareOperationStage(1);
-    const bool bluetoothIsolated = isolateBluetoothForFirmwareOperation();
-    clearFirmwareOperationStage();
-    if (!bluetoothIsolated) {
-      updateError = "Bluetooth disconnect pending";
-      updateCheckNotBeforeMs = millis() + 500UL;
-      return;
+    bool manifestWorkerRunning = false;
+    bool manifestWorkerReady = false;
+    // A portal can be closed by thermal protection while its HTTPS worker is
+    // still running. Observe and consume that worker regardless of the current
+    // AP state so its result cannot remain queued and contaminate a later
+    // manual check.
+    portENTER_CRITICAL(&portalManifestMux);
+    manifestWorkerRunning = portalManifestWorkerRunning;
+    manifestWorkerReady = portalManifestWorkerReady;
+    portEXIT_CRITICAL(&portalManifestMux);
+    if (manifestWorkerRunning) return;
+    const bool completingPortalWorker = manifestWorkerReady;
+    if (!completingPortalWorker) {
+      markFirmwareOperationStage(1);
+      const bool bluetoothIsolated = isolateBluetoothForFirmwareOperation();
+      clearFirmwareOperationStage();
+      if (!bluetoothIsolated) {
+        updateError = "Bluetooth disconnect pending";
+        updateCheckNotBeforeMs = millis() + 500UL;
+        return;
+      }
+      if (updateCheckAttempt < UINT8_MAX) ++updateCheckAttempt;
     }
-    if (updateCheckAttempt < UINT8_MAX) ++updateCheckAttempt;
 
     String failure;
-    const UpdateCheckAttemptResult result = checkFirmwareManifestAttempt(reason, failure);
+    FirmwareManifestCandidate candidate;
+    UpdateCheckAttemptResult result = UpdateCheckAttemptResult::RETRYABLE_FAILURE;
+    if (completingPortalWorker) {
+      portENTER_CRITICAL(&portalManifestMux);
+      result = portalManifestWorkerResult;
+      portalManifestWorkerReady = false;
+      portEXIT_CRITICAL(&portalManifestMux);
+      candidate = portalManifestCandidate;
+      failure = portalManifestFailure;
+      portalManifestCandidate = FirmwareManifestCandidate();
+      portalManifestFailure = "";
+    } else if (portalActive) {
+      cancelPortalWifiScan();
+      portENTER_CRITICAL(&portalManifestMux);
+      portalManifestWorkerRunning = true;
+      portEXIT_CRITICAL(&portalManifestMux);
+      if (xTaskCreate(portalManifestWorker, "portal-manifest", 18UL * 1024UL,
+                      reinterpret_cast<void *>(static_cast<uintptr_t>(reason)), 1, nullptr) != pdPASS) {
+        portENTER_CRITICAL(&portalManifestMux);
+        portalManifestWorkerRunning = false;
+        portEXIT_CRITICAL(&portalManifestMux);
+        failure = "manifest worker allocation failed";
+        result = UpdateCheckAttemptResult::RETRYABLE_FAILURE;
+      } else {
+        logLine("portal manifest HTTPS moved to background worker");
+        return;
+      }
+    } else {
+      result = checkFirmwareManifestAttempt(reason, failure, candidate);
+    }
     clearFirmwareOperationStage();
     if (result == UpdateCheckAttemptResult::SUCCESS) {
+      applyFirmwareManifestCandidate(candidate);
       pendingUpdateCheckReason = UpdateCheckReason::NONE;
       updateCheckAttempt = 0;
       internetVerified = true;

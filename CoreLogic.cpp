@@ -193,4 +193,84 @@ bool utf8ContainsHangul(const char *text) {
   return false;
 }
 
+void resetMusicBrainzReleaseGroupParser(MusicBrainzReleaseGroupParser &parser) {
+  parser.tag[0] = '\0';
+  parser.length = 0;
+  parser.collecting = false;
+}
+
+bool feedMusicBrainzReleaseGroupParser(MusicBrainzReleaseGroupParser &parser,
+                                      const uint8_t *data, size_t length,
+                                      char mbid[37]) {
+  if (data == nullptr || mbid == nullptr) return false;
+  static const char prefix[] = "<release-group";
+  for (size_t index = 0; index < length; ++index) {
+    const char c = static_cast<char>(data[index]);
+    if (!parser.collecting) {
+      if (c != '<') continue;
+      parser.collecting = true;
+      parser.length = 0;
+    }
+    if (parser.length + 1U >= sizeof(parser.tag)) {
+      resetMusicBrainzReleaseGroupParser(parser);
+      if (c == '<') {
+        parser.collecting = true;
+        parser.tag[parser.length++] = c;
+      }
+      continue;
+    }
+    parser.tag[parser.length++] = c;
+    if (c != '>') continue;
+    parser.tag[parser.length] = '\0';
+
+    const size_t prefixLength = sizeof(prefix) - 1U;
+    const bool releaseGroupTag = parser.length > prefixLength &&
+        memcmp(parser.tag, prefix, prefixLength) == 0 &&
+        isAsciiSpace(parser.tag[prefixLength]);
+    if (releaseGroupTag) {
+      const char *cursor = parser.tag + prefixLength;
+      const char *end = parser.tag + parser.length;
+      while (cursor < end) {
+        while (cursor < end && isAsciiSpace(*cursor)) ++cursor;
+        const char *name = cursor;
+        while (cursor < end && (isalnum(static_cast<unsigned char>(*cursor)) ||
+                                *cursor == '-' || *cursor == ':' || *cursor == '_')) ++cursor;
+        const size_t nameLength = static_cast<size_t>(cursor - name);
+        while (cursor < end && isAsciiSpace(*cursor)) ++cursor;
+        if (cursor >= end || *cursor != '=') {
+          while (cursor < end && !isAsciiSpace(*cursor) && *cursor != '>') ++cursor;
+          continue;
+        }
+        ++cursor;
+        while (cursor < end && isAsciiSpace(*cursor)) ++cursor;
+        if (cursor >= end || (*cursor != '"' && *cursor != '\'')) continue;
+        const char quote = *cursor++;
+        const char *value = cursor;
+        while (cursor < end && *cursor != quote) ++cursor;
+        const size_t valueLength = static_cast<size_t>(cursor - value);
+        if (nameLength == 2U && name[0] == 'i' && name[1] == 'd' && valueLength == 36U) {
+          bool valid = true;
+          for (size_t i = 0; i < 36U; ++i) {
+            const bool hyphen = i == 8U || i == 13U || i == 18U || i == 23U;
+            if ((hyphen && value[i] != '-') ||
+                (!hyphen && !isxdigit(static_cast<unsigned char>(value[i])))) {
+              valid = false;
+              break;
+            }
+          }
+          if (valid) {
+            memcpy(mbid, value, 36U);
+            mbid[36] = '\0';
+            resetMusicBrainzReleaseGroupParser(parser);
+            return true;
+          }
+        }
+        if (cursor < end) ++cursor;
+      }
+    }
+    resetMusicBrainzReleaseGroupParser(parser);
+  }
+  return false;
+}
+
 }  // namespace MilestoneCoreLogic

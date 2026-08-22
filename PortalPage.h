@@ -171,7 +171,7 @@ const $=id=>document.getElementById(id); const val=id=>$(id).value;
 function form(obj){return new URLSearchParams(obj)}
 function setStatus(s,cls=''){const e=$('status');e.textContent=s;e.className='status '+cls}
 const MEDIA_MAX_FRAMES=1024;
-async function api(url,opt={}){const r=await fetch(url,opt);const t=await r.text();let d;try{d=JSON.parse(t)}catch{d={ok:false,error:t||r.statusText}}if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d}
+async function api(url,opt={}){const controller=new AbortController(),external=opt.signal,timeoutMs=/\/api\/(update\/install|media\/upload)/.test(url)?20000:8000,timer=setTimeout(()=>controller.abort(),timeoutMs),abort=()=>controller.abort();if(external)external.addEventListener('abort',abort,{once:true});let r;try{r=await fetch(url,{...opt,signal:controller.signal});const t=await r.text();let d;try{d=JSON.parse(t)}catch{d={ok:false,error:t||r.statusText}}if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d}catch(e){if(e&&e.name==='AbortError')throw new Error(`기기 응답이 ${Math.round(timeoutMs/1000)}초 동안 없어 연결을 다시 확인합니다.`);throw e}finally{clearTimeout(timer);if(external)external.removeEventListener('abort',abort)}}
 function minsToTime(n){n=Number(n)||0;return String(Math.floor(n/60)).padStart(2,'0')+':'+String(n%60).padStart(2,'0')}
 function timeToMins(s){const a=s.split(':').map(Number);return (a[0]||0)*60+(a[1]||0)}
 const rangePairs=[['brightness','brightness_num'],['night_level','night_level_num'],['led_brightness','led_brightness_num'],['led_night_level','led_night_level_num']];

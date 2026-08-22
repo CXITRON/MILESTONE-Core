@@ -23,7 +23,7 @@ require_fixed CoreMedia.cpp '#if MILESTONE_HAS_MEDIA' 'standalone media codec st
 require_fixed CoreMediaDisabled.inc 'esp_partition_erase_range' 'CORE factory reset no longer clears shared MEDIA storage'
 require_fixed CoreUpdate.inc 'const String profile = requestedUpdateProfile' 'selected GitHub asset profile is not preserved'
 require_fixed CoreUpdate.inc 'asset = firmwareAssetForProfile(requestedUpdateProfile)' 'GitHub Release asset is not selected by profile'
-require_fixed CoreUpdate.inc 'latestFirmwareProfile != FIRMWARE_PROFILE' 'same-version profile switching is not enabled'
+require_fixed CoreUpdate.inc 'candidate.profileSwitchAvailable' 'same-version profile switching is not enabled'
 require_fixed CoreUpdate.inc 'target profile release is older than running firmware' 'cross-profile downgrade guard is missing'
 require_fixed CoreUpdate.inc 'prepareRollbackRecord(targetIdentity)' 'rollback target is not profile-qualified'
 require_fixed CoreRollback.inc 'otaTargetMatchesCurrent(previousOtaTarget)' 'legacy/profile OTA boot matching is missing'

@@ -18,7 +18,7 @@ reject() {
   fi
 }
 
-require 'FIRMWARE_VERSION\[\] = "2\.2\.4"' MILESTONE_Core.ino 'firmware version is not 2.2.4'
+require 'FIRMWARE_VERSION\[\] = "2\.2\.5"' MILESTONE_Core.ino 'firmware version is not 2.2.5'
 require 'CONFIG_VERSION = 10' MILESTONE_Core.ino 'configuration schema is not 10'
 require 'bool fixedApSecurity = false;' MILESTONE_Core.ino 'fixed AP security must default off'
 require 'String fixedApPassword;' MILESTONE_Core.ino 'fixed AP password setting missing'
@@ -71,6 +71,9 @@ require 'const bool bluetoothIsolated = isolateBluetoothForFirmwareOperation\(\)
 require 'if \(!bluetoothIsolated\)' CoreUpdate.inc 'OTA install must reject incomplete Bluetooth isolation'
 require 'if \(!bluetoothIsolated\)' CoreRuntime.inc 'manifest checks must wait for safe Bluetooth isolation'
 require 'bluetoothDisconnectedEvent && bluetoothEventConnHandle == connHandle' CoreBluetooth.inc 'BLE shutdown must wait for the matching GAP disconnect confirmation'
+require 'getPeerDevices\(false\)' CoreBluetooth.inc 'OTA isolation must inspect NimBLE server peers when app state has not caught up'
+require 'getConnectedCount\(\) == 0' CoreBluetooth.inc 'OTA isolation must verify the live NimBLE connection count'
+require 'clearBluetoothPendingEvents\(\)' CoreBluetooth.inc 'stale GAP and AMS events must be cleared after OTA isolation'
 require 'BLE_DISCONNECT_TIMEOUT_MS' CoreBluetooth.inc 'BLE disconnect confirmation must be bounded'
 require 'BLE_SECURITY_TIMEOUT_MS = 15000UL' CoreBluetooth.inc 'BLE security wait must be bounded'
 require 'ble_gap_conn_find\(bluetoothNowPlaying\.connHandle, &connection\)' CoreBluetooth.inc 'live encrypted connection state must be polled'
@@ -127,6 +130,9 @@ require 'xTaskCreate\(nowArtworkWorker' CoreArtwork.inc 'artwork lookup must sta
 require 'NOW_ART_TRACK_SETTLE_MS' CoreArtwork.inc 'rapid track changes need a settle/debounce window'
 require 'NOW_ART_MAX_LOOKUP_BYTES = 48UL \* 1024UL' CoreArtwork.inc 'MusicBrainz response must have a hard streamed byte limit'
 require 'nowArtworkReadReleaseGroup\(HTTPClient &http' CoreArtwork.inc 'MusicBrainz XML must be parsed as a bounded stream'
+require 'feedMusicBrainzReleaseGroupParser' CoreArtwork.inc 'MusicBrainz release-group parsing must ignore XML attribute order'
+require 'nowArtworkWorkerGeneration' CoreArtwork.inc 'rapid track changes need cancellable artwork generations'
+require 'temperature-paused' CoreArtwork.inc 'artwork must pause under NOW thermal pressure'
 reject 'const String xml = http\.getString\(\)' CoreArtwork.inc 'MusicBrainz XML must not be copied into an unbounded internal-heap String'
 require 'NOW_ART_WORKER_STACK_BYTES = 14UL \* 1024UL' CoreArtwork.inc 'artwork worker needs explicit TLS/JPEG stack headroom'
 require 'uxTaskGetStackHighWaterMark' CoreArtwork.inc 'artwork task stack headroom must be observable'

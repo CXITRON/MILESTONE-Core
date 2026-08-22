@@ -24,4 +24,15 @@ bool validSha256(const char *value);
 bool decodeJsonEscape(char escaped, char &decoded);
 bool utf8ContainsHangul(const char *text);
 
+struct MusicBrainzReleaseGroupParser {
+  char tag[256];
+  uint16_t length;
+  bool collecting;
+};
+
+void resetMusicBrainzReleaseGroupParser(MusicBrainzReleaseGroupParser &parser);
+bool feedMusicBrainzReleaseGroupParser(MusicBrainzReleaseGroupParser &parser,
+                                      const uint8_t *data, size_t length,
+                                      char mbid[37]);
+
 }  // namespace MilestoneCoreLogic

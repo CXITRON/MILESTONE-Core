@@ -101,6 +101,31 @@ void testUtf8HangulDetection() {
   EXPECT_FALSE(MilestoneCoreLogic::utf8ContainsHangul("\xE3\x81"));
 }
 
+void testMusicBrainzReleaseGroupParser() {
+  MilestoneCoreLogic::MusicBrainzReleaseGroupParser parser;
+  MilestoneCoreLogic::resetMusicBrainzReleaseGroupParser(parser);
+  char mbid[37] = {};
+  const char *xml = "<release-group-list><release-group ext:score=\"100\" type=\"Single\" "
+                    "id=\"70664047-2545-4e46-b75f-4556f2a7b83e\"><title>x</title>";
+  EXPECT_FALSE(MilestoneCoreLogic::feedMusicBrainzReleaseGroupParser(
+      parser, reinterpret_cast<const uint8_t *>(xml), 31, mbid));
+  EXPECT_TRUE(MilestoneCoreLogic::feedMusicBrainzReleaseGroupParser(
+      parser, reinterpret_cast<const uint8_t *>(xml + 31), std::strlen(xml) - 31, mbid));
+  EXPECT_TRUE(std::strcmp(mbid, "70664047-2545-4e46-b75f-4556f2a7b83e") == 0);
+
+  MilestoneCoreLogic::resetMusicBrainzReleaseGroupParser(parser);
+  const char *nested = "<recording id=\"x\"><release-group type='Album' "
+                       "id='7678ff0a-9446-4d5f-b46e-56c84fc68654'></release-group>";
+  EXPECT_TRUE(MilestoneCoreLogic::feedMusicBrainzReleaseGroupParser(
+      parser, reinterpret_cast<const uint8_t *>(nested), std::strlen(nested), mbid));
+  EXPECT_TRUE(std::strcmp(mbid, "7678ff0a-9446-4d5f-b46e-56c84fc68654") == 0);
+
+  MilestoneCoreLogic::resetMusicBrainzReleaseGroupParser(parser);
+  const char *invalid = "<release-group-list id=\"70664047-2545-4e46-b75f-4556f2a7b83e\">";
+  EXPECT_FALSE(MilestoneCoreLogic::feedMusicBrainzReleaseGroupParser(
+      parser, reinterpret_cast<const uint8_t *>(invalid), std::strlen(invalid), mbid));
+}
+
 }  // namespace
 
 int main() {
@@ -110,6 +135,7 @@ int main() {
   testSha256();
   testJsonEscapes();
   testUtf8HangulDetection();
+  testMusicBrainzReleaseGroupParser();
 
   if (failures != 0) {
     std::cerr << failures << " core logic test(s) failed\n";

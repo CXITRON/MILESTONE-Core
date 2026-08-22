@@ -1,6 +1,6 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v2.2.4
+> Current baseline: MILESTONE Core v2.2.5
 > Hardware: Waveshare ESP32-S3-Zero + SH1107 128×128 OLED
 > Repository: `CXITRON/MILESTONE-Core`
 
@@ -89,7 +89,7 @@ The `*.inc` runtime files are intentionally included into the sketch as one tran
 Firmware and persistent schema versions are separate concepts.
 
 ```cpp
-FIRMWARE_VERSION = "2.2.4"
+FIRMWARE_VERSION = "2.2.5"
 CONFIG_VERSION = 10
 ```
 
@@ -170,6 +170,8 @@ v2.2.2 hardens NOW artwork lookup after intermittent resets were reported near f
 v2.2.3 limits `settling` to the 1.4-second metadata debounce. A setup AP without a stable STA reports `portal-paused`; a stable STA may run the background artwork lookup while the AP remains open, and an explicit portal-close API/button returns immediately to normal NOW operation after its HTTP response is delivered. The visible album-name layout is removed. Its persisted numeric value 2 remains reserved for rollback compatibility but normalizes to title + artist, and BOOT plus the portal expose only four layouts.
 
 v2.2.4 removes `BLEDevice::deinit(false)` from NOW firmware checks and installs. Arduino-ESP32 3.3.x deletes advertising/server objects before stopping its NimBLE host task, leaving a callback race even after a matching disconnect event. Firmware operations now stop advertising, confirm disconnection, retain the initialized BLE objects, and resume advertising afterward; the existing internal-RAM guard refuses TLS safely if the retained stack leaves insufficient memory. RTC breadcrumbs identify resets during BLE quiesce, manifest TLS, firmware TLS, flash write, or verification through the portal status API.
+
+v2.2.5 moves setup-portal Release checks to a bounded background worker so captive DNS and HTTP remain responsive during GitHub TLS, while loopTask applies the completed candidate atomically. Manifest collection now decodes chunked responses into a truly bounded 16KiB sink. NOW firmware isolation resolves live NimBLE connections from the host/server state, not only the cooperative app flag, and clears stale GAP/AMS events after disconnect. Artwork parsing accepts MusicBrainz XML attributes in any order, escapes Lucene metacharacters, cancels stale generations between network stages, pauses under thermal pressure, and avoids portal radio mutations during an active lookup. Portal browser requests have explicit timeouts, and MEDIA live preconversion has a 48MiB client-memory ceiling.
 
 Do not split the OTA transaction merely because the function is long. Its sequential structure encodes safety assumptions.
 
