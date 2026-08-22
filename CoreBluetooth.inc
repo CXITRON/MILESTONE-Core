@@ -15,7 +15,6 @@ constexpr uint8_t AMS_ENTITY_TRACK = 2;
 constexpr uint8_t AMS_PLAYER_NAME = 0;
 constexpr uint8_t AMS_PLAYER_PLAYBACK_INFO = 1;
 constexpr uint8_t AMS_TRACK_ARTIST = 0;
-constexpr uint8_t AMS_TRACK_ALBUM = 1;
 constexpr uint8_t AMS_TRACK_TITLE = 2;
 constexpr uint8_t AMS_TRACK_DURATION = 3;
 constexpr uint8_t AMS_FLAG_TRUNCATED = 0x01;
@@ -27,10 +26,12 @@ constexpr uint16_t AMS_CONN_TIMEOUT = 600;       // 6 seconds in 10 ms units.
 constexpr size_t AMS_NOTIFICATION_MAX = 244;
 constexpr uint8_t AMS_NOTIFICATION_QUEUE = 6;
 constexpr uint32_t BLE_ADVERTISING_RETRY_MS = 5000UL;
+constexpr uint32_t BLE_DISCONNECT_TIMEOUT_MS = 2500UL;
+constexpr uint32_t BLE_SHUTDOWN_QUIESCE_MS = 75UL;
 constexpr char BLE_DEVICE_NAME[] = "MILESTONE";
-// make-release.sh verifies this executed marker in the compiled CORE image,
+// make-release.sh verifies this executed marker in the compiled NOW image,
 // preventing a BLE stub from being published as a working build.
-constexpr char BLE_RUNTIME_MARKER[] = "MILESTONE_BLE_AMS_RUNTIME_V2";
+constexpr char BLE_RUNTIME_MARKER[] = "MILESTONE_BLE_AMS_RUNTIME_V3";
 
 enum class BluetoothRuntimeStage : uint8_t {
   OFF,
@@ -80,7 +81,6 @@ struct BluetoothNowPlayingState {
   String playerName;
   String title;
   String artist;
-  String album;
   uint8_t playbackState = 0;
   float playbackRate = 0.0f;
   float elapsedSeconds = 0.0f;
@@ -159,7 +159,6 @@ void clearBluetoothNowPlayingMetadata() {
   bluetoothNowPlaying.playerName = "";
   bluetoothNowPlaying.title = "";
   bluetoothNowPlaying.artist = "";
-  bluetoothNowPlaying.album = "";
   bluetoothNowPlaying.playbackState = 0;
   bluetoothNowPlaying.playbackRate = 0.0f;
   bluetoothNowPlaying.elapsedSeconds = 0.0f;
@@ -355,8 +354,7 @@ int amsSubscriptionWriteCallback(uint16_t connHandle, const ble_gatt_error *erro
   const uintptr_t stage = reinterpret_cast<uintptr_t>(arg);
   if (stage == 0) {
     static const uint8_t trackSubscription[] = {
-        AMS_ENTITY_TRACK, AMS_TRACK_ARTIST, AMS_TRACK_ALBUM,
-        AMS_TRACK_TITLE, AMS_TRACK_DURATION};
+        AMS_ENTITY_TRACK, AMS_TRACK_ARTIST, AMS_TRACK_TITLE, AMS_TRACK_DURATION};
     const int rc = ble_gattc_write_flat(connHandle, bluetoothNowPlaying.entityUpdateHandle,
                                          trackSubscription, sizeof(trackSubscription),
                                          amsSubscriptionWriteCallback,
@@ -503,16 +501,50 @@ bool initializeBluetoothNowPlaying() {
   return true;
 }
 
-void shutdownBluetoothNowPlaying() {
-  if (!bluetoothNowPlaying.initialized) return;
+bool waitForBluetoothDisconnectBeforeShutdown() {
+  if (!bluetoothNowPlaying.connected || !bluetoothServer ||
+      bluetoothNowPlaying.connHandle == BLE_HS_CONN_HANDLE_NONE) return true;
+
+  const uint16_t connHandle = bluetoothNowPlaying.connHandle;
+  bluetoothDisconnectedEvent = false;
+  const int disconnectResult = bluetoothServer->disconnect(connHandle);
+  if (disconnectResult == BLE_HS_ENOTCONN) return true;
+  if (disconnectResult != 0 && disconnectResult != BLE_HS_EALREADY) {
+    logLine(String("BLE disconnect request failed before shutdown: ") + disconnectResult);
+    return false;
+  }
+
+  const uint32_t startedMs = millis();
+  while (!(bluetoothDisconnectedEvent && bluetoothEventConnHandle == connHandle)) {
+    if (elapsed(millis(), startedMs, BLE_DISCONNECT_TIMEOUT_MS)) {
+      logLine("BLE disconnect confirmation timed out; stack deinit refused");
+      return false;
+    }
+    delay(10);  // Yield so the NimBLE host can deliver GAP DISCONNECT.
+  }
+
+  bluetoothDisconnectedEvent = false;
+  bluetoothNowPlaying.connected = false;
+  bluetoothNowPlaying.secured = false;
+  bluetoothNowPlaying.connHandle = BLE_HS_CONN_HANDLE_NONE;
+  resetAmsHandles();
+  clearBluetoothNowPlayingMetadata();
+  logLine("BLE disconnect confirmed before stack shutdown");
+  return true;
+}
+
+bool shutdownBluetoothNowPlaying() {
+  if (!bluetoothNowPlaying.initialized) return true;
   bluetoothNowPlaying.suspended = true;
   bluetoothNowPlaying.stage = BluetoothRuntimeStage::SUSPENDED;
   if (bluetoothAdvertising) bluetoothAdvertising->stop();
-  if (bluetoothNowPlaying.connected && bluetoothServer &&
-      bluetoothNowPlaying.connHandle != BLE_HS_CONN_HANDLE_NONE) {
-    bluetoothServer->disconnect(bluetoothNowPlaying.connHandle);
-    delay(15);
+  if (!waitForBluetoothDisconnectBeforeShutdown()) {
+    return false;
   }
+  // GAP disconnect can be followed by queued security/GATT callbacks. Give
+  // the NimBLE host a bounded quiesce window before BLEDevice deletes its
+  // server and stops the host/controller tasks.
+  delay(BLE_SHUTDOWN_QUIESCE_MS);
   BLEDevice::deinit(false);
   bluetoothServer = nullptr;
   bluetoothAdvertising = nullptr;
@@ -523,19 +555,26 @@ void shutdownBluetoothNowPlaying() {
   amsNotificationCount = 0;
   portEXIT_CRITICAL(&amsNotificationMux);
   logLine("BLE Now Playing stopped");
+  return true;
 }
 
-void isolateBluetoothForFirmwareOperation() {
-  if (!bluetoothNowPlayingConfigured() || bluetoothFirmwareOperationIsolated) return;
+bool isolateBluetoothForFirmwareOperation() {
+  if (!bluetoothNowPlayingConfigured() || bluetoothFirmwareOperationIsolated) return true;
   bluetoothFirmwareOperationIsolated = true;
   const uint32_t heapBefore = ESP.getFreeHeap();
   const uint32_t largestBefore = ESP.getMaxAllocHeap();
-  if (bluetoothNowPlaying.initialized) shutdownBluetoothNowPlaying();
+  if (bluetoothNowPlaying.initialized && !shutdownBluetoothNowPlaying()) {
+    bluetoothFirmwareOperationIsolated = false;
+    bluetoothNowPlaying.suspended = false;
+    if (!bluetoothNowPlaying.connected) startBluetoothAdvertising();
+    return false;
+  }
   // Give the controller task a short opportunity to return its internal-RAM
   // allocations before TLS performs its largest contiguous allocations.
   delay(20);
   logLine(String("BLE isolated for firmware HTTPS: heap=") + heapBefore + "->" +
           ESP.getFreeHeap() + " max=" + largestBefore + "->" + ESP.getMaxAllocHeap());
+  return true;
 }
 
 void restoreBluetoothAfterFirmwareOperation() {
@@ -597,7 +636,6 @@ void applyAmsNotification(const AmsNotificationPacket &packet) {
     else if (attribute == AMS_PLAYER_PLAYBACK_INFO) parseAmsPlaybackInfo(value);
   } else if (entity == AMS_ENTITY_TRACK) {
     if (attribute == AMS_TRACK_ARTIST) bluetoothNowPlaying.artist = value;
-    else if (attribute == AMS_TRACK_ALBUM) bluetoothNowPlaying.album = value;
     else if (attribute == AMS_TRACK_TITLE) {
       if (bluetoothNowPlaying.title != value) scrollStartedMs = millis();
       bluetoothNowPlaying.title = value;
@@ -717,7 +755,6 @@ const char *bluetoothNowPlayingAddress() { return bluetoothNowPlaying.address.c_
 
 const char *bluetoothNowPlayingTitle() { return bluetoothNowPlaying.title.c_str(); }
 const char *bluetoothNowPlayingArtist() { return bluetoothNowPlaying.artist.c_str(); }
-const char *bluetoothNowPlayingAlbum() { return bluetoothNowPlaying.album.c_str(); }
 bool bluetoothNowPlayingIsPlaying() { return bluetoothNowPlaying.playbackState == 1; }
 float bluetoothNowPlayingDurationSeconds() { return bluetoothNowPlaying.durationSeconds; }
 
@@ -739,8 +776,8 @@ bool initializeBluetoothNowPlaying() {
   if (bluetoothNowPlayingConfigured()) logLine("BLE Now Playing unavailable in this firmware profile/build");
   return false;
 }
-void shutdownBluetoothNowPlaying() {}
-void isolateBluetoothForFirmwareOperation() {}
+bool shutdownBluetoothNowPlaying() { return true; }
+bool isolateBluetoothForFirmwareOperation() { return true; }
 void restoreBluetoothAfterFirmwareOperation() {}
 void suspendBluetoothNowPlaying() {}
 void resumeBluetoothNowPlaying() {}
@@ -762,7 +799,6 @@ int bluetoothNowPlayingErrorCode() { return 0; }
 const char *bluetoothNowPlayingAddress() { return ""; }
 const char *bluetoothNowPlayingTitle() { return ""; }
 const char *bluetoothNowPlayingArtist() { return ""; }
-const char *bluetoothNowPlayingAlbum() { return ""; }
 bool bluetoothNowPlayingIsPlaying() { return false; }
 float bluetoothNowPlayingDurationSeconds() { return 0.0f; }
 float bluetoothCurrentElapsedSeconds() { return 0.0f; }

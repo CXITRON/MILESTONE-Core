@@ -449,7 +449,10 @@ bool installFirmwareUpdate() {
     deferFirmwareInstall("Wi-Fi disconnected");
     return false;
   }
-  isolateBluetoothForFirmwareOperation();
+  if (!isolateBluetoothForFirmwareOperation()) {
+    deferFirmwareInstall("Bluetooth disconnect incomplete");
+    return false;
+  }
   if (ESP.getFreeHeap() < UPDATE_MIN_FREE_HEAP || ESP.getMaxAllocHeap() < UPDATE_MIN_LARGEST_BLOCK) {
     deferFirmwareInstall("not enough internal RAM");
     return false;

@@ -135,11 +135,11 @@ Bluetooth는 NOW에만 포함되고 항상 켜집니다. CORE와 MEDIA에는 BLE
 
 ## 7. Bluetooth Now Playing (iPhone/iPad)
 
-v1.11.0부터 iPhone/iPad의 **Apple Media Service(AMS)** 를 이용한 Bluetooth Now Playing 표시를 선택적으로 사용할 수 있습니다. 별도의 MILESTONE 전용 앱은 필요하지 않습니다. 이 기능은 기본값이 **꺼짐**이며, 설정 포털의 **무선 및 설정 AP → iPhone Bluetooth Now Playing 사용**을 켜고 별도의 **Bluetooth 설정 저장** 버튼으로 적용합니다. BLE 기능을 사용하지 않을 때는 Bluetooth 스택을 초기화하지 않습니다.
+NOW 프로필은 iPhone/iPad의 **Apple Media Service(AMS)** 를 이용해 Bluetooth Now Playing을 표시합니다. 별도의 MILESTONE 전용 앱은 필요하지 않으며 NOW에서는 Bluetooth가 항상 켜집니다. CORE와 MEDIA에는 Bluetooth 런타임이 포함되지 않습니다.
 
-연결과 AMS 구독이 준비되면 현재 재생 중인 항목이 기존 8개 화면에 새 화면으로 추가되는 대신 **임시 오버레이**로 표시됩니다. 제목, 아티스트, 앨범, 재생/일시정지 상태와 재생 진행률을 표시하며 긴 한글·일본어·영문 텍스트는 기존 UTF-8 스크롤 렌더러를 사용합니다. 따라서 기존 8비트 순환 마스크와 저장된 화면 순서는 변경되지 않습니다.
+연결과 AMS 구독이 준비되면 곡 제목, 아티스트, 재생/일시정지 상태와 재생 진행률을 표시합니다. 제목은 아티스트보다 2배 크게 표시하고 앨범명은 구독하거나 표시하지 않습니다. 긴 한글·일본어·영문 텍스트는 UTF-8 스크롤 렌더러를 사용합니다. NOW는 기존 8비트 CORE 순환 마스크와 저장된 화면 순서를 변경하지 않습니다.
 
-실시간 영상 스트리밍은 우선순위가 더 높습니다. `/stream`이 시작되면 BLE 광고와 연결을 중단해 STREAM_MODE의 Wi-Fi/OLED 처리 경로와 경쟁하지 않도록 하고, 스트림이 종료된 뒤 설정이 켜져 있으면 BLE 광고를 다시 시작합니다.
+NOW의 업데이트 확인·설치는 TLS용 내부 RAM을 확보하기 전에 iPhone 연결 종료를 요청하고, 일치하는 GAP disconnect 완료 이벤트를 확인한 뒤에만 NimBLE 스택을 해제합니다. 2.5초 안에 확인되지 않거나 종료 요청이 실패하면 업데이트 작업을 미루고 스택 해제를 거부해 PANIC을 방지합니다.
 
 현재 버전은 AMS 알림 안에 완전히 들어온 메타데이터를 표시합니다. iOS가 긴 문자열을 truncated로 표시한 경우 안전하게 수신된 접두부까지만 표시할 수 있으며, 전체 값을 별도 Entity Attribute 읽기로 다시 가져오는 확장은 후속 대상으로 남겨 두었습니다. 또한 ESP32-S3와 실제 iPhone 사이의 페어링·AMS 상호운용은 펌웨어 업로드 후 실기기에서 확인해야 합니다. Android의 범용 현재곡 표시를 이 기능의 지원 범위로 보장하지 않습니다.
 
@@ -288,13 +288,13 @@ PC의 현재 프로젝트를 직접 수정한 경우에는 **MILESTONE_Core 프�
 
 ```bash
 cd /run/media/citron/T7/Documents/Dev/MILESTONE_Core
-milestone-release local 2.1.0 "Split Bluetooth into the dedicated NOW profile"
+milestone-release local 2.1.1 "Harden NOW update checks and refine metadata layout"
 ```
 
 Tailscale Taildrop으로 `MILESTONE_Core_1.10.6.zip`을 받은 경우에는 교체 대상 프로젝트 디렉터리 밖의 정상적으로 존재하는 디렉터리에서 실행합니다. 기존 프로젝트가 교체될 때 현재 셸 경로가 사라지는 문제를 방지하기 위해 `/tmp`로 이동하는 방식을 권장합니다.
 
 ```bash
-cd /tmp && milestone-release taildrop 2.1.0 "Split Bluetooth into the dedicated NOW profile"
+cd /tmp && milestone-release taildrop 2.1.1 "Harden NOW update checks and refine metadata layout"
 ```
 
 Taildrop 모드는 ZIP을 라이브 프로젝트에 바로 덮어쓰지 않습니다. 별도 staging 디렉터리에서 구조·버전·Git 상태를 검사하고 테스트와 ESP32 릴리즈 빌드까지 성공한 뒤에만 프로젝트를 교체합니다. GitHub 게시 전 실패하면 기존 프로젝트를 자동 복구합니다. `--dry-run`은 테스트/빌드까지만 수행하고 로컬 프로젝트·Git·GitHub를 변경하지 않습니다. `--yes`를 사용하지 않는 기본 동작은 최종 게시 직전에 한 번 확인합니다.
@@ -311,10 +311,10 @@ Taildrop 모드는 ZIP을 라이브 프로젝트에 바로 덮어쓰지 않습�
 
 ```bash
 chmod +x tools/make-release.sh
-./tools/make-release.sh 2.1.0 "Split Bluetooth into the dedicated NOW profile"
+./tools/make-release.sh 2.1.1 "Harden NOW update checks and refine metadata layout"
 ```
 
-기본 설명을 사용하려면 `./tools/make-release.sh 2.1.0`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
+기본 설명을 사용하려면 `./tools/make-release.sh 2.1.1`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
 
 다음 여섯 파일이 `release/`에 생성됩니다.
 
@@ -338,11 +338,11 @@ release/MILESTONE_Now.json
 일반적인 게시에는 위의 `milestone-release`를 사용합니다. 아래 수동 절차는 자동화 도구를 복구하거나 디버깅해야 할 때만 참고합니다.
 
 1. 저장소의 `Releases`에서 `Draft a new release`를 선택합니다.
-2. 버전과 동일한 태그를 만듭니다. 예: `v2.1.0`
-3. Release 제목을 `MILESTONE Core v2.1.0`로 지정합니다.
+2. 버전과 동일한 태그를 만듭니다. 예: `v2.1.1`
+3. Release 제목을 `MILESTONE Core v2.1.1`로 지정합니다.
 4. CORE/MEDIA/NOW의 BIN과 JSON 여섯 파일을 모두 첨부합니다.
 5. Pre-release가 아닌 최신 정식 Release로 게시합니다.
-6. 2.0.8 CORE/MEDIA 기기에서 같은 프로필 2.1.0 OTA 후 CORE↔MEDIA↔NOW 전환, NOW AMS 연결·한글/일본어 메타데이터, 기존 설정·Wi-Fi·롤백 보호·진단 이력·커스텀 미디어 보존을 검증합니다.
+6. 2.1.0 CORE/MEDIA/NOW 기기에서 같은 프로필 2.1.1 OTA, 연결된 NOW의 업데이트 확인, 제목/아티스트 레이아웃과 기존 설정·Wi-Fi·롤백 보호·진단 이력·커스텀 미디어 보존을 검증합니다.
 
 여섯 파일의 이름은 모든 Release에서 정확히 같아야 합니다. 초안이나 Pre-release는 `latest` 업데이트 대상으로 사용하지 않습니다.
 
@@ -394,6 +394,22 @@ Taildrop ZIP의 `milestone-release`가 현재 설치본보다 새로우면, 게�
 - STREAM_MODE에서 일반 백그라운드 기능을 격리하고 PSRAM 240프레임 링버퍼·X/Y dirty-tile OLED 갱신·적응형 출력 주기·프레임 드롭·80°C 스트림 상한으로 영상 수신/표시에 집중
 - 라이브 송신은 96프레임 초기 충전 후 큐 64프레임 이하에서 최대 8프레임씩 144프레임 이상으로 보충하며 ESP32가 소스 시간축과 OLED 출력 클록을 분리해 관리
 - 비차단 3초 부팅 로고와 우상단 NTP `T`·업데이트 `U` 상태 아이콘
+
+## v2.1.1 업데이트 안내
+
+v2.1.1은 iPhone이 연결된 NOW에서 업데이트 확인 직전 BLE 스택을 너무 빨리 해제하면 PANIC이 발생할 수 있는 경로를 수정합니다. iPhone 연결 종료를 요청한 뒤 같은 connection handle의 GAP disconnect 완료를 확인하고, 추가로 짧은 quiesce 시간을 거친 경우에만 NimBLE 서버와 컨트롤러를 종료합니다. 종료 요청 실패나 2.5초 제한시간 초과 시에는 강제 해제하지 않고 업데이트 작업을 미룹니다.
+
+NOW 재생 화면에서는 앨범명을 제거하고 해당 AMS 속성 구독도 중단했습니다. 확보된 세로 공간을 사용해 곡 제목을 아티스트보다 2배 크게 표시하며, 제목과 아티스트 모두 기존 한글·일본어 UTF-8 폰트 선택 및 스크롤을 유지합니다.
+
+- GAP disconnect 완료 전 `BLEDevice::deinit(false)` 실행 금지
+- disconnect 요청 실패·제한시간 초과 시 안전하게 업데이트 확인/설치 연기
+- 종료 뒤 보안·GATT callback 정리를 위한 bounded quiesce 적용
+- 앨범명 표시와 불필요한 AMS 앨범 속성 구독 제거
+- 곡 제목 2배 확대, 아티스트 단일 크기 표시
+- BLE 런타임 v3 BIN 표식과 종료 순서 회귀 계약 추가
+- 설정 스키마 10과 CORE/MEDIA/NOW OTA 자산 이름 유지
+
+정식 버전: `2.1.1`
 
 ## v2.1.0 업데이트 안내
 

@@ -52,7 +52,7 @@ R"HTML(
 <div class="full"><label>설정 AP 비밀번호</label><input id="ap_password" type="password" minlength="0" maxlength="63" autocomplete="new-password" placeholder="비워 두면 비밀번호 없는 오픈 AP"></div>
 <div id="ap_security_note" class="status warn full">고정 AP 설정을 켜고 비밀번호를 비워 두면 누구나 MILESTONE Setup 네트워크에 접속할 수 있습니다. 공공장소나 주변에 다른 사용자가 있는 환경에서는 비밀번호 설정을 권장합니다.</div>
 <label class="check full"><input id="bluetooth_now_playing" type="checkbox"> iPhone Bluetooth Now Playing</label>
-<div class="full"><small>Bluetooth는 NOW 전용 프로필에서만 포함되며 항상 켜집니다. 별도 앱 없이 iPhone/iPad의 Apple Media Service에서 제목·아티스트·앨범·재생 상태를 표시합니다. 일반 Bluetooth 오디오 장치가 아니므로 iPhone의 설정 &gt; Bluetooth 목록에 나타나지 않을 수 있습니다. 포털 상태의 “MILESTONE 광고 중” 또는 BLE 스캐너 앱으로 광고 여부를 확인하십시오.</small></div>
+<div class="full"><small>Bluetooth는 NOW 전용 프로필에서만 포함되며 항상 켜집니다. 별도 앱 없이 iPhone/iPad의 Apple Media Service에서 곡 제목·아티스트·재생 상태를 표시합니다. 일반 Bluetooth 오디오 장치가 아니므로 iPhone의 설정 &gt; Bluetooth 목록에 나타나지 않을 수 있습니다. 포털 상태의 “MILESTONE 광고 중” 또는 BLE 스캐너 앱으로 광고 여부를 확인하십시오.</small></div>
 <div class="full row"><button class="primary" onclick="saveApSecurity()">AP 보안 설정 저장</button><button id="save_bluetooth" onclick="saveBluetoothSetting()">Bluetooth 설정 저장</button></div>
 <div id="radio_config_status" class="status full">설정을 불러오는 중…</div>
 </div></section>

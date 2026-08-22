@@ -54,9 +54,9 @@ Options:
 
 Examples:
   cd /run/media/citron/T7/Documents/Dev/MILESTONE_Core
-  milestone-release local 2.1.0 "Split Bluetooth into the dedicated NOW profile"
+  milestone-release local 2.1.1 "Harden NOW update checks and refine metadata layout"
 
-  cd /tmp && milestone-release taildrop 2.1.0 "Split Bluetooth into the dedicated NOW profile"
+  cd /tmp && milestone-release taildrop 2.1.1 "Harden NOW update checks and refine metadata layout"
 USAGE
 }
 

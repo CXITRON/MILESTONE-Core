@@ -386,7 +386,11 @@ void processFirmwareUpdate() {
     // Waiting for U while the portal is active would deadlock every manual or
     // profile manifest check. Outside setup, preserve the visible-U contract.
     if (oledReady && !portalActive && !updateCheckIndicatorRendered) return;
-    isolateBluetoothForFirmwareOperation();
+    if (!isolateBluetoothForFirmwareOperation()) {
+      updateError = "Bluetooth disconnect pending";
+      updateCheckNotBeforeMs = millis() + 500UL;
+      return;
+    }
     if (updateCheckAttempt < UINT8_MAX) ++updateCheckAttempt;
 
     String failure;

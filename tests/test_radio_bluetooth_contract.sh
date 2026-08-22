@@ -18,7 +18,7 @@ reject() {
   fi
 }
 
-require 'FIRMWARE_VERSION\[\] = "2\.1\.0"' MILESTONE_Core.ino 'firmware version is not 2.1.0'
+require 'FIRMWARE_VERSION\[\] = "2\.1\.1"' MILESTONE_Core.ino 'firmware version is not 2.1.1'
 require 'CONFIG_VERSION = 10' MILESTONE_Core.ino 'configuration schema is not 10'
 require 'bool fixedApSecurity = false;' MILESTONE_Core.ino 'fixed AP security must default off'
 require 'String fixedApPassword;' MILESTONE_Core.ino 'fixed AP password setting missing'
@@ -42,7 +42,7 @@ require 'C6B2F38C|0x8c, 0xf3, 0xb2, 0xc6' CoreBluetooth.inc 'AMS Entity Attribut
 require 'BLE_HS_ADV_TYPE_SVC_DATA_UUID128|0x15' CoreBluetooth.inc 'AMS service solicitation advertising is missing'
 require 'setShortName\("MILESTON"\)' CoreBluetooth.inc 'passive BLE scans need a name in the primary advertisement'
 require 'scanResponse\.setName\(BLE_DEVICE_NAME\)' CoreBluetooth.inc 'active BLE scans need the complete MILESTONE name'
-require 'MILESTONE_BLE_AMS_RUNTIME_V2' CoreBluetooth.inc 'compiled BLE runtime marker missing'
+require 'MILESTONE_BLE_AMS_RUNTIME_V3' CoreBluetooth.inc 'compiled BLE runtime marker missing'
 require 'requires an Arduino-ESP32 build with NimBLE enabled' MILESTONE_Core.ino 'NOW must fail compilation instead of shipping a BLE stub'
 require 'bluetoothNowPlayingVisible\(\)' CoreBluetooth.inc 'Bluetooth music overlay visibility gate missing'
 python3 - <<'PY_AMS_PARSE'
@@ -65,8 +65,21 @@ require 'resumeBluetoothNowPlaying\(\)' CoreBluetooth.inc 'Bluetooth stream resu
 require 'isolateBluetoothForFirmwareOperation\(\)' CoreBluetooth.inc 'firmware HTTPS Bluetooth isolation missing'
 require 'restoreBluetoothAfterFirmwareOperation\(\)' CoreBluetooth.inc 'firmware HTTPS Bluetooth restoration missing'
 require 'if \(bluetoothFirmwareOperationIsolated\) return;' CoreBluetooth.inc 'Bluetooth service must stay stopped during firmware HTTPS'
-require 'isolateBluetoothForFirmwareOperation\(\);' CoreUpdate.inc 'OTA install must isolate Bluetooth before resource checks'
-require 'isolateBluetoothForFirmwareOperation\(\);' CoreRuntime.inc 'manifest checks must isolate Bluetooth before HTTPS'
+require '!isolateBluetoothForFirmwareOperation\(\)' CoreUpdate.inc 'OTA install must reject incomplete Bluetooth isolation'
+require '!isolateBluetoothForFirmwareOperation\(\)' CoreRuntime.inc 'manifest checks must wait for safe Bluetooth isolation'
+require 'bluetoothDisconnectedEvent && bluetoothEventConnHandle == connHandle' CoreBluetooth.inc 'BLE shutdown must wait for the matching GAP disconnect confirmation'
+require 'BLE_DISCONNECT_TIMEOUT_MS' CoreBluetooth.inc 'BLE disconnect confirmation must be bounded'
+require 'stack deinit refused' CoreBluetooth.inc 'BLE shutdown timeout must refuse unsafe stack deinit'
+python3 - <<'PY_BLE_SHUTDOWN'
+from pathlib import Path
+s = Path('CoreBluetooth.inc').read_text()
+start = s.index('bool shutdownBluetoothNowPlaying()')
+end = s.index('\nbool isolateBluetoothForFirmwareOperation()', start)
+body = s[start:end]
+wait = body.index('waitForBluetoothDisconnectBeforeShutdown()')
+deinit = body.index('BLEDevice::deinit(false)')
+assert wait < deinit, 'BLEDevice deinit must happen only after disconnect confirmation'
+PY_BLE_SHUTDOWN
 require 'restoreBluetoothAfterFirmwareOperation\(\);' CoreUpdate.inc 'firmware failure paths must restore Bluetooth'
 require 'restoreBluetoothAfterFirmwareOperation\(\);' CoreRuntime.inc 'successful manifest checks must restore Bluetooth'
 require 'suspendBluetoothNowPlaying\(\);' CoreRuntime.inc 'STREAM_MODE entry must suspend Bluetooth'
@@ -81,6 +94,9 @@ require 'void drawBluetoothNowPlayingScreen\(\)' CoreDisplay.inc 'Now Playing OL
 require 'if \(bluetoothNowPlayingVisible\(\)\)' CoreDisplay.inc 'Now Playing must be an overlay rather than a ninth persistent view'
 require 'u8g2_font_unifont_t_japanese2' CoreDisplay.inc 'NOW metadata Japanese font routing missing'
 require 'utf8ContainsHangul' CoreDisplay.inc 'NOW metadata Korean font routing missing'
+require 'drawUTF8X2' CoreDisplay.inc 'NOW title must render larger than the artist'
+reject 'bluetoothNowPlayingAlbum\(\)' CoreDisplay.inc 'NOW display must not render album metadata'
+reject 'AMS_TRACK_ALBUM' CoreBluetooth.inc 'NOW must not subscribe to unused album metadata'
 require 'constexpr uint8_t VIEW_COUNT = 8;' MILESTONE_Core.ino 'existing eight-view cycle contract must remain unchanged'
 
 require 'server\.on\("/api/radio-config", HTTP_GET, handleGetRadioConfig\)' CorePortal.inc 'radio config GET route missing'

@@ -478,22 +478,25 @@ void drawAlignedUtf8(const String &text, int baseline, int left, int width, int8
   display.drawUTF8(clampInt(x + static_cast<int>(offsetX), left - 1, 127), baseline, text.c_str());
 }
 
-void drawScrollingUtf8(String text, int baseline, int left, int width, bool centerIfFits) {
+void drawScrollingUtf8(String text, int baseline, int left, int width, bool centerIfFits,
+                       uint8_t scale = 1) {
   text.replace("\r", "");
   text.replace("\n", " ");
-  int textWidth = display.getUTF8Width(text.c_str());
+  int textWidth = display.getUTF8Width(text.c_str()) * scale;
   if (!config.messageScroll || textWidth <= width) {
     int x = config.messageLeft || !centerIfFits ? left : left + (width - textWidth) / 2;
-    display.drawUTF8(x < left ? left : x, baseline, text.c_str());
+    if (scale == 2) display.drawUTF8X2(x < left ? left : x, baseline, text.c_str());
+    else display.drawUTF8(x < left ? left : x, baseline, text.c_str());
     return;
   }
   uint32_t elapsedMs = millis() - scrollStartedMs;
   int travel = textWidth + width + 12;
   int shift = static_cast<int>((elapsedMs * config.scrollSpeed / 1000UL) % travel);
   int x = left + width - shift;
-  display.setClipWindow(left, clampInt(baseline - 16, 0, 127),
+  display.setClipWindow(left, clampInt(baseline - 16 * scale, 0, 127),
                         left + width - 1, clampInt(baseline + 2, 0, 127));
-  display.drawUTF8(x, baseline, text.c_str());
+  if (scale == 2) display.drawUTF8X2(x, baseline, text.c_str());
+  else display.drawUTF8(x, baseline, text.c_str());
   display.setMaxClipWindow();
 }
 
@@ -1006,23 +1009,17 @@ void drawBluetoothNowPlayingScreen() {
   const String title = bluetoothNowPlayingTitle();
   const String artist = bluetoothNowPlayingArtist();
   setNowPlayingTextFont(title);
-  drawScrollingUtf8(title, 37, 2, 124, true);
+  drawScrollingUtf8(title, 48, 2, 124, true, 2);
   setNowPlayingTextFont(artist);
-  drawScrollingUtf8(artist, 62, 2, 124, true);
-
-  String album = bluetoothNowPlayingAlbum();
-  if (album.length()) {
-    setNowPlayingTextFont(album);
-    drawScrollingUtf8(album, 82, 2, 124, true);
-  }
+  drawScrollingUtf8(artist, 73, 2, 124, true);
 
   const float duration = bluetoothNowPlayingDurationSeconds();
   const float elapsedSeconds = bluetoothCurrentElapsedSeconds();
-  display.drawFrame(7, 91, 114, 8);
+  display.drawFrame(7, 87, 114, 8);
   if (duration > 0.0f) {
     int progress = static_cast<int>((elapsedSeconds / duration) * 110.0f);
     progress = clampInt(progress, 0, 110);
-    if (progress > 0) display.drawBox(9, 93, progress, 4);
+    if (progress > 0) display.drawBox(9, 89, progress, 4);
   }
   const int elapsedWhole = static_cast<int>(elapsedSeconds);
   const int durationWhole = static_cast<int>(duration);

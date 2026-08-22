@@ -18,7 +18,7 @@ reject() {
   fi
 }
 
-require 'FIRMWARE_VERSION\[\] = "2\.1\.0"' MILESTONE_Core.ino 'firmware version is not 2.1.0'
+require 'FIRMWARE_VERSION\[\] = "2\.1\.1"' MILESTONE_Core.ino 'firmware version is not 2.1.1'
 require 'if \(oledReady && !portalActive && !updateCheckIndicatorRendered\) return;' CoreRuntime.inc 'portal manifest checks can deadlock waiting for the non-portal U icon'
 require 'UPDATE_PORTAL_HTTP_CONNECT_TIMEOUT_MS' CoreUpdate.inc 'portal manifest checks need a bounded connect timeout'
 require 'UPDATE_PORTAL_TLS_HANDSHAKE_TIMEOUT_SEC' CoreUpdate.inc 'portal manifest checks need a bounded TLS timeout'
@@ -37,7 +37,7 @@ start = s.index('void processFirmwareUpdate()')
 end = s.index('\n\nvoid enterThermalSafeMode', start)
 body = s[start:end]
 gate = body.index('if (oledReady && !portalActive && !updateCheckIndicatorRendered) return;')
-isolate = body.index('isolateBluetoothForFirmwareOperation();', gate)
+isolate = body.index('isolateBluetoothForFirmwareOperation()', gate)
 attempt = body.index('++updateCheckAttempt', isolate)
 assert gate < isolate < attempt, 'BLE isolation must start only after the portal-safe display gate'
 PY_PORTAL_UPDATE_ORDER
