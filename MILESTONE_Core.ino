@@ -73,7 +73,7 @@ SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 
 namespace Milestone {
 
-constexpr char FIRMWARE_VERSION[] = "2.0.3";
+constexpr char FIRMWARE_VERSION[] = "2.0.4";
 constexpr char FIRMWARE_PROFILE[] = MILESTONE_FIRMWARE_PROFILE;
 constexpr char FIRMWARE_PROFILE_LABEL[] = MILESTONE_FIRMWARE_PROFILE_LABEL;
 constexpr char FIRMWARE_PROFILE_MARKER[] = MILESTONE_PROFILE_MARKER;
@@ -138,10 +138,13 @@ constexpr uint32_t UPDATE_CHECK_TRANSIENT_RETRY_MS = 10UL * 60UL * 1000UL;
 constexpr uint32_t UPDATE_FAILURE_RETRY_MS = 6UL * 60UL * 60UL * 1000UL;
 constexpr uint32_t UPDATE_HTTP_CONNECT_TIMEOUT_MS = 10UL * 1000UL;
 constexpr uint32_t UPDATE_HTTP_TIMEOUT_MS = 12UL * 1000UL;
+constexpr uint32_t UPDATE_PORTAL_HTTP_CONNECT_TIMEOUT_MS = 4UL * 1000UL;
+constexpr uint32_t UPDATE_PORTAL_HTTP_TIMEOUT_MS = 6UL * 1000UL;
 constexpr uint32_t UPDATE_CHECK_ATTEMPT_BACKOFF_MS = 1500UL;
 constexpr uint8_t UPDATE_CHECK_MAX_ATTEMPTS = 3;
 constexpr uint8_t UPDATE_REDIRECT_LIMIT = 5;
 constexpr uint8_t UPDATE_TLS_HANDSHAKE_TIMEOUT_SEC = 10;
+constexpr uint8_t UPDATE_PORTAL_TLS_HANDSHAKE_TIMEOUT_SEC = 5;
 constexpr uint32_t UPDATE_DOWNLOAD_STALL_MS = 20UL * 1000UL;
 // Give the captive-portal browser enough time to receive the HTTP 202 response
 // and render the accepted state before the synchronous OTA download occupies

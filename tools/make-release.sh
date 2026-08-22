@@ -3,7 +3,7 @@ set -euo pipefail
 
 if (( $# < 1 || $# > 2 )); then
   echo "사용법: $0 VERSION [NOTES]" >&2
-  echo "예: $0 2.0.3 'Stabilize OTA HTTPS and reproducible releases'" >&2
+  echo "예: $0 2.0.4 'Fix portal profile OTA checks and AP retention'" >&2
   exit 2
 fi
 

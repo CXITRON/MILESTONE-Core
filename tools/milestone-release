@@ -52,9 +52,9 @@ Options:
 
 Examples:
   cd /run/media/citron/T7/Documents/Dev/MILESTONE_Core
-  milestone-release local 2.0.3 "Stabilize OTA HTTPS and reproducible releases"
+  milestone-release local 2.0.4 "Fix portal profile OTA checks and AP retention"
 
-  cd /tmp && milestone-release taildrop 2.0.3 "Stabilize OTA HTTPS and reproducible releases"
+  cd /tmp && milestone-release taildrop 2.0.4 "Fix portal profile OTA checks and AP retention"
 USAGE
 }
 

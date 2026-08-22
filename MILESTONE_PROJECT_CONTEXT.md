@@ -1,6 +1,6 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v2.0.3
+> Current baseline: MILESTONE Core v2.0.4
 > Hardware: Waveshare ESP32-S3-Zero + SH1107 128×128 OLED
 > Repository: `CXITRON/MILESTONE-Core`
 
@@ -89,7 +89,7 @@ The `*.inc` runtime files are intentionally included into the sketch as one tran
 Firmware and persistent schema versions are separate concepts.
 
 ```cpp
-FIRMWARE_VERSION = "2.0.3"
+FIRMWARE_VERSION = "2.0.4"
 CONFIG_VERSION = 10
 ```
 
@@ -146,6 +146,8 @@ BLE stack initialization is not treated as proof that the device is advertising.
 `CoreUpdate.inc` checks the GitHub Release manifest and performs the HTTPS OTA transaction. Important invariants include TLS verification, manifest validation, content length, SHA-256 verification, temperature/resource guards, connection-stall handling, `Update.end()` success, and reboot ordering.
 
 v2.0.3 isolates optional CORE Bluetooth before manifest TLS and firmware download work. The NimBLE stack is deinitialized before the OTA memory guard so its internal RAM is available for TLS, advertising/connections cannot contend with Wi-Fi, and normal cooperative Bluetooth initialization resumes only after a completed check or failed/deferred install. A verified install reboots without rebuilding BLE. MEDIA uses the same calls through no-op profile stubs.
+
+v2.0.4 fixes the portal-only manifest gate: the setup screen intentionally renders its AP indicator instead of the normal U icon, so manual update checks and CORE↔MEDIA profile checks must not wait for `updateCheckIndicatorRendered`. Bluetooth isolation now starts only immediately before the actual HTTPS attempt. Portal-originated manifest requests also use shorter connect/read/TLS limits so the synchronous request cannot leave captive-portal HTTP and DNS service unresponsive for the full autonomous-update timeout.
 
 Do not split the OTA transaction merely because the function is long. Its sequential structure encodes safety assumptions.
 
@@ -321,7 +323,7 @@ cd /tmp && milestone-release --dry-run taildrop X.Y.Z "short release note"
 
 Use `--yes` only when an unattended final publish is explicitly desired.
 
-## 8. Areas intentionally not refactored through v2.0.3
+## 8. Areas intentionally not refactored through v2.0.4
 
 The following broad refactors were deliberately rejected because their regression risk exceeded their immediate value:
 

@@ -317,14 +317,15 @@ void processFirmwareUpdate() {
       // state first, return to loop(), and do not start HTTPS until a display
       // renderer has confirmed that the U frame reached the OLED.
       updateCheckIndicatorRendered = false;
-      isolateBluetoothForFirmwareOperation();
       setUpdateState(UpdateState::CHECKING);
       return;
     }
-    // If the OLED itself is unavailable there is nothing to render, so do not
-    // make networking depend on a failed display. With a working OLED, however,
-    // require one completed UI pass before entering the blocking HTTPS request.
-    if (oledReady && !updateCheckIndicatorRendered) return;
+    // The setup screen deliberately keeps its AP indicator instead of drawing
+    // the normal U icon; the authenticated portal already reports CHECKING.
+    // Waiting for U while the portal is active would deadlock every manual or
+    // profile manifest check. Outside setup, preserve the visible-U contract.
+    if (oledReady && !portalActive && !updateCheckIndicatorRendered) return;
+    isolateBluetoothForFirmwareOperation();
     if (updateCheckAttempt < UINT8_MAX) ++updateCheckAttempt;
 
     String failure;

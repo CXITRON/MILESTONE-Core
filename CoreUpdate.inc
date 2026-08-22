@@ -312,10 +312,12 @@ UpdateCheckAttemptResult checkFirmwareManifestAttempt(UpdateCheckReason reason, 
           String(UPDATE_CHECK_MAX_ATTEMPTS));
   NetworkClientSecure secureClient;
   secureClient.setCACert(MILESTONE_UPDATE_ROOT_CA);
-  secureClient.setHandshakeTimeout(UPDATE_TLS_HANDSHAKE_TIMEOUT_SEC);
+  secureClient.setHandshakeTimeout(portalActive ? UPDATE_PORTAL_TLS_HANDSHAKE_TIMEOUT_SEC
+                                                : UPDATE_TLS_HANDSHAKE_TIMEOUT_SEC);
   HTTPClient http;
-  http.setConnectTimeout(UPDATE_HTTP_CONNECT_TIMEOUT_MS);
-  http.setTimeout(UPDATE_HTTP_TIMEOUT_MS);
+  http.setConnectTimeout(portalActive ? UPDATE_PORTAL_HTTP_CONNECT_TIMEOUT_MS
+                                      : UPDATE_HTTP_CONNECT_TIMEOUT_MS);
+  http.setTimeout(portalActive ? UPDATE_PORTAL_HTTP_TIMEOUT_MS : UPDATE_HTTP_TIMEOUT_MS);
   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
   http.setRedirectLimit(UPDATE_REDIRECT_LIMIT);
   http.setReuse(false);
