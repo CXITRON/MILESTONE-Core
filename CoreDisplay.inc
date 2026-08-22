@@ -1052,6 +1052,7 @@ void drawBluetoothNowPlayingScreen() {
   display.clearBuffer();
   display.setFont(u8g2_font_6x10_tf);
   drawCenteredStr(bluetoothNowPlayingIsPlaying() ? "NOW PLAYING" : "PAUSED", 10);
+  drawStatusIcon(112, 0);
   display.drawHLine(0, 14, 128);
 
   const String title = bluetoothNowPlayingTitle();
@@ -1094,6 +1095,7 @@ void drawBluetoothNowWaitingScreen() {
   display.clearBuffer();
   display.setFont(u8g2_font_7x14B_tf);
   drawCenteredStr("MILESTONE NOW", 18);
+  drawStatusIcon(112, 0);
   display.drawHLine(4, 25, 120);
   display.setFont(u8g2_font_6x10_tf);
   const char *stage = bluetoothNowPlayingStage();

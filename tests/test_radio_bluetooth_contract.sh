@@ -18,7 +18,7 @@ reject() {
   fi
 }
 
-require 'FIRMWARE_VERSION\[\] = "2\.2\.10"' MILESTONE_Core.ino 'firmware version is not 2.2.10'
+require 'FIRMWARE_VERSION\[\] = "2\.2\.11"' MILESTONE_Core.ino 'firmware version is not 2.2.11'
 require 'CONFIG_VERSION = 10' MILESTONE_Core.ino 'configuration schema is not 10'
 require 'bool fixedApSecurity = false;' MILESTONE_Core.ino 'fixed AP security must default off'
 require 'String fixedApPassword;' MILESTONE_Core.ino 'fixed AP password setting missing'
@@ -121,6 +121,10 @@ require '#define MILESTONE_HAS_BLUETOOTH 0' FirmwareProfile.h 'CORE and MEDIA mu
 require '#define MILESTONE_PROFILE_NOW 3' FirmwareProfile.h 'NOW profile identifier missing'
 
 require 'void drawBluetoothNowPlayingScreen\(\)' CoreDisplay.inc 'Now Playing OLED renderer missing'
+if [[ $(grep -Fc 'drawStatusIcon(112, 0);' "$project_dir/CoreDisplay.inc") -lt 2 ]]; then
+  echo 'FAIL: NOW playback and waiting screens must both acknowledge the visible update indicator' >&2
+  exit 1
+fi
 require 'if \(bluetoothNowPlayingVisible\(\)\)' CoreDisplay.inc 'Now Playing must be an overlay rather than a ninth persistent view'
 require 'u8g2_font_unifont_t_japanese2' CoreDisplay.inc 'NOW metadata Japanese font routing missing'
 require 'utf8ContainsHangul' CoreDisplay.inc 'NOW metadata Korean font routing missing'
