@@ -653,6 +653,7 @@ void handleGetNowConfig() {
   json += ",\"layout_name\":\"" + jsonEscape(nowLayoutName(config.nowLayout)) + "\"";
   json += ",\"artwork_available\":" + String(nowArtworkAvailable() ? "true" : "false");
   json += ",\"artwork_status\":\"" + jsonEscape(nowArtworkStatus()) + "\"";
+  json += ",\"artwork_apple_code\":" + String(nowArtworkLastAppleHttpCode());
   json += ",\"artwork_http_code\":" + String(nowArtworkLastHttpCode());
   json += ",\"artwork_download_code\":" + String(nowArtworkLastDownloadCode());
   json += ",\"artwork_attempts\":" + String(nowArtworkLastAttempts());

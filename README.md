@@ -141,7 +141,7 @@ NOW 프로필은 iPhone/iPad의 **Apple Media Service(AMS)** 를 이용해 Bluet
 
 연결과 AMS 구독이 준비되면 곡 제목, 아티스트, 재생/일시정지 상태와 재생 진행률을 표시하고, 앨범명 메타데이터는 표지 검색에만 사용합니다. NOW에서 BOOT 버튼을 1초 미만으로 누르거나 설정 포털의 **NOW 표시**에서 `곡명만`, `곡명 + 아티스트`, `곡명 + 앨범 표지`, `앨범 표지 중심`을 선택합니다. 모든 구성에 진행 막대와 재생/전체 시간이 남고, 텍스트 구성에서는 곡 제목을 아티스트보다 크게 표시합니다. 긴 한글·일본어·영문 텍스트는 UTF-8 스크롤 렌더러를 사용합니다. NOW는 기존 8비트 CORE 순환 마스크와 저장된 화면 순서를 변경하지 않습니다.
 
-표지 구성은 중계 서버나 별도 API 키 없이 ESP32가 먼저 Apple의 공개 iTunes Search API에 AMS 곡명·아티스트·앨범명을 그대로 조회하고, 결과가 없거나 전송에 실패하면 MusicBrainz와 Cover Art Archive를 사용합니다. Apple 응답의 첫 `artworkUrl100`은 48KiB 상한의 스트림에서 추출하므로 전체 JSON을 내부 RAM에 할당하지 않습니다. Apple Music의 현지화 표기가 MusicBrainz 별칭과 달라도 Apple 검색 결과를 그대로 사용할 수 있습니다. MusicBrainz fallback은 앨범명 + 아티스트 0건이면 곡명 + 아티스트로 다시 검색하고 최대 3개의 중복 없는 release-group 후보를 확인합니다. 모든 연속 MusicBrainz 요청은 시작 시각 기준 최소 1.2초 간격을 지키며, 일시적 전송·429·5xx 실패는 한 번만 재시도합니다. 설정 포털에는 검색 HTTP/전송 코드·시도 횟수와 표지 HTTP 코드·후보 수가 따로 표시됩니다. JPEG는 ESP32 내부에서 RGB565로 축소 디코딩한 뒤 1비트 OLED 이미지로 변환하며 최근 6곡을 PSRAM에 보관합니다. 곡을 연속으로 넘길 때는 마지막 메타데이터 변경 후 1.4초가 지난 최신 곡만 조회하고, 늦게 끝난 이전 결과는 폐기합니다. 조회 실패·표지 없음·오프라인·메모리 부족이어도 AMS 텍스트와 진행률은 계속 표시됩니다.
+표지 구성은 중계 서버나 별도 API 키 없이 ESP32가 먼저 Apple의 공개 iTunes Search API에 AMS 곡명·아티스트·앨범명을 그대로 조회하고, 결과가 없거나 전송에 실패하면 MusicBrainz와 Cover Art Archive를 사용합니다. Apple 응답의 첫 `artworkUrl100`은 48KiB 상한의 스트림에서 추출하므로 전체 JSON을 내부 RAM에 할당하지 않습니다. Apple Music의 현지화 표기가 MusicBrainz 별칭과 달라도 Apple 검색 결과를 그대로 사용할 수 있습니다. Apple 검색 TLS는 표지 이미지 TLS를 열기 전에 완전히 파괴하고, Apple URL도 MusicBrainz fallback 전에 해제해 여러 mbedTLS 버퍼가 내부 RAM에서 겹치지 않게 합니다. MusicBrainz fallback은 앨범명 + 아티스트 0건이면 곡명 + 아티스트로 다시 검색하고 최대 3개의 중복 없는 release-group 후보를 확인합니다. 모든 연속 MusicBrainz 요청은 시작 시각 기준 최소 1.2초 간격을 지키며, 일시적 전송·429·5xx 실패는 한 번만 재시도합니다. 설정 포털에는 Apple 검색 코드, MusicBrainz 코드·시도 횟수와 표지 HTTP 코드·후보 수가 따로 표시됩니다. JPEG는 ESP32 내부에서 RGB565로 축소 디코딩한 뒤 1비트 OLED 이미지로 변환하며 최근 6곡을 PSRAM에 보관합니다. 곡을 연속으로 넘길 때는 마지막 메타데이터 변경 후 1.4초가 지난 최신 곡만 조회하고, 늦게 끝난 이전 결과는 폐기합니다. 조회 실패·표지 없음·오프라인·메모리 부족이어도 AMS 텍스트와 진행률은 계속 표시됩니다.
 
 NOW의 업데이트 확인·설치는 먼저 광고를 중단하고, 애플리케이션 플래그뿐 아니라 NimBLE 서버의 실제 peer와 GAP connection handle을 함께 확인해 살아 있는 iPhone 연결을 종료합니다. 연결 종료가 확인되면 NimBLE 객체는 삭제하지 않은 채 유지하고 오래된 AMS/GAP 이벤트를 비운 뒤 HTTPS를 시작합니다. 2.5초 안에 실제 연결이 사라지지 않거나 TLS용 내부 RAM이 부족하면 재부팅을 감수하지 않고 업데이트 작업을 미룹니다.
 
@@ -296,13 +296,13 @@ PC의 현재 프로젝트를 직접 수정한 경우에는 **MILESTONE_Core 프�
 
 ```bash
 cd /run/media/citron/T7/Documents/Dev/MILESTONE_Core
-milestone-release local 2.2.9 "Match localized NOW artist names"
+milestone-release local 2.2.10 "Isolate NOW artwork TLS lifetimes"
 ```
 
 Tailscale Taildrop으로 `MILESTONE_Core_1.10.6.zip`을 받은 경우에는 교체 대상 프로젝트 디렉터리 밖의 정상적으로 존재하는 디렉터리에서 실행합니다. 기존 프로젝트가 교체될 때 현재 셸 경로가 사라지는 문제를 방지하기 위해 `/tmp`로 이동하는 방식을 권장합니다.
 
 ```bash
-cd /tmp && milestone-release taildrop 2.2.9 "Match localized NOW artist names"
+cd /tmp && milestone-release taildrop 2.2.10 "Isolate NOW artwork TLS lifetimes"
 ```
 
 Taildrop 모드는 ZIP을 라이브 프로젝트에 바로 덮어쓰지 않습니다. 별도 staging 디렉터리에서 구조·버전·Git 상태를 검사하고 테스트와 ESP32 릴리즈 빌드까지 성공한 뒤에만 프로젝트를 교체합니다. GitHub 게시 전 실패하면 기존 프로젝트를 자동 복구합니다. `--dry-run`은 테스트/빌드까지만 수행하고 로컬 프로젝트·Git·GitHub를 변경하지 않습니다. `--yes`를 사용하지 않는 기본 동작은 최종 게시 직전에 한 번 확인합니다.
@@ -319,10 +319,10 @@ Taildrop 모드는 ZIP을 라이브 프로젝트에 바로 덮어쓰지 않습�
 
 ```bash
 chmod +x tools/make-release.sh
-./tools/make-release.sh 2.2.9 "Match localized NOW artist names"
+./tools/make-release.sh 2.2.10 "Isolate NOW artwork TLS lifetimes"
 ```
 
-기본 설명을 사용하려면 `./tools/make-release.sh 2.2.9`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
+기본 설명을 사용하려면 `./tools/make-release.sh 2.2.10`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
 
 다음 여섯 파일이 `release/`에 생성됩니다.
 
@@ -346,11 +346,11 @@ release/MILESTONE_Now.json
 일반적인 게시에는 위의 `milestone-release`를 사용합니다. 아래 수동 절차는 자동화 도구를 복구하거나 디버깅해야 할 때만 참고합니다.
 
 1. 저장소의 `Releases`에서 `Draft a new release`를 선택합니다.
-2. 버전과 동일한 태그를 만듭니다. 예: `v2.2.9`
-3. Release 제목을 `MILESTONE Core v2.2.9`로 지정합니다.
+2. 버전과 동일한 태그를 만듭니다. 예: `v2.2.10`
+3. Release 제목을 `MILESTONE Core v2.2.10`로 지정합니다.
 4. CORE/MEDIA/NOW의 BIN과 JSON 여섯 파일을 모두 첨부합니다.
 5. Pre-release가 아닌 최신 정식 Release로 게시합니다.
-6. 2.2.8 NOW 기기에서 같은 프로필 2.2.9 OTA, 현지화 아티스트 단어 순서·MusicBrainz 요청 간격과 기존 Bluetooth·Wi-Fi·롤백 보호·진단 이력·설정 보존을 검증합니다.
+6. 2.2.9 NOW 기기에서 같은 프로필 2.2.10 OTA, Apple 검색→표지→MusicBrainz TLS 수명 격리와 기존 Bluetooth·Wi-Fi·롤백 보호·진단 이력·설정 보존을 검증합니다.
 
 여섯 파일의 이름은 모든 Release에서 정확히 같아야 합니다. 초안이나 Pre-release는 `latest` 업데이트 대상으로 사용하지 않습니다.
 
@@ -402,6 +402,18 @@ Taildrop ZIP의 `milestone-release`가 현재 설치본보다 새로우면, 게�
 - STREAM_MODE에서 일반 백그라운드 기능을 격리하고 PSRAM 240프레임 링버퍼·X/Y dirty-tile OLED 갱신·적응형 출력 주기·프레임 드롭·80°C 스트림 상한으로 영상 수신/표시에 집중
 - 라이브 송신은 96프레임 초기 충전 후 큐 64프레임 이하에서 최대 8프레임씩 144프레임 이상으로 보충하며 ESP32가 소스 시간축과 OLED 출력 클록을 분리해 관리
 - 비차단 3초 부팅 로고와 우상단 NTP `T`·업데이트 `U` 상태 아이콘
+
+## v2.2.10 업데이트 안내
+
+v2.2.10은 2.2.9의 Apple 표지 조회에서 HTTPS 객체 수명이 겹쳐 내부 RAM 압박으로 `NETWORK-FAILED`가 발생할 수 있던 문제를 수정합니다. Apple 검색 연결 객체가 함수 끝까지 유지된 상태에서 표지 또는 MusicBrainz TLS를 열던 것이 원인이었습니다.
+
+- Apple 검색 `NetworkClientSecure`·`HTTPClient`·쿼리 문자열을 표지 HTTPS 시작 전에 완전히 파괴
+- Apple 표지 URL 버퍼도 MusicBrainz fallback 전에 해제
+- Apple 검색이 성공하면 MusicBrainz 쿼리 문자열을 만들지 않는 lazy allocation 적용
+- 설정 포털 NOW 상태에 Apple Search 코드, MusicBrainz 코드, 표지 코드를 분리 표시
+- bounded JSON/JPEG, 최신 곡 취소, PSRAM 캐시, 요청 간격과 설정 스키마 10 유지
+
+정식 버전: `2.2.10`
 
 ## v2.2.9 업데이트 안내
 

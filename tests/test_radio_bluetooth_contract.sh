@@ -18,7 +18,7 @@ reject() {
   fi
 }
 
-require 'FIRMWARE_VERSION\[\] = "2\.2\.9"' MILESTONE_Core.ino 'firmware version is not 2.2.9'
+require 'FIRMWARE_VERSION\[\] = "2\.2\.10"' MILESTONE_Core.ino 'firmware version is not 2.2.10'
 require 'CONFIG_VERSION = 10' MILESTONE_Core.ino 'configuration schema is not 10'
 require 'bool fixedApSecurity = false;' MILESTONE_Core.ino 'fixed AP security must default off'
 require 'String fixedApPassword;' MILESTONE_Core.ino 'fixed AP password setting missing'
@@ -138,6 +138,9 @@ require 'itunes\.apple\.com/search' CoreArtwork.inc 'localized Apple Music artwo
 require 'nowArtworkReadAppleUrl' CoreArtwork.inc 'Apple artwork JSON must be parsed as a bounded stream'
 require 'feedAppleArtworkUrlParser' CoreArtwork.inc 'host-tested Apple artwork URL parser is not shared with firmware'
 reject 'appleHttp\.getString\(\)' CoreArtwork.inc 'Apple Search JSON must not be copied into an unbounded internal-heap String'
+require 'Apple search TLS client is now destroyed before the image TLS starts' CoreArtwork.inc 'Apple search and image TLS lifetimes overlap internal RAM'
+require 'if \(!success\) \{' CoreArtwork.inc 'MusicBrainz query allocations must remain lazy after Apple success'
+require 'artwork_apple_code' CorePortal.inc 'NOW portal must expose Apple Search diagnosis separately'
 require 'NOW_ART_LOOKUP_ATTEMPTS = 2' CoreArtwork.inc 'transient MusicBrainz failures need one bounded retry'
 require 'NOW_ART_LOOKUP_TIMEOUT_MS = 15000UL' CoreArtwork.inc 'MusicBrainz read timeout is shorter than observed service latency'
 require 'NOW_ART_LOOKUP_RETRY_MS = 1200UL' CoreArtwork.inc 'MusicBrainz retry must respect per-client request spacing'

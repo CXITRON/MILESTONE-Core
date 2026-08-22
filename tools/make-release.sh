@@ -3,7 +3,7 @@ set -euo pipefail
 
 if (( $# < 1 || $# > 2 )); then
   echo "사용법: $0 VERSION [NOTES]" >&2
-  echo "예: $0 2.2.9 'Match localized NOW artist names'" >&2
+  echo "예: $0 2.2.10 'Isolate NOW artwork TLS lifetimes'" >&2
   exit 2
 fi
 

@@ -59,6 +59,7 @@ volatile bool nowArtworkWorkerSuccess = false;
 volatile bool nowArtworkWorkerRunning = false;
 volatile NowArtworkWorkerResult nowArtworkWorkerResult = NowArtworkWorkerResult::NONE;
 volatile uint32_t nowArtworkWorkerStackFreeBytes = 0;
+volatile int16_t nowArtworkWorkerAppleHttpCode = 0;
 volatile int16_t nowArtworkWorkerHttpCode = 0;
 volatile int16_t nowArtworkWorkerDownloadCode = 0;
 volatile uint8_t nowArtworkWorkerAttempts = 0;
@@ -359,6 +360,7 @@ void nowArtworkWorker(void *) {
   const uint32_t generation = nowArtworkWorkerGeneration;
   bool success = false;
   NowArtworkWorkerResult result = NowArtworkWorkerResult::NETWORK;
+  int16_t finalAppleHttpCode = 0;
   int16_t finalHttpCode = 0;
   int16_t finalDownloadCode = 0;
   uint8_t attemptsUsed = 0;
@@ -367,61 +369,65 @@ void nowArtworkWorker(void *) {
   uint32_t lastLookupRequestMs = 0;
   nowArtworkRtcMagic = NOW_ART_RTC_MAGIC;
   nowArtworkRtcStage = 1;
-  const String title = nowArtworkLuceneEscape(nowArtworkWorkerTitle);
-  const String album = nowArtworkLuceneEscape(nowArtworkWorkerAlbum);
-  const String artist = nowArtworkLuceneEscape(nowArtworkWorkerArtist);
-  String queries[2];
-  uint8_t queryCount = 0;
-  if (album.length()) queries[queryCount++] = nowArtworkSearchUrl(true, album, artist);
-  if (title.length()) queries[queryCount++] = nowArtworkSearchUrl(false, title, artist);
-
-  String appleTerm = String(nowArtworkWorkerTitle) + " " + nowArtworkWorkerArtist;
-  if (nowArtworkWorkerAlbum[0]) appleTerm += String(" ") + nowArtworkWorkerAlbum;
-  String appleQuery = "https://itunes.apple.com/search?country=KR&media=music&entity=song&limit=1&term=";
-  appleQuery += nowArtworkUrlEncode(appleTerm.c_str());
-  NetworkClientSecure appleClient;
-  appleClient.setCACert(MILESTONE_UPDATE_ROOT_CA);
-  appleClient.setHandshakeTimeout(8);
-  HTTPClient appleHttp;
-  appleHttp.setConnectTimeout(NOW_ART_LOOKUP_CONNECT_TIMEOUT_MS);
-  appleHttp.setTimeout(NOW_ART_LOOKUP_TIMEOUT_MS);
-  appleHttp.setAcceptEncoding("identity");
-  if (appleHttp.begin(appleClient, appleQuery)) {
-    appleHttp.addHeader("User-Agent", String("MILESTONE-Now/") + FIRMWARE_VERSION);
-    const int response = appleHttp.GET();
-    finalHttpCode = static_cast<int16_t>(response);
-    if (response == HTTP_CODE_OK) {
-      String artworkUrl;
-      bool appleComplete = false;
-      bool appleTimedOut = false;
-      const bool foundAppleArtwork = nowArtworkReadAppleUrl(
-          appleHttp, artworkUrl, appleComplete, appleTimedOut, generation);
-      appleHttp.end();
-      if (foundAppleArtwork && !nowArtworkWorkerCancelled(generation)) {
-        nowArtworkRtcStage = 2;
-        uint8_t *jpeg = nullptr;
-        size_t jpegSize = 0;
-        const NowArtworkDownloadResult download = nowArtworkReadJpeg(
-            artworkUrl, jpeg, jpegSize, finalDownloadCode, generation);
-        if (download == NowArtworkDownloadResult::READY) {
-          nowArtworkRtcStage = 3;
-          success = !nowArtworkWorkerCancelled(generation) &&
-                    nowArtworkDecodeJpeg(jpeg, jpegSize);
-          heap_caps_free(jpeg);
-          if (success) {
-            result = NowArtworkWorkerResult::READY;
-            candidateCount = 1;
-          }
+  {
+    String appleArtworkUrl;
+    {
+      String appleTerm = String(nowArtworkWorkerTitle) + " " + nowArtworkWorkerArtist;
+      if (nowArtworkWorkerAlbum[0]) appleTerm += String(" ") + nowArtworkWorkerAlbum;
+      String appleQuery = "https://itunes.apple.com/search?country=KR&media=music&entity=song&limit=1&term=";
+      appleQuery += nowArtworkUrlEncode(appleTerm.c_str());
+      NetworkClientSecure appleClient;
+      appleClient.setCACert(MILESTONE_UPDATE_ROOT_CA);
+      appleClient.setHandshakeTimeout(8);
+      HTTPClient appleHttp;
+      appleHttp.setConnectTimeout(NOW_ART_LOOKUP_CONNECT_TIMEOUT_MS);
+      appleHttp.setTimeout(NOW_ART_LOOKUP_TIMEOUT_MS);
+      appleHttp.setAcceptEncoding("identity");
+      if (appleHttp.begin(appleClient, appleQuery)) {
+        appleHttp.addHeader("User-Agent", String("MILESTONE-Now/") + FIRMWARE_VERSION);
+        const int response = appleHttp.GET();
+        finalAppleHttpCode = static_cast<int16_t>(response);
+        if (response == HTTP_CODE_OK) {
+          bool appleComplete = false;
+          bool appleTimedOut = false;
+          nowArtworkReadAppleUrl(
+              appleHttp, appleArtworkUrl, appleComplete, appleTimedOut, generation);
+        }
+        appleHttp.end();
+      }
+    }
+    // The Apple search TLS client is now destroyed before the image TLS starts.
+    if (appleArtworkUrl.length() && !nowArtworkWorkerCancelled(generation)) {
+      nowArtworkRtcStage = 2;
+      uint8_t *jpeg = nullptr;
+      size_t jpegSize = 0;
+      const NowArtworkDownloadResult download = nowArtworkReadJpeg(
+          appleArtworkUrl, jpeg, jpegSize, finalDownloadCode, generation);
+      if (download == NowArtworkDownloadResult::READY) {
+        nowArtworkRtcStage = 3;
+        success = !nowArtworkWorkerCancelled(generation) &&
+                  nowArtworkDecodeJpeg(jpeg, jpegSize);
+        heap_caps_free(jpeg);
+        if (success) {
+          result = NowArtworkWorkerResult::READY;
+          candidateCount = 1;
         }
       }
-    } else appleHttp.end();
+    }
   }
 
   nowArtworkRtcStage = 1;
-  for (uint8_t queryIndex = 0; !success && queryIndex < queryCount && !candidateCount;
-       ++queryIndex) {
-    bool definitiveNoMatch = false;
-    for (uint8_t attempt = 1; attempt <= NOW_ART_LOOKUP_ATTEMPTS; ++attempt) {
+  if (!success) {
+    const String title = nowArtworkLuceneEscape(nowArtworkWorkerTitle);
+    const String album = nowArtworkLuceneEscape(nowArtworkWorkerAlbum);
+    const String artist = nowArtworkLuceneEscape(nowArtworkWorkerArtist);
+    String queries[2];
+    uint8_t queryCount = 0;
+    if (album.length()) queries[queryCount++] = nowArtworkSearchUrl(true, album, artist);
+    if (title.length()) queries[queryCount++] = nowArtworkSearchUrl(false, title, artist);
+    for (uint8_t queryIndex = 0; queryIndex < queryCount && !candidateCount; ++queryIndex) {
+      bool definitiveNoMatch = false;
+      for (uint8_t attempt = 1; attempt <= NOW_ART_LOOKUP_ATTEMPTS; ++attempt) {
       if (nowArtworkWorkerCancelled(generation)) break;
       ++attemptsUsed;
       bool retryable = false;
@@ -478,10 +484,11 @@ void nowArtworkWorker(void *) {
           nowArtworkWorkerCancelled(generation)) break;
       logLine(String("NOW artwork lookup retry after code=") + finalHttpCode +
               " attempt=" + attempt);
+      }
+      // Only a real zero-result response may advance from album matching to
+      // title + artist matching. Transport and server failures keep their diagnosis.
+      if (!candidateCount && !definitiveNoMatch) break;
     }
-    // Only a real zero-result response may advance from album matching to
-    // title + artist matching. Transport and server failures keep their diagnosis.
-    if (!candidateCount && !definitiveNoMatch) break;
   }
 
   if (!success && candidateCount && !nowArtworkWorkerCancelled(generation)) {
@@ -531,6 +538,7 @@ void nowArtworkWorker(void *) {
   nowArtworkWorkerSuccess = success;
   nowArtworkWorkerResult = result;
   nowArtworkWorkerStackFreeBytes = stackFreeBytes;
+  nowArtworkWorkerAppleHttpCode = finalAppleHttpCode;
   nowArtworkWorkerHttpCode = finalHttpCode;
   nowArtworkWorkerDownloadCode = finalDownloadCode;
   nowArtworkWorkerAttempts = attemptsUsed;
@@ -559,6 +567,7 @@ void nowArtworkAcceptWorkerResult() {
   bool success;
   NowArtworkWorkerResult result;
   uint32_t stackFreeBytes;
+  int16_t appleHttpCode;
   int16_t httpCode;
   int16_t downloadCode;
   uint8_t attempts;
@@ -568,6 +577,7 @@ void nowArtworkAcceptWorkerResult() {
   success = nowArtworkWorkerSuccess;
   result = nowArtworkWorkerResult;
   stackFreeBytes = nowArtworkWorkerStackFreeBytes;
+  appleHttpCode = nowArtworkWorkerAppleHttpCode;
   httpCode = nowArtworkWorkerHttpCode;
   downloadCode = nowArtworkWorkerDownloadCode;
   attempts = nowArtworkWorkerAttempts;
@@ -594,7 +604,8 @@ void nowArtworkAcceptWorkerResult() {
       default: nowArtworkState = "network-failed"; break;
     }
     logLine(String("NOW artwork failed: ") + nowArtworkState +
-            " http=" + httpCode + " attempts=" + attempts +
+            " apple_http=" + appleHttpCode + " http=" + httpCode +
+            " attempts=" + attempts +
             " candidates=" + candidates + " download_http=" + downloadCode +
             " stack_free=" + String(stackFreeBytes));
     nowArtworkRetryAtMs = millis() + NOW_ART_RETRY_MS;
@@ -731,6 +742,7 @@ const uint8_t *nowArtworkLargeBitmap() {
 }
 
 const char *nowArtworkStatus() { return nowArtworkState.c_str(); }
+int nowArtworkLastAppleHttpCode() { return nowArtworkWorkerAppleHttpCode; }
 int nowArtworkLastHttpCode() { return nowArtworkWorkerHttpCode; }
 int nowArtworkLastDownloadCode() { return nowArtworkWorkerDownloadCode; }
 uint8_t nowArtworkLastAttempts() { return nowArtworkWorkerAttempts; }
