@@ -3,7 +3,7 @@ set -euo pipefail
 
 if (( $# < 1 || $# > 2 )); then
   echo "사용법: $0 VERSION [NOTES]" >&2
-  echo "예: $0 2.2.0 'Add selectable NOW layouts and on-device album artwork'" >&2
+  echo "예: $0 2.2.1 'Recover stuck NOW Bluetooth security sessions'" >&2
   exit 2
 fi
 
@@ -65,7 +65,7 @@ profile_ids=(1 2 3)
 asset_stems=(MILESTONE_Core MILESTONE_Media MILESTONE_Now)
 markers=(MILESTONE_PROFILE_CORE MILESTONE_PROFILE_MEDIA MILESTONE_PROFILE_NOW)
 media_binary_markers=(/api/media/upload /api/stream/start /media/upload.tmp)
-ble_runtime_marker=MILESTONE_BLE_AMS_RUNTIME_V3
+ble_runtime_marker=MILESTONE_BLE_AMS_RUNTIME_V4
 artwork_runtime_marker=MILESTONE_NOW_ARTWORK_RUNTIME_V1
 
 echo "고정 빌드 설정: $fqbn"

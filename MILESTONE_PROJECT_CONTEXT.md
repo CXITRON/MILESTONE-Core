@@ -1,6 +1,6 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v2.2.0
+> Current baseline: MILESTONE Core v2.2.1
 > Hardware: Waveshare ESP32-S3-Zero + SH1107 128×128 OLED
 > Repository: `CXITRON/MILESTONE-Core`
 
@@ -89,7 +89,7 @@ The `*.inc` runtime files are intentionally included into the sketch as one tran
 Firmware and persistent schema versions are separate concepts.
 
 ```cpp
-FIRMWARE_VERSION = "2.2.0"
+FIRMWARE_VERSION = "2.2.1"
 CONFIG_VERSION = 10
 ```
 
@@ -114,7 +114,7 @@ Schema 9 appends `CUSTOM_MEDIA` as View 7 and TopMode 8 without renumbering the 
 
 ### Bluetooth Now Playing, NOW profile, and setup-AP security (v1.11.0, v2.1.0)
 
-`CoreBluetooth.inc` implements iPhone/iPad Now Playing metadata through Apple Media Service (AMS) when the Arduino-ESP32 build exposes NimBLE. Since v2.1.0, the BLE runtime is compiled only into the dedicated NOW image and is always enabled there; CORE and MEDIA contain no BLE runtime. MILESTONE advertises an AMS service solicitation plus a shortened primary-packet name, bonds with the iOS device, discovers the iPhone-hosted AMS service on the same connection, subscribes to Player/Track Entity Update attributes, and renders a large title, artist, playback state, and progress. Korean metadata uses the Korean U8g2 font and non-Korean metadata uses the Japanese font so kana/kanji titles render instead of falling back to empty glyphs. NOW does not add a ninth persistent `View`, so the existing 8-bit cycle mask and saved CORE screen-order contract remain unchanged. A NOW release must fail rather than silently compile the unsupported BLE stub when NimBLE is absent, and binary inspection must find `MILESTONE_BLE_AMS_RUNTIME_V3` only in the NOW image.
+`CoreBluetooth.inc` implements iPhone/iPad Now Playing metadata through Apple Media Service (AMS) when the Arduino-ESP32 build exposes NimBLE. Since v2.1.0, the BLE runtime is compiled only into the dedicated NOW image and is always enabled there; CORE and MEDIA contain no BLE runtime. MILESTONE advertises an AMS service solicitation plus a shortened primary-packet name, bonds with the iOS device, discovers the iPhone-hosted AMS service on the same connection, subscribes to Player/Track Entity Update attributes, and renders a large title, artist, playback state, and progress. Korean metadata uses the Korean U8g2 font and non-Korean metadata uses the Japanese font so kana/kanji titles render instead of falling back to empty glyphs. NOW does not add a ninth persistent `View`, so the existing 8-bit cycle mask and saved CORE screen-order contract remain unchanged. A NOW release must fail rather than silently compile the unsupported BLE stub when NimBLE is absent, and binary inspection must find `MILESTONE_BLE_AMS_RUNTIME_V4` only in the NOW image.
 
 The current implementation parses complete AMS Entity Update notifications and safely displays the received prefix when iOS marks a value as truncated. A later revision may add asynchronous Entity Attribute reads for the full value; do not block the main loop waiting for a GATT read. Pairing and AMS interoperability must be validated on the physical ESP32-S3/iPhone combination before treating the feature as hardware-certified.
 
@@ -162,6 +162,8 @@ v2.1.0 moves AMS Bluetooth out of CORE into the third NOW application profile. C
 v2.1.1 hardens NOW firmware operations after a v2.0.7 CORE PANIC was observed during update checking. A connected iPhone is terminated first and the matching GAP disconnect event must arrive before `BLEDevice::deinit(false)` can delete the server and stop NimBLE tasks. The wait is bounded; timeout or termination failure refuses unsafe deinitialization and defers the firmware operation instead of risking a PANIC. The NOW screen removes unused album metadata and renders the title at 2× the artist size.
 
 v2.2.0 adds five persistent NOW layouts and restores AMS album metadata only for layouts that need it. Artwork layouts query MusicBrainz directly, prefer album + artist matching, fetch a Cover Art Archive release-group thumbnail, decode JPEG inside the NOW image, and create 60×60/88×88 one-bit bitmaps. A 1.4-second latest-track debounce and six-entry PSRAM cache absorb rapid skipping. Artwork HTTPS runs in a bounded background task, is serialized against firmware HTTPS, and remains optional: lookup, allocation, download, or decode failure leaves AMS text and playback progress operational.
+
+v2.2.1 hardens the NOW pairing/encryption transition. The runtime no longer depends on receiving one GAP encryption-change event: it checks the live NimBLE connection descriptor immediately after security starts and every 250ms, so an already encrypted bonded reconnect or a missed completion event can still advance to AMS discovery. A session that remains unencrypted for 15 seconds is terminated and returned to advertising for a clean retry instead of remaining on `SECURING` indefinitely. The portal status API exposes the current security wait duration for diagnosis.
 
 Do not split the OTA transaction merely because the function is long. Its sequential structure encodes safety assumptions.
 

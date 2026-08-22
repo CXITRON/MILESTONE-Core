@@ -29,10 +29,12 @@ constexpr uint8_t AMS_NOTIFICATION_QUEUE = 6;
 constexpr uint32_t BLE_ADVERTISING_RETRY_MS = 5000UL;
 constexpr uint32_t BLE_DISCONNECT_TIMEOUT_MS = 2500UL;
 constexpr uint32_t BLE_SHUTDOWN_QUIESCE_MS = 75UL;
+constexpr uint32_t BLE_SECURITY_TIMEOUT_MS = 15000UL;
+constexpr uint32_t BLE_SECURITY_POLL_MS = 250UL;
 constexpr char BLE_DEVICE_NAME[] = "MILESTONE";
 // make-release.sh verifies this executed marker in the compiled NOW image,
 // preventing a BLE stub from being published as a working build.
-constexpr char BLE_RUNTIME_MARKER[] = "MILESTONE_BLE_AMS_RUNTIME_V3";
+constexpr char BLE_RUNTIME_MARKER[] = "MILESTONE_BLE_AMS_RUNTIME_V4";
 
 enum class BluetoothRuntimeStage : uint8_t {
   OFF,
@@ -76,6 +78,8 @@ struct BluetoothNowPlayingState {
   uint32_t nextDiscoveryMs = 0;
   uint32_t nextAdvertisingRetryMs = 0;
   uint32_t nextInitializationRetryMs = 0;
+  uint32_t securityStartedMs = 0;
+  uint32_t nextSecurityPollMs = 0;
   BluetoothRuntimeStage stage = BluetoothRuntimeStage::OFF;
   const char *lastError = "";
   int lastErrorCode = 0;
@@ -168,6 +172,26 @@ void clearBluetoothNowPlayingMetadata() {
   bluetoothNowPlaying.durationSeconds = 0.0f;
   bluetoothNowPlaying.playbackAnchorMs = millis();
   bluetoothNowPlaying.metadataChangedMs = millis();
+}
+
+bool confirmBluetoothLinkEncrypted() {
+  if (!bluetoothNowPlaying.connected || bluetoothNowPlaying.secured ||
+      bluetoothNowPlaying.connHandle == BLE_HS_CONN_HANDLE_NONE) {
+    return bluetoothNowPlaying.secured;
+  }
+  ble_gap_conn_desc connection = {};
+  const int rc = ble_gap_conn_find(bluetoothNowPlaying.connHandle, &connection);
+  if (rc != 0 || !connection.sec_state.encrypted) return false;
+  bluetoothNowPlaying.secured = true;
+  bluetoothNowPlaying.securityStartedMs = 0;
+  bluetoothNowPlaying.nextSecurityPollMs = 0;
+  ble_gattc_exchange_mtu(bluetoothNowPlaying.connHandle, nullptr, nullptr);
+  bluetoothNowPlaying.nextDiscoveryMs = millis();
+  logLine(String("BLE link encryption confirmed: bonded=") +
+          String(connection.sec_state.bonded ? "yes" : "no") +
+          " authenticated=" + String(connection.sec_state.authenticated ? "yes" : "no") +
+          " key=" + String(connection.sec_state.key_size));
+  return true;
 }
 
 void queueAmsNotification(const os_mbuf *om) {
@@ -692,21 +716,25 @@ void processBluetoothNowPlaying() {
     }
     int securityRc = 0;
     bluetoothNowPlaying.stage = BluetoothRuntimeStage::SECURING;
+    bluetoothNowPlaying.securityStartedMs = millis();
+    bluetoothNowPlaying.nextSecurityPollMs = millis();
     if (!BLESecurity::startSecurity(bluetoothNowPlaying.connHandle, &securityRc) && securityRc != BLE_HS_EALREADY) {
       setBluetoothError("security-start-failed", securityRc);
       if (bluetoothServer) bluetoothServer->disconnect(bluetoothNowPlaying.connHandle);
     }
+    confirmBluetoothLinkEncrypted();
     logLine("BLE iPhone connected; securing AMS session");
   }
   if (bluetoothEncryptedEvent) {
     bluetoothEncryptedEvent = false;
     if (bluetoothEventConnHandle == bluetoothNowPlaying.connHandle) {
-      bluetoothNowPlaying.secured = bluetoothEncryptionStatus == 0;
-      if (bluetoothNowPlaying.secured) {
-        ble_gattc_exchange_mtu(bluetoothNowPlaying.connHandle, nullptr, nullptr);
-        bluetoothNowPlaying.nextDiscoveryMs = millis();
-        logLine("BLE bond/encryption ready; AMS discovery queued");
+      if (bluetoothEncryptionStatus == 0) {
+        if (!confirmBluetoothLinkEncrypted()) {
+          bluetoothNowPlaying.nextSecurityPollMs = millis() + BLE_SECURITY_POLL_MS;
+          logLine("BLE encryption event received; descriptor confirmation pending");
+        }
       } else {
+        bluetoothNowPlaying.secured = false;
         setBluetoothError("pairing-encryption-failed", bluetoothEncryptionStatus);
         logLine(String("BLE pairing/encryption failed status=") + bluetoothEncryptionStatus);
         if (bluetoothServer) bluetoothServer->disconnect(bluetoothNowPlaying.connHandle);
@@ -717,6 +745,8 @@ void processBluetoothNowPlaying() {
     bluetoothDisconnectedEvent = false;
     bluetoothNowPlaying.connected = false;
     bluetoothNowPlaying.secured = false;
+    bluetoothNowPlaying.securityStartedMs = 0;
+    bluetoothNowPlaying.nextSecurityPollMs = 0;
     bluetoothNowPlaying.connHandle = BLE_HS_CONN_HANDLE_NONE;
     resetAmsHandles();
     clearBluetoothNowPlayingMetadata();
@@ -726,6 +756,27 @@ void processBluetoothNowPlaying() {
 
   AmsNotificationPacket packet;
   while (popAmsNotification(packet)) applyAmsNotification(packet);
+
+  if (bluetoothNowPlaying.connected && !bluetoothNowPlaying.secured &&
+      bluetoothNowPlaying.stage == BluetoothRuntimeStage::SECURING) {
+    const uint32_t now = millis();
+    if (deadlineReached(now, bluetoothNowPlaying.nextSecurityPollMs)) {
+      bluetoothNowPlaying.nextSecurityPollMs = now + BLE_SECURITY_POLL_MS;
+      confirmBluetoothLinkEncrypted();
+    }
+    if (!bluetoothNowPlaying.secured && bluetoothNowPlaying.securityStartedMs != 0 &&
+        elapsed(now, bluetoothNowPlaying.securityStartedMs, BLE_SECURITY_TIMEOUT_MS)) {
+      const uint16_t timedOutHandle = bluetoothNowPlaying.connHandle;
+      bluetoothNowPlaying.securityStartedMs = 0;
+      bluetoothNowPlaying.nextSecurityPollMs = 0;
+      setBluetoothError("security-timeout", BLE_HS_ETIMEOUT);
+      const int disconnectRc = bluetoothServer
+          ? bluetoothServer->disconnect(timedOutHandle, BLE_ERR_REM_USER_CONN_TERM)
+          : BLE_HS_EINVAL;
+      logLine(String("BLE security timed out; disconnecting for clean retry rc=") +
+              String(disconnectRc));
+    }
+  }
 
   if (!bluetoothNowPlaying.connected && !bluetoothNowPlaying.suspended &&
       bluetoothAdvertising && !bluetoothAdvertising->isAdvertising() &&
@@ -756,6 +807,10 @@ bool bluetoothNowPlayingAdvertising() {
 const char *bluetoothNowPlayingStage() { return bluetoothRuntimeStageName(bluetoothNowPlaying.stage); }
 const char *bluetoothNowPlayingError() { return bluetoothNowPlaying.lastError; }
 int bluetoothNowPlayingErrorCode() { return bluetoothNowPlaying.lastErrorCode; }
+uint32_t bluetoothNowPlayingSecurityElapsedMs() {
+  return bluetoothNowPlaying.securityStartedMs == 0
+      ? 0 : millis() - bluetoothNowPlaying.securityStartedMs;
+}
 const char *bluetoothNowPlayingAddress() { return bluetoothNowPlaying.address.c_str(); }
 
 const char *bluetoothNowPlayingTitle() { return bluetoothNowPlaying.title.c_str(); }
@@ -802,6 +857,7 @@ const char *bluetoothNowPlayingError() {
 #endif
 }
 int bluetoothNowPlayingErrorCode() { return 0; }
+uint32_t bluetoothNowPlayingSecurityElapsedMs() { return 0; }
 const char *bluetoothNowPlayingAddress() { return ""; }
 const char *bluetoothNowPlayingTitle() { return ""; }
 const char *bluetoothNowPlayingArtist() { return ""; }

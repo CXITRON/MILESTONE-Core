@@ -18,7 +18,7 @@ reject() {
   fi
 }
 
-require 'FIRMWARE_VERSION\[\] = "2\.2\.0"' MILESTONE_Core.ino 'firmware version is not 2.2.0'
+require 'FIRMWARE_VERSION\[\] = "2\.2\.1"' MILESTONE_Core.ino 'firmware version is not 2.2.1'
 require 'CONFIG_VERSION = 10' MILESTONE_Core.ino 'configuration schema is not 10'
 require 'bool fixedApSecurity = false;' MILESTONE_Core.ino 'fixed AP security must default off'
 require 'String fixedApPassword;' MILESTONE_Core.ino 'fixed AP password setting missing'
@@ -43,7 +43,7 @@ require 'C6B2F38C|0x8c, 0xf3, 0xb2, 0xc6' CoreBluetooth.inc 'AMS Entity Attribut
 require 'BLE_HS_ADV_TYPE_SVC_DATA_UUID128|0x15' CoreBluetooth.inc 'AMS service solicitation advertising is missing'
 require 'setShortName\("MILESTON"\)' CoreBluetooth.inc 'passive BLE scans need a name in the primary advertisement'
 require 'scanResponse\.setName\(BLE_DEVICE_NAME\)' CoreBluetooth.inc 'active BLE scans need the complete MILESTONE name'
-require 'MILESTONE_BLE_AMS_RUNTIME_V3' CoreBluetooth.inc 'compiled BLE runtime marker missing'
+require 'MILESTONE_BLE_AMS_RUNTIME_V4' CoreBluetooth.inc 'compiled BLE runtime marker missing'
 require 'requires an Arduino-ESP32 build with NimBLE enabled' MILESTONE_Core.ino 'NOW must fail compilation instead of shipping a BLE stub'
 require 'bluetoothNowPlayingVisible\(\)' CoreBluetooth.inc 'Bluetooth music overlay visibility gate missing'
 python3 - <<'PY_AMS_PARSE'
@@ -70,6 +70,13 @@ require '!isolateBluetoothForFirmwareOperation\(\)' CoreUpdate.inc 'OTA install 
 require '!isolateBluetoothForFirmwareOperation\(\)' CoreRuntime.inc 'manifest checks must wait for safe Bluetooth isolation'
 require 'bluetoothDisconnectedEvent && bluetoothEventConnHandle == connHandle' CoreBluetooth.inc 'BLE shutdown must wait for the matching GAP disconnect confirmation'
 require 'BLE_DISCONNECT_TIMEOUT_MS' CoreBluetooth.inc 'BLE disconnect confirmation must be bounded'
+require 'BLE_SECURITY_TIMEOUT_MS = 15000UL' CoreBluetooth.inc 'BLE security wait must be bounded'
+require 'ble_gap_conn_find\(bluetoothNowPlaying\.connHandle, &connection\)' CoreBluetooth.inc 'live encrypted connection state must be polled'
+require 'connection\.sec_state\.encrypted' CoreBluetooth.inc 'security recovery must verify actual link encryption'
+require 'security-timeout' CoreBluetooth.inc 'stuck security must expose a concrete timeout error'
+require 'disconnect\(timedOutHandle, BLE_ERR_REM_USER_CONN_TERM\)' CoreBluetooth.inc 'stuck security must disconnect for a clean retry'
+require 'bluetooth_security_elapsed_ms' CorePortal.inc 'portal status must expose security wait duration'
+require 'bluetooth_security_elapsed_ms.*초' PortalPage.h 'portal must render the current security wait duration'
 require 'stack deinit refused' CoreBluetooth.inc 'BLE shutdown timeout must refuse unsafe stack deinit'
 python3 - <<'PY_BLE_SHUTDOWN'
 from pathlib import Path
