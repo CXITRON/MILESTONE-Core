@@ -14,6 +14,20 @@ constexpr uint32_t NOW_ART_TRACK_SETTLE_MS = 1400UL;
 constexpr uint32_t NOW_ART_RETRY_MS = 5UL * 60UL * 1000UL;
 constexpr uint32_t NOW_ART_REQUEST_SPACING_MS = 1200UL;
 constexpr size_t NOW_ART_MAX_JPEG_BYTES = 220UL * 1024UL;
+constexpr size_t NOW_ART_MAX_LOOKUP_BYTES = 48UL * 1024UL;
+constexpr uint32_t NOW_ART_WORKER_STACK_BYTES = 14UL * 1024UL;
+constexpr uint32_t NOW_ART_RTC_MAGIC = 0x4E415254UL;  // "NART"
+
+enum class NowArtworkWorkerResult : uint8_t {
+  NONE,
+  READY,
+  NETWORK,
+  LOOKUP_HTTP,
+  LOOKUP_TOO_LARGE,
+  NO_MATCH,
+  DOWNLOAD,
+  DECODE,
+};
 
 struct NowArtworkCacheSlot {
   uint64_t key = 0;
@@ -35,8 +49,13 @@ uint32_t nowArtworkUseCounter = 0;
 volatile bool nowArtworkWorkerReady = false;
 volatile bool nowArtworkWorkerSuccess = false;
 volatile bool nowArtworkWorkerRunning = false;
+volatile NowArtworkWorkerResult nowArtworkWorkerResult = NowArtworkWorkerResult::NONE;
+volatile uint32_t nowArtworkWorkerStackFreeBytes = 0;
+RTC_DATA_ATTR uint32_t nowArtworkRtcMagic = 0;
+RTC_DATA_ATTR uint8_t nowArtworkRtcStage = 0;
 uint64_t nowArtworkWorkerKey = 0;
 String nowArtworkState = "idle";
+String nowArtworkInterruptedStage;
 char nowArtworkWorkerTitle[192] = {};
 char nowArtworkWorkerArtist[192] = {};
 char nowArtworkWorkerAlbum[192] = {};
@@ -75,18 +94,63 @@ String nowArtworkUrlEncode(const char *text) {
   return encoded;
 }
 
-bool nowArtworkFindReleaseGroup(const String &xml, String &mbid) {
-  int pos = xml.indexOf("<release-group id=\"");
-  if (pos < 0) return false;
-  pos += 19;
-  const int end = xml.indexOf('"', pos);
-  if (end - pos != 36) return false;
-  mbid = xml.substring(pos, end);
-  for (size_t i = 0; i < mbid.length(); ++i) {
-    const char c = mbid[i];
-    if (!(isxdigit(static_cast<unsigned char>(c)) || c == '-')) return false;
+bool nowArtworkReadReleaseGroup(HTTPClient &http, String &mbid, bool &complete) {
+  static constexpr char marker[] = "<release-group id=\"";
+  WiFiClient *stream = http.getStreamPtr();
+  const int announced = http.getSize();
+  complete = false;
+  if (!stream || announced > static_cast<int>(NOW_ART_MAX_LOOKUP_BYTES)) return false;
+  size_t total = 0;
+  size_t matched = 0;
+  size_t uuidLength = 0;
+  bool collecting = false;
+  char uuid[37] = {};
+  uint8_t chunk[256];
+  uint32_t lastDataMs = millis();
+  while (total < NOW_ART_MAX_LOOKUP_BYTES &&
+         (announced < 0 || total < static_cast<size_t>(announced))) {
+    const size_t available = stream->available();
+    if (!available) {
+      if (!http.connected()) break;
+      if (elapsed(millis(), lastDataMs, 6000UL)) return false;
+      delay(1);
+      continue;
+    }
+    const size_t take = min(available, min(sizeof(chunk), NOW_ART_MAX_LOOKUP_BYTES - total));
+    const int received = stream->readBytes(chunk, take);
+    if (received <= 0) return false;
+    lastDataMs = millis();
+    total += static_cast<size_t>(received);
+    for (int i = 0; i < received; ++i) {
+      const char c = static_cast<char>(chunk[i]);
+      if (collecting) {
+        if (uuidLength < 36 && (isxdigit(static_cast<unsigned char>(c)) || c == '-')) {
+          uuid[uuidLength++] = c;
+          continue;
+        }
+        if (uuidLength == 36 && c == '"') {
+          uuid[36] = '\0';
+          mbid = uuid;
+          complete = true;
+          return true;
+        }
+        collecting = false;
+        uuidLength = 0;
+        matched = 0;
+      }
+      if (c == marker[matched]) {
+        if (++matched == sizeof(marker) - 1U) {
+          collecting = true;
+          uuidLength = 0;
+          matched = 0;
+        }
+      } else {
+        matched = c == marker[0] ? 1U : 0U;
+      }
+    }
   }
-  return true;
+  complete = announced >= 0 ? total == static_cast<size_t>(announced) : !http.connected();
+  return false;
 }
 
 bool nowArtworkReadJpeg(const String &url, uint8_t *&jpeg, size_t &jpegSize) {
@@ -101,7 +165,7 @@ bool nowArtworkReadJpeg(const String &url, uint8_t *&jpeg, size_t &jpegSize) {
   http.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
   http.setRedirectLimit(4);
   if (!http.begin(client, url)) return false;
-  http.addHeader("User-Agent", "MILESTONE-Core/2.2.0 (https://github.com/CXITRON/MILESTONE-Core)");
+  http.addHeader("User-Agent", "MILESTONE-Core/2.2.2 (https://github.com/CXITRON/MILESTONE-Core)");
   const int response = http.GET();
   if (response != HTTP_CODE_OK) {
     http.end();
@@ -193,6 +257,9 @@ bool nowArtworkDecodeJpeg(uint8_t *jpeg, size_t jpegSize) {
 
 void nowArtworkWorker(void *) {
   bool success = false;
+  NowArtworkWorkerResult result = NowArtworkWorkerResult::NETWORK;
+  nowArtworkRtcMagic = NOW_ART_RTC_MAGIC;
+  nowArtworkRtcStage = 1;
   String query = nowArtworkWorkerAlbum[0]
       ? "https://musicbrainz.org/ws/2/release-group/?fmt=xml&limit=3&query=release%3A%22"
       : "https://musicbrainz.org/ws/2/recording/?fmt=xml&limit=3&query=recording%3A%22";
@@ -208,29 +275,43 @@ void nowArtworkWorker(void *) {
   http.setConnectTimeout(5000);
   http.setTimeout(6000);
   if (http.begin(client, query)) {
-    http.addHeader("User-Agent", "MILESTONE-Core/2.2.0 (https://github.com/CXITRON/MILESTONE-Core)");
+    http.addHeader("User-Agent", "MILESTONE-Core/2.2.2 (https://github.com/CXITRON/MILESTONE-Core)");
     const int response = http.GET();
-    if (response == HTTP_CODE_OK && http.getSize() <= 48 * 1024) {
-      const String xml = http.getString();
+    if (response == HTTP_CODE_OK) {
+      const int lookupSize = http.getSize();
       String mbid;
-      if (nowArtworkFindReleaseGroup(xml, mbid)) {
+      bool lookupComplete = false;
+      if (nowArtworkReadReleaseGroup(http, mbid, lookupComplete)) {
         http.end();
+        nowArtworkRtcStage = 2;
         uint8_t *jpeg = nullptr;
         size_t jpegSize = 0;
         if (nowArtworkReadJpeg("https://coverartarchive.org/release-group/" + mbid + "/front-250",
                               jpeg, jpegSize)) {
+          nowArtworkRtcStage = 3;
           success = nowArtworkDecodeJpeg(jpeg, jpegSize);
+          result = success ? NowArtworkWorkerResult::READY : NowArtworkWorkerResult::DECODE;
           heap_caps_free(jpeg);
-        }
+        } else result = NowArtworkWorkerResult::DOWNLOAD;
       } else {
         http.end();
+        result = lookupComplete ? NowArtworkWorkerResult::NO_MATCH
+                                : (lookupSize > static_cast<int>(NOW_ART_MAX_LOOKUP_BYTES)
+                                       ? NowArtworkWorkerResult::LOOKUP_TOO_LARGE
+                                       : NowArtworkWorkerResult::NETWORK);
       }
     } else {
       http.end();
+      result = response > 0 ? NowArtworkWorkerResult::LOOKUP_HTTP
+                            : NowArtworkWorkerResult::NETWORK;
     }
   }
+  const uint32_t stackFreeBytes = uxTaskGetStackHighWaterMark(nullptr);
+  nowArtworkRtcStage = 0;
   portENTER_CRITICAL(&nowArtworkMux);
   nowArtworkWorkerSuccess = success;
+  nowArtworkWorkerResult = result;
+  nowArtworkWorkerStackFreeBytes = stackFreeBytes;
   nowArtworkWorkerReady = true;
   nowArtworkWorkerRunning = false;
   portEXIT_CRITICAL(&nowArtworkMux);
@@ -253,9 +334,13 @@ int nowArtworkFindCache(uint64_t key) {
 void nowArtworkAcceptWorkerResult() {
   bool ready;
   bool success;
+  NowArtworkWorkerResult result;
+  uint32_t stackFreeBytes;
   portENTER_CRITICAL(&nowArtworkMux);
   ready = nowArtworkWorkerReady;
   success = nowArtworkWorkerSuccess;
+  result = nowArtworkWorkerResult;
+  stackFreeBytes = nowArtworkWorkerStackFreeBytes;
   nowArtworkWorkerReady = false;
   portEXIT_CRITICAL(&nowArtworkMux);
   if (!ready) return;
@@ -264,7 +349,16 @@ void nowArtworkAcceptWorkerResult() {
     return;
   }
   if (!success || !nowArtworkCacheBytes) {
-    nowArtworkState = "not-found";
+    switch (result) {
+      case NowArtworkWorkerResult::NO_MATCH: nowArtworkState = "no-match"; break;
+      case NowArtworkWorkerResult::LOOKUP_HTTP: nowArtworkState = "lookup-http"; break;
+      case NowArtworkWorkerResult::LOOKUP_TOO_LARGE: nowArtworkState = "lookup-large"; break;
+      case NowArtworkWorkerResult::DOWNLOAD: nowArtworkState = "download-failed"; break;
+      case NowArtworkWorkerResult::DECODE: nowArtworkState = "decode-failed"; break;
+      default: nowArtworkState = "network-failed"; break;
+    }
+    logLine(String("NOW artwork failed: ") + nowArtworkState +
+            " stack_free=" + String(stackFreeBytes));
     nowArtworkRetryAtMs = millis() + NOW_ART_RETRY_MS;
     return;
   }
@@ -352,7 +446,8 @@ void processNowArtwork() {
   nowArtworkWorkerRunning = true;
   nowArtworkState = "lookup";
   nowArtworkNextRequestMs = millis() + NOW_ART_REQUEST_SPACING_MS;
-  if (xTaskCreate(nowArtworkWorker, "now-artwork", 10240, nullptr, 1, nullptr) != pdPASS) {
+  if (xTaskCreate(nowArtworkWorker, "now-artwork", NOW_ART_WORKER_STACK_BYTES,
+                  nullptr, 1, nullptr) != pdPASS) {
     nowArtworkWorkerRunning = false;
     nowArtworkState = "task-failed";
     nowArtworkRetryAtMs = millis() + NOW_ART_RETRY_MS;
@@ -375,3 +470,16 @@ const uint8_t *nowArtworkLargeBitmap() {
 }
 
 const char *nowArtworkStatus() { return nowArtworkState.c_str(); }
+const char *nowArtworkInterruptedStageName() { return nowArtworkInterruptedStage.c_str(); }
+
+void consumeNowArtworkResetBreadcrumb() {
+  const uint8_t interruptedStage = nowArtworkRtcMagic == NOW_ART_RTC_MAGIC ? nowArtworkRtcStage : 0;
+  nowArtworkRtcMagic = NOW_ART_RTC_MAGIC;
+  nowArtworkRtcStage = 0;
+  if (!interruptedStage || esp_reset_reason() == ESP_RST_POWERON) return;
+  nowArtworkInterruptedStage = interruptedStage == 1 ? "lookup"
+      : interruptedStage == 2 ? "download"
+      : interruptedStage == 3 ? "decode" : "unknown";
+  logLine(String("previous reset interrupted NOW artwork stage=") +
+          nowArtworkInterruptedStage + " reset=" + resetReasonName(esp_reset_reason()));
+}

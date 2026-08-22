@@ -6,3 +6,5 @@ bool nowArtworkAvailable() { return false; }
 const uint8_t *nowArtworkSmallBitmap() { return nullptr; }
 const uint8_t *nowArtworkLargeBitmap() { return nullptr; }
 const char *nowArtworkStatus() { return "unsupported"; }
+const char *nowArtworkInterruptedStageName() { return ""; }
+void consumeNowArtworkResetBreadcrumb() {}

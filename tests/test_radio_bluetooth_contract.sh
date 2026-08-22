@@ -18,7 +18,7 @@ reject() {
   fi
 }
 
-require 'FIRMWARE_VERSION\[\] = "2\.2\.1"' MILESTONE_Core.ino 'firmware version is not 2.2.1'
+require 'FIRMWARE_VERSION\[\] = "2\.2\.2"' MILESTONE_Core.ino 'firmware version is not 2.2.2'
 require 'CONFIG_VERSION = 10' MILESTONE_Core.ino 'configuration schema is not 10'
 require 'bool fixedApSecurity = false;' MILESTONE_Core.ino 'fixed AP security must default off'
 require 'String fixedApPassword;' MILESTONE_Core.ino 'fixed AP password setting missing'
@@ -108,6 +108,18 @@ require 'AMS_TRACK_ALBUM' CoreBluetooth.inc 'album layout needs AMS album metada
 require 'MILESTONE_NOW_ARTWORK_RUNTIME_V1' CoreArtwork.inc 'NOW artwork runtime marker missing'
 require 'xTaskCreate\(nowArtworkWorker' CoreArtwork.inc 'artwork lookup must stay off the cooperative main loop'
 require 'NOW_ART_TRACK_SETTLE_MS' CoreArtwork.inc 'rapid track changes need a settle/debounce window'
+require 'NOW_ART_MAX_LOOKUP_BYTES = 48UL \* 1024UL' CoreArtwork.inc 'MusicBrainz response must have a hard streamed byte limit'
+require 'nowArtworkReadReleaseGroup\(HTTPClient &http' CoreArtwork.inc 'MusicBrainz XML must be parsed as a bounded stream'
+reject 'const String xml = http\.getString\(\)' CoreArtwork.inc 'MusicBrainz XML must not be copied into an unbounded internal-heap String'
+require 'NOW_ART_WORKER_STACK_BYTES = 14UL \* 1024UL' CoreArtwork.inc 'artwork worker needs explicit TLS/JPEG stack headroom'
+require 'uxTaskGetStackHighWaterMark' CoreArtwork.inc 'artwork task stack headroom must be observable'
+require 'network-failed' CoreArtwork.inc 'artwork network failure must not be mislabeled as not-found'
+require 'no-match' CoreArtwork.inc 'a real MusicBrainz miss needs a distinct state'
+require 'consumeNowArtworkResetBreadcrumb\(\)' CoreRuntime.inc 'boot must report an artwork-stage reset breadcrumb'
+require 'artwork_interrupted_stage' CorePortal.inc 'portal must expose interrupted artwork stage'
+require 'THERMAL_WARNING_C = MILESTONE_HAS_NOW_VIEW \? 75\.0f : 70\.0f' MILESTONE_Core.ino 'NOW thermal warning policy missing'
+require 'THERMAL_THROTTLE_C = MILESTONE_HAS_NOW_VIEW \? 85\.0f : 80\.0f' MILESTONE_Core.ino 'NOW thermal throttle policy missing'
+require 'THERMAL_CRITICAL_C = MILESTONE_HAS_NOW_VIEW \? 95\.0f : 90\.0f' MILESTONE_Core.ino 'NOW thermal protection policy missing'
 require 'NOW_ART_CACHE_SLOTS = 6' CoreArtwork.inc 'recent artwork cache is missing'
 require 'MusicBrainz|musicbrainz\.org' CoreArtwork.inc 'direct MusicBrainz lookup missing'
 require 'coverartarchive\.org' CoreArtwork.inc 'direct Cover Art Archive lookup missing'

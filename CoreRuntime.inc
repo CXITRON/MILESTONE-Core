@@ -1071,6 +1071,7 @@ void setupFirmware() {
   if (!diagnosticsPrefsReady) logLine("diagnostics NVS namespace could not be opened");
   initializeDiagnosticStorage();
   recordDiagnostic(MilestoneDiagnostics::Event::BOOT, static_cast<int16_t>(esp_reset_reason()), 0, true);
+  consumeNowArtworkResetBreadcrumb();
   diagnosticBootValidated = false;
   diagnosticBootValidationPending = true;
   diagnosticBootValidationStartedMs = millis();

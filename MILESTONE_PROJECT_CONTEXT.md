@@ -1,6 +1,6 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v2.2.1
+> Current baseline: MILESTONE Core v2.2.2
 > Hardware: Waveshare ESP32-S3-Zero + SH1107 128×128 OLED
 > Repository: `CXITRON/MILESTONE-Core`
 
@@ -89,7 +89,7 @@ The `*.inc` runtime files are intentionally included into the sketch as one tran
 Firmware and persistent schema versions are separate concepts.
 
 ```cpp
-FIRMWARE_VERSION = "2.2.1"
+FIRMWARE_VERSION = "2.2.2"
 CONFIG_VERSION = 10
 ```
 
@@ -164,6 +164,8 @@ v2.1.1 hardens NOW firmware operations after a v2.0.7 CORE PANIC was observed du
 v2.2.0 adds five persistent NOW layouts and restores AMS album metadata only for layouts that need it. Artwork layouts query MusicBrainz directly, prefer album + artist matching, fetch a Cover Art Archive release-group thumbnail, decode JPEG inside the NOW image, and create 60×60/88×88 one-bit bitmaps. A 1.4-second latest-track debounce and six-entry PSRAM cache absorb rapid skipping. Artwork HTTPS runs in a bounded background task, is serialized against firmware HTTPS, and remains optional: lookup, allocation, download, or decode failure leaves AMS text and playback progress operational.
 
 v2.2.1 hardens the NOW pairing/encryption transition. The runtime no longer depends on receiving one GAP encryption-change event: it checks the live NimBLE connection descriptor immediately after security starts and every 250ms, so an already encrypted bonded reconnect or a missed completion event can still advance to AMS discovery. A session that remains unencrypted for 15 seconds is terminated and returned to advertising for a clean retry instead of remaining on `SECURING` indefinitely. The portal status API exposes the current security wait duration for diagnosis.
+
+v2.2.2 hardens NOW artwork lookup after intermittent resets were reported near failed cover requests. MusicBrainz XML is scanned from a bounded 48KiB stream instead of being copied into an internal-heap `String`, the worker has an explicit 14KiB stack with high-water logging, and lookup/network/download/decode failures have distinct states. An RTC breadcrumb preserves whether an abnormal reset interrupted lookup, download, or decode and exposes that stage through the NOW portal API after reboot. NOW's internal-die thermal policy is raised to 75/85/95°C for warning/throttle/protection while CORE and MEDIA retain 70/80/90°C; thermal protection still does not intentionally reboot the device.
 
 Do not split the OTA transaction merely because the function is long. Its sequential structure encodes safety assumptions.
 

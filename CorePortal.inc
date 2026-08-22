@@ -650,7 +650,9 @@ void handleGetNowConfig() {
   String json = "{\"layout\":" + String(static_cast<uint8_t>(config.nowLayout));
   json += ",\"layout_name\":\"" + jsonEscape(nowLayoutName(config.nowLayout)) + "\"";
   json += ",\"artwork_available\":" + String(nowArtworkAvailable() ? "true" : "false");
-  json += ",\"artwork_status\":\"" + jsonEscape(nowArtworkStatus()) + "\"}";
+  json += ",\"artwork_status\":\"" + jsonEscape(nowArtworkStatus()) + "\"";
+  json += ",\"artwork_interrupted_stage\":\"" +
+          jsonEscape(nowArtworkInterruptedStageName()) + "\"}";
   sendJson(200, json);
 }
 

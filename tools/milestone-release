@@ -54,9 +54,9 @@ Options:
 
 Examples:
   cd /run/media/citron/T7/Documents/Dev/MILESTONE_Core
-  milestone-release local 2.2.1 "Recover stuck NOW Bluetooth security sessions"
+  milestone-release local 2.2.2 "Harden NOW artwork and thermal policy"
 
-  cd /tmp && milestone-release taildrop 2.2.1 "Recover stuck NOW Bluetooth security sessions"
+  cd /tmp && milestone-release taildrop 2.2.2 "Harden NOW artwork and thermal policy"
 USAGE
 }
 

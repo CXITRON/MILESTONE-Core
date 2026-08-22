@@ -76,7 +76,7 @@ SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 
 namespace Milestone {
 
-constexpr char FIRMWARE_VERSION[] = "2.2.1";
+constexpr char FIRMWARE_VERSION[] = "2.2.2";
 constexpr char FIRMWARE_PROFILE[] = MILESTONE_FIRMWARE_PROFILE;
 constexpr char FIRMWARE_PROFILE_LABEL[] = MILESTONE_FIRMWARE_PROFILE_LABEL;
 constexpr char FIRMWARE_PROFILE_MARKER[] = MILESTONE_PROFILE_MARKER;
@@ -170,12 +170,15 @@ constexpr uint32_t UPDATE_MIN_LARGEST_BLOCK = 32768;
 constexpr uint32_t ALLOWED_NTP_PERIODS[] = {0, 3600, 10800, 21600, 43200, 86400};
 constexpr uint32_t ALLOWED_DDAY_PERIODS[] = {0, 60, 600, 1800, 3600};
 constexpr uint32_t ALLOWED_RETRY_PERIODS[] = {60, 300, 900, 1800};
-constexpr float THERMAL_WARNING_C = 70.0f;
-constexpr float THERMAL_WARNING_CLEAR_C = 65.0f;
-constexpr float THERMAL_THROTTLE_C = 80.0f;
-constexpr float THERMAL_CRITICAL_C = 90.0f;
-constexpr float THERMAL_THROTTLE_RECOVERY_C = 75.0f;
-constexpr float THERMAL_SAFE_RECOVERY_C = 70.0f;
+// NOW performs short BLE + Wi-Fi/TLS bursts and reports the ESP32-S3's internal
+// die temperature, not ambient temperature. Keep CORE/MEDIA policy unchanged,
+// while giving NOW 5 C more headroom at each active threshold.
+constexpr float THERMAL_WARNING_C = MILESTONE_HAS_NOW_VIEW ? 75.0f : 70.0f;
+constexpr float THERMAL_WARNING_CLEAR_C = MILESTONE_HAS_NOW_VIEW ? 70.0f : 65.0f;
+constexpr float THERMAL_THROTTLE_C = MILESTONE_HAS_NOW_VIEW ? 85.0f : 80.0f;
+constexpr float THERMAL_CRITICAL_C = MILESTONE_HAS_NOW_VIEW ? 95.0f : 90.0f;
+constexpr float THERMAL_THROTTLE_RECOVERY_C = MILESTONE_HAS_NOW_VIEW ? 80.0f : 75.0f;
+constexpr float THERMAL_SAFE_RECOVERY_C = MILESTONE_HAS_NOW_VIEW ? 75.0f : 70.0f;
 constexpr float TEMPERATURE_HIGH_RANGE_ENTER_C = 85.0f;
 constexpr float TEMPERATURE_HIGH_RANGE_EXIT_C = 65.0f;
 constexpr uint32_t THERMAL_THROTTLE_CPU_MHZ = 80;
