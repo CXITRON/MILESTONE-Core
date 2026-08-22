@@ -15,6 +15,7 @@ constexpr uint8_t MEDIA_INDEX_VERSION = 1;
 constexpr size_t MEDIA_FS_RESERVE_BYTES = 16U * 1024U;
 constexpr size_t MEDIA_FRAME_RECORD_MAX_BYTES =
     MilestoneMedia::FRAME_HEADER_BYTES + MilestoneMedia::FRAME_BYTES + 32U;
+constexpr uint32_t MEDIA_PLAYBACK_RECOVERY_MS = 5000UL;
 constexpr char MEDIA_DIRECTORY[] = "/media";
 constexpr char MEDIA_INDEX_A[] = "/media/index.a";
 constexpr char MEDIA_INDEX_B[] = "/media/index.b";
@@ -84,6 +85,9 @@ uint32_t mediaPlaybackNextFrameMs = 0;
 bool mediaPlaybackFrameReady = false;
 bool mediaPlaybackFinished = false;
 bool mediaPlaybackFailed = false;
+bool mediaPlaybackRotationPending = false;
+bool mediaPlaybackLoopBoundary = false;
+uint32_t mediaPlaybackRecoveryMs = 0;
 
 File mediaUploadFile;
 bool mediaUploadActive = false;
@@ -167,6 +171,15 @@ bool mediaHasEnabledItems() {
     if ((mediaCatalog.entries[i].flags & MEDIA_ENTRY_ENABLED) != 0) return true;
   }
   return false;
+}
+
+size_t mediaEnabledItemCount() {
+  if (!mediaStorageReady) return 0;
+  size_t count = 0;
+  for (uint8_t i = 0; i < mediaCatalog.count; ++i) {
+    if ((mediaCatalog.entries[i].flags & MEDIA_ENTRY_ENABLED) != 0) ++count;
+  }
+  return count;
 }
 
 int findMediaEntry(uint32_t id) {
@@ -358,24 +371,61 @@ void closeMediaPlayback() {
   mediaPlaybackFrameReady = false;
   mediaPlaybackFinished = false;
   mediaPlaybackFailed = false;
+  mediaPlaybackRotationPending = false;
+  mediaPlaybackLoopBoundary = false;
+  mediaPlaybackRecoveryMs = 0;
 }
 
-bool readMediaFrameRecord(bool firstFrame, uint16_t &delayMs) {
-  if (!mediaPlaybackFile || !mediaFrameBuffer || !mediaFrameRecordBuffer) return false;
-  if (mediaPlaybackFile.available() < static_cast<int>(MilestoneMedia::FRAME_HEADER_BYTES)) return false;
+bool readMediaFrameRecord(bool firstFrame, uint16_t &delayMs,
+                          MilestoneMedia::Error *decodeError = nullptr) {
+  if (decodeError) *decodeError = MilestoneMedia::Error::NONE;
+  if (!mediaPlaybackFile || !mediaFrameBuffer || !mediaFrameRecordBuffer) {
+    if (decodeError) *decodeError = MilestoneMedia::Error::NULL_ARGUMENT;
+    return false;
+  }
+  if (mediaPlaybackFile.available() < static_cast<int>(MilestoneMedia::FRAME_HEADER_BYTES)) {
+    if (decodeError) *decodeError = MilestoneMedia::Error::FRAME_HEADER;
+    return false;
+  }
   if (mediaPlaybackFile.read(mediaFrameRecordBuffer, MilestoneMedia::FRAME_HEADER_BYTES) !=
-      MilestoneMedia::FRAME_HEADER_BYTES) return false;
+      MilestoneMedia::FRAME_HEADER_BYTES) {
+    if (decodeError) *decodeError = MilestoneMedia::Error::FRAME_HEADER;
+    return false;
+  }
   const uint16_t dataSize = MilestoneMedia::readLe16(mediaFrameRecordBuffer + 3);
   if (dataSize > MilestoneMedia::FRAME_BYTES + 32U ||
-      mediaPlaybackFile.available() < static_cast<int>(dataSize)) return false;
+      mediaPlaybackFile.available() < static_cast<int>(dataSize)) {
+    if (decodeError) *decodeError = MilestoneMedia::Error::FRAME_SIZE;
+    return false;
+  }
   if (mediaPlaybackFile.read(mediaFrameRecordBuffer + MilestoneMedia::FRAME_HEADER_BYTES, dataSize) != dataSize) {
+    if (decodeError) *decodeError = MilestoneMedia::Error::FRAME_SIZE;
     return false;
   }
   size_t consumed = 0;
-  MilestoneMedia::Error error;
-  return MilestoneMedia::decodeFrame(mediaFrameRecordBuffer,
+  MilestoneMedia::Error error = MilestoneMedia::Error::NONE;
+  const bool decoded = MilestoneMedia::decodeFrame(mediaFrameRecordBuffer,
       MilestoneMedia::FRAME_HEADER_BYTES + dataSize, firstFrame, mediaFrameBuffer,
       delayMs, consumed, &error) && consumed == MilestoneMedia::FRAME_HEADER_BYTES + dataSize;
+  if (!decoded && decodeError) {
+    *decodeError = error == MilestoneMedia::Error::NONE
+                     ? MilestoneMedia::Error::PAYLOAD_SIZE : error;
+  }
+  return decoded;
+}
+
+void markMediaPlaybackFailure(MilestoneMedia::Error error) {
+  if (mediaPlaybackFailed) return;
+  mediaPlaybackFailed = true;
+  mediaPlaybackRecoveryMs = millis() + MEDIA_PLAYBACK_RECOVERY_MS;
+  const uint32_t id = mediaPlaybackCatalogIndex < mediaCatalog.count
+                        ? mediaCatalog.entries[mediaPlaybackCatalogIndex].id : 0;
+  logLine(String("stored media playback failed: id=") + String(id) +
+          " frame=" + String(mediaPlaybackFrameIndex) +
+          " error=" + MilestoneMedia::errorName(error));
+  recordDiagnostic(MilestoneDiagnostics::Event::MEDIA_FAILED,
+                   static_cast<int16_t>(MilestoneDiagnostics::MediaFailure::PLAYBACK),
+                   static_cast<int32_t>(id & 0x7FFFFFFFUL), false);
 }
 
 bool beginMediaPlayback(uint8_t catalogIndex) {
@@ -427,6 +477,7 @@ bool selectNextMediaItem() {
   }
   closeMediaPlayback();
   mediaPlaybackFailed = true;
+  mediaPlaybackRecoveryMs = millis() + MEDIA_PLAYBACK_RECOVERY_MS;
   return false;
 }
 
@@ -444,16 +495,21 @@ bool advanceMediaFrameIfDue(uint32_t now) {
       mediaPlaybackFinished = true;
       return false;
     }
+    if (mediaPlaybackRotationPending && mediaEnabledItemCount() > 1U) {
+      mediaPlaybackLoopBoundary = true;
+      return false;
+    }
     if (!mediaPlaybackFile.seek(MilestoneMedia::HEADER_BYTES)) {
-      mediaPlaybackFailed = true;
+      markMediaPlaybackFailure(MilestoneMedia::Error::FRAME_HEADER);
       return false;
     }
     mediaPlaybackFrameIndex = 0;
     memset(mediaFrameBuffer, 0, MilestoneMedia::FRAME_BYTES);
   }
   uint16_t delayMs = 0;
-  if (!readMediaFrameRecord(mediaPlaybackFrameIndex == 0, delayMs)) {
-    mediaPlaybackFailed = true;
+  MilestoneMedia::Error decodeError = MilestoneMedia::Error::NONE;
+  if (!readMediaFrameRecord(mediaPlaybackFrameIndex == 0, delayMs, &decodeError)) {
+    markMediaPlaybackFailure(decodeError);
     return false;
   }
   ++mediaPlaybackFrameIndex;

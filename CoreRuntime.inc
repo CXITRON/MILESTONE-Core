@@ -661,14 +661,37 @@ void advanceView(bool persist) {
 void processCycle() {
   if (thermalSafeMode || bootSplashActive() || portalActive || resetConfirmation || buttonRawPressed ||
       buttonStablePressed || displaySleeping || firmwareUpdateBusy() || updatePromptVisible) return;
+#if MILESTONE_HAS_MEDIA
   if ((!MILESTONE_HAS_GENERAL_VIEWS || config.mode == TopMode::CUSTOM_MEDIA) &&
       currentView == View::CUSTOM_MEDIA) {
-    if (elapsed(millis(), lastCycleMs, static_cast<uint32_t>(currentMediaDisplaySeconds()) * 1000UL)) {
+    const uint32_t now = millis();
+    if (mediaPlaybackFailed) {
+      if (deadlineReached(now, mediaPlaybackRecoveryMs)) {
+        selectNextMediaItem();
+        lastCycleMs = now;
+      }
+      return;
+    }
+    const size_t enabledItems = mediaEnabledItemCount();
+    if (enabledItems <= 1U) {
+      mediaPlaybackRotationPending = false;
+      mediaPlaybackLoopBoundary = false;
+      return;
+    }
+    if (elapsed(now, lastCycleMs,
+                static_cast<uint32_t>(currentMediaDisplaySeconds()) * 1000UL)) {
+      mediaPlaybackRotationPending = true;
+    }
+    const bool animated = mediaPlaybackHeader.frameCount > 1;
+    if (MilestoneMedia::shouldRotateStoredItem(
+            enabledItems, mediaPlaybackRotationPending, animated,
+            mediaPlaybackFinished, mediaPlaybackLoopBoundary)) {
       selectNextMediaItem();
-      lastCycleMs = millis();
+      lastCycleMs = now;
     }
     return;
   }
+#endif
   if (config.mode != TopMode::SELECTED_CYCLE || config.cycleIntervalSec == 0) return;
   const uint8_t interval = currentView == View::CUSTOM_MEDIA
                              ? currentMediaDisplaySeconds() : config.cycleIntervalSec;

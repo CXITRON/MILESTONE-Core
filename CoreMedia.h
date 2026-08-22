@@ -69,6 +69,13 @@ bool decodeFrame(const uint8_t *data, size_t size, bool firstFrame,
 bool validateFile(const uint8_t *data, size_t size, Header *header = nullptr,
                   Error *error = nullptr);
 
+// Stored animations must never be replaced halfway through a frame cycle.
+// A single enabled item is left to its own loop/finished state instead of
+// being needlessly reopened at the configured catalog display interval.
+bool shouldRotateStoredItem(size_t enabledItemCount, bool displayDeadlineReached,
+                            bool animated, bool playbackFinished,
+                            bool loopBoundaryReached);
+
 const char *errorName(Error error);
 
 }  // namespace MilestoneMedia

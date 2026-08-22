@@ -1,6 +1,6 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v2.0.7
+> Current baseline: MILESTONE Core v2.0.8
 > Hardware: Waveshare ESP32-S3-Zero + SH1107 128×128 OLED
 > Repository: `CXITRON/MILESTONE-Core`
 
@@ -89,7 +89,7 @@ The `*.inc` runtime files are intentionally included into the sketch as one tran
 Firmware and persistent schema versions are separate concepts.
 
 ```cpp
-FIRMWARE_VERSION = "2.0.7"
+FIRMWARE_VERSION = "2.0.8"
 CONFIG_VERSION = 10
 ```
 
@@ -154,6 +154,8 @@ v2.0.5 fixes setup-AP idle-time evaluation after a portal request. `processNetwo
 v2.0.6 follows the v2.0.5 hardware verification result: the first four `github.com/releases/latest/download` TCP/TLS connections could be refused while an unchanged fifth attempt succeeded, and extending the NimBLE teardown pause did not change that pattern. The release check now uses one direct `api.github.com` response and validates its `tag_name` plus the selected CORE/MEDIA BIN asset's API URL, `size`, and GitHub-provided `sha256:` digest. Installation uses that verified asset API URL to redirect once to the CDN, retries only pre-Flash transport failures, and retains the existing streamed size/SHA-256/Update transaction. Legacy profile manifests continue to be published for older firmware.
 
 v2.0.7 makes setup-portal firmware actions own their network prerequisites. A manual update or CORE↔MEDIA check queues the exact requested profile before reconnecting the preferred saved Wi-Fi, then continues through DHCP stabilization, bounded NTP, and Release API verification without a second browser action. Profile switching remains a physical-confirmation transaction: the OLED shows source and target identities and only a short BOOT press authorizes installation; the web install endpoint rejects cross-profile confirmation. The boot splash and ready-to-reboot screen show both semantic version and CORE/MEDIA identity. Same-profile web installation retains a target-qualified two-step confirmation, and an already confirmed install can reconnect/NTP automatically without asking the user to confirm again.
+
+v2.0.8 hardens stored MEDIA playback. The catalog display interval is a minimum hold time rather than permission to reopen an animation mid-frame-cycle: one enabled item remains in its own MSM1 loop, while multiple items switch only after the active animation reaches a finished or loop boundary. Mid-playback LittleFS/frame-decode failures are recorded with the item ID and retried after a bounded five-second backoff instead of leaving an unexplained frozen frame or tight reopen loop. The main portal status also exposes the current hardware reset reason and numeric code so a real brownout, watchdog, panic, external reset, or ordinary power-on can be distinguished from a catalog restart.
 
 Do not split the OTA transaction merely because the function is long. Its sequential structure encodes safety assumptions.
 
@@ -329,7 +331,7 @@ cd /tmp && milestone-release --dry-run taildrop X.Y.Z "short release note"
 
 Use `--yes` only when an unattended final publish is explicitly desired.
 
-## 8. Areas intentionally not refactored through v2.0.7
+## 8. Areas intentionally not refactored through v2.0.8
 
 The following broad refactors were deliberately rejected because their regression risk exceeded their immediate value:
 

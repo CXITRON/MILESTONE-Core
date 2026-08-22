@@ -278,13 +278,13 @@ PC의 현재 프로젝트를 직접 수정한 경우에는 **MILESTONE_Core 프�
 
 ```bash
 cd /run/media/citron/T7/Documents/Dev/MILESTONE_Core
-milestone-release local 2.0.7 "Reconnect portal OTA and confirm profile switches with BOOT"
+milestone-release local 2.0.8 "Stabilize stored MEDIA playback and reset diagnosis"
 ```
 
 Tailscale Taildrop으로 `MILESTONE_Core_1.10.6.zip`을 받은 경우에는 교체 대상 프로젝트 디렉터리 밖의 정상적으로 존재하는 디렉터리에서 실행합니다. 기존 프로젝트가 교체될 때 현재 셸 경로가 사라지는 문제를 방지하기 위해 `/tmp`로 이동하는 방식을 권장합니다.
 
 ```bash
-cd /tmp && milestone-release taildrop 2.0.7 "Reconnect portal OTA and confirm profile switches with BOOT"
+cd /tmp && milestone-release taildrop 2.0.8 "Stabilize stored MEDIA playback and reset diagnosis"
 ```
 
 Taildrop 모드는 ZIP을 라이브 프로젝트에 바로 덮어쓰지 않습니다. 별도 staging 디렉터리에서 구조·버전·Git 상태를 검사하고 테스트와 ESP32 릴리즈 빌드까지 성공한 뒤에만 프로젝트를 교체합니다. GitHub 게시 전 실패하면 기존 프로젝트를 자동 복구합니다. `--dry-run`은 테스트/빌드까지만 수행하고 로컬 프로젝트·Git·GitHub를 변경하지 않습니다. `--yes`를 사용하지 않는 기본 동작은 최종 게시 직전에 한 번 확인합니다.
@@ -301,10 +301,10 @@ Taildrop 모드는 ZIP을 라이브 프로젝트에 바로 덮어쓰지 않습�
 
 ```bash
 chmod +x tools/make-release.sh
-./tools/make-release.sh 2.0.7 "Reconnect portal OTA and confirm profile switches with BOOT"
+./tools/make-release.sh 2.0.8 "Stabilize stored MEDIA playback and reset diagnosis"
 ```
 
-기본 설명을 사용하려면 `./tools/make-release.sh 2.0.7`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
+기본 설명을 사용하려면 `./tools/make-release.sh 2.0.8`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
 
 다음 네 파일이 `release/`에 생성됩니다.
 
@@ -326,11 +326,11 @@ release/MILESTONE_Media.json
 일반적인 게시에는 위의 `milestone-release`를 사용합니다. 아래 수동 절차는 자동화 도구를 복구하거나 디버깅해야 할 때만 참고합니다.
 
 1. 저장소의 `Releases`에서 `Draft a new release`를 선택합니다.
-2. 버전과 동일한 태그를 만듭니다. 예: `v2.0.7`
-3. Release 제목을 `MILESTONE Core v2.0.7`로 지정합니다.
+2. 버전과 동일한 태그를 만듭니다. 예: `v2.0.8`
+3. Release 제목을 `MILESTONE Core v2.0.8`로 지정합니다.
 4. CORE/MEDIA의 BIN과 JSON 네 파일을 모두 첨부합니다.
 5. Pre-release가 아닌 최신 정식 Release로 게시합니다.
-6. 이전 버전이 설치된 기기에서 2.0.7 CORE/MEDIA 업데이트, Wi-Fi OFF 상태의 자동 재연결, 21초 NTP 상한, OLED 대상 표시와 BOOT 물리 확인, 기존 설정·Wi-Fi·롤백 보호·진단 이력·커스텀 미디어 보존을 검증합니다.
+6. 이전 버전이 설치된 기기에서 2.0.8 CORE/MEDIA OTA, 저장 영상의 단일 항목 연속 루프·다중 항목 경계 전환, 프레임 실패 백오프, reset reason 표시와 기존 설정·Wi-Fi·롤백 보호·진단 이력·커스텀 미디어 보존을 검증합니다.
 
 네 파일의 이름은 모든 Release에서 정확히 같아야 합니다. 초안이나 Pre-release는 `latest` 업데이트 대상으로 사용하지 않습니다.
 
@@ -382,6 +382,21 @@ Taildrop ZIP의 `milestone-release`가 현재 설치본보다 새로우면, 게�
 - STREAM_MODE에서 일반 백그라운드 기능을 격리하고 PSRAM 240프레임 링버퍼·X/Y dirty-tile OLED 갱신·적응형 출력 주기·프레임 드롭·80°C 스트림 상한으로 영상 수신/표시에 집중
 - 라이브 송신은 96프레임 초기 충전 후 큐 64프레임 이하에서 최대 8프레임씩 144프레임 이상으로 보충하며 ESP32가 소스 시간축과 OLED 출력 클록을 분리해 관리
 - 비차단 3초 부팅 로고와 우상단 NTP `T`·업데이트 `U` 상태 아이콘
+
+## v2.0.8 업데이트 안내
+
+v2.0.8은 MEDIA에서 저장 영상을 재생할 때 `항목 표시시간`이 영상 길이보다 짧으면 프레임 도중 파일을 다시 열어 처음부터 재생하던 문제를 수정합니다. 해당 값은 `항목 최소 표시시간`으로 동작하며, 활성 항목이 하나면 카탈로그 타이머로 다시 열지 않고 MSM1 자체 반복을 계속합니다. 여러 항목은 최소 시간이 지나도 현재 영상의 마지막 프레임 또는 반복 경계까지 재생한 뒤 다음 항목으로 전환합니다.
+
+재생 중 LittleFS 읽기·프레임 헤더·RAW/XOR-RLE 해석 실패는 항목 ID와 현재 프레임을 시리얼 및 진단 이력에 남기고 5초 뒤 제한적으로 복구를 시도합니다. 설정 포털의 시스템 상태에는 최근 부팅 원인과 숫자 코드를 항상 표시해, 단순 영상 재시작과 실제 `BROWNOUT`, `TASK WDT`, `PANIC`, 외부 리셋을 구분할 수 있습니다.
+
+- 활성 저장 미디어가 하나일 때 표시 타이머에 의한 불필요한 파일 재오픈 제거
+- 여러 저장 영상은 최소 표시시간 이후 완전한 재생/루프 경계에서만 전환
+- 중간 프레임 읽기·디코드 실패의 항목 ID·프레임·오류 기록
+- 실패한 저장형 재생의 5초 백오프 복구로 빠른 재오픈 반복 방지
+- 설정 포털 상단에 최근 ESP32 reset reason 이름과 숫자 코드 표시
+- 설정 스키마 10, 저장 Wi-Fi, 미디어 파일과 CORE 화면 설정 유지
+
+정식 버전: `2.0.8`
 
 ## v2.0.7 업데이트 안내
 

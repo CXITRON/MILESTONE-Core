@@ -178,6 +178,16 @@ void testHeaderAndFrameBounds() {
   EXPECT_EQ(error, MilestoneMedia::Error::FRAME_SIZE);
 }
 
+void testStoredPlaybackRotationBoundary() {
+  using MilestoneMedia::shouldRotateStoredItem;
+  EXPECT_FALSE(shouldRotateStoredItem(1, true, true, false, true));
+  EXPECT_FALSE(shouldRotateStoredItem(2, false, true, false, true));
+  EXPECT_FALSE(shouldRotateStoredItem(2, true, true, false, false));
+  EXPECT_TRUE(shouldRotateStoredItem(2, true, true, false, true));
+  EXPECT_TRUE(shouldRotateStoredItem(2, true, true, true, false));
+  EXPECT_TRUE(shouldRotateStoredItem(2, true, false, false, false));
+}
+
 }  // namespace
 
 int main() {
@@ -187,6 +197,7 @@ int main() {
   testInvalidDeltaRejected();
   testMetadataRules();
   testHeaderAndFrameBounds();
+  testStoredPlaybackRotationBoundary();
   if (failures) return EXIT_FAILURE;
   std::cout << "All MILESTONE media tests passed\n";
   return EXIT_SUCCESS;

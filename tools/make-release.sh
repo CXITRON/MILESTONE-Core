@@ -3,7 +3,7 @@ set -euo pipefail
 
 if (( $# < 1 || $# > 2 )); then
   echo "사용법: $0 VERSION [NOTES]" >&2
-  echo "예: $0 2.0.7 'Reconnect portal OTA and confirm profile switches with BOOT'" >&2
+  echo "예: $0 2.0.8 'Stabilize stored MEDIA playback and reset diagnosis'" >&2
   exit 2
 fi
 

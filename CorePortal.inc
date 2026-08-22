@@ -24,6 +24,8 @@ void handleStatus() {
   json += "\"bluetooth_supported\":" + String(MILESTONE_HAS_BLUETOOTH ? "true" : "false") + ",";
   json += "\"general_views_supported\":" + String(MILESTONE_HAS_GENERAL_VIEWS ? "true" : "false") + ",";
   json += "\"state\":\"" + String(runtimeStateName(runtimeState)) + "\",";
+  json += "\"reset_reason\":\"" + String(resetReasonName(esp_reset_reason())) + "\",";
+  json += "\"reset_reason_code\":" + String(static_cast<int>(esp_reset_reason())) + ",";
   json += "\"wifi\":\"" + jsonEscape(wifiLabel) + "\",";
   json += "\"ip\":\"" + jsonEscape(ip) + "\",";
   char uptimeText[24];

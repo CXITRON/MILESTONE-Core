@@ -221,6 +221,14 @@ bool validateFile(const uint8_t *data, size_t size, Header *headerOut, Error *er
   return true;
 }
 
+bool shouldRotateStoredItem(size_t enabledItemCount, bool displayDeadlineReached,
+                            bool animated, bool playbackFinished,
+                            bool loopBoundaryReached) {
+  if (enabledItemCount <= 1U || !displayDeadlineReached) return false;
+  if (!animated) return true;
+  return playbackFinished || loopBoundaryReached;
+}
+
 const char *errorName(Error error) {
   switch (error) {
     case Error::NONE: return "none";
