@@ -3,7 +3,7 @@ set -euo pipefail
 
 if (( $# < 1 || $# > 2 )); then
   echo "사용법: $0 VERSION [NOTES]" >&2
-  echo "예: $0 2.2.7 'Harden NOW artwork network lookup'" >&2
+  echo "예: $0 2.2.8 'Improve NOW artwork matching fallbacks'" >&2
   exit 2
 fi
 

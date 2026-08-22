@@ -654,7 +654,9 @@ void handleGetNowConfig() {
   json += ",\"artwork_available\":" + String(nowArtworkAvailable() ? "true" : "false");
   json += ",\"artwork_status\":\"" + jsonEscape(nowArtworkStatus()) + "\"";
   json += ",\"artwork_http_code\":" + String(nowArtworkLastHttpCode());
+  json += ",\"artwork_download_code\":" + String(nowArtworkLastDownloadCode());
   json += ",\"artwork_attempts\":" + String(nowArtworkLastAttempts());
+  json += ",\"artwork_candidates\":" + String(nowArtworkLastCandidates());
   json += ",\"artwork_interrupted_stage\":\"" +
           jsonEscape(nowArtworkInterruptedStageName()) + "\"}";
   sendJson(200, json);

@@ -124,6 +124,24 @@ void testMusicBrainzReleaseGroupParser() {
   const char *invalid = "<release-group-list id=\"70664047-2545-4e46-b75f-4556f2a7b83e\">";
   EXPECT_FALSE(MilestoneCoreLogic::feedMusicBrainzReleaseGroupParser(
       parser, reinterpret_cast<const uint8_t *>(invalid), std::strlen(invalid), mbid));
+
+  MilestoneCoreLogic::resetMusicBrainzReleaseGroupParser(parser);
+  const char *multiple =
+      "<release-group ext:score='100' id='70664047-2545-4e46-b75f-4556f2a7b83e'>"
+      "</release-group><release-group type='Album' "
+      "id='7678ff0a-9446-4d5f-b46e-56c84fc68654'></release-group>";
+  const char *expected[] = {"70664047-2545-4e46-b75f-4556f2a7b83e",
+                            "7678ff0a-9446-4d5f-b46e-56c84fc68654"};
+  size_t found = 0;
+  for (size_t i = 0; i < std::strlen(multiple); ++i) {
+    if (MilestoneCoreLogic::feedMusicBrainzReleaseGroupParser(
+            parser, reinterpret_cast<const uint8_t *>(multiple + i), 1, mbid)) {
+      EXPECT_TRUE(found < 2U);
+      if (found < 2U) EXPECT_TRUE(std::strcmp(mbid, expected[found]) == 0);
+      ++found;
+    }
+  }
+  EXPECT_EQ(found, 2U);
 }
 
 }  // namespace
