@@ -114,6 +114,16 @@ void testLateBluetoothEncryptionFailure() {
       true, 25, timeoutStatus));
 }
 
+void testTransientHttpRetry() {
+  EXPECT_TRUE(MilestoneCoreLogic::shouldRetryTransientHttpFailure(-1, false, 1, 5));
+  EXPECT_TRUE(MilestoneCoreLogic::shouldRetryTransientHttpFailure(429, true, 2, 5));
+  EXPECT_TRUE(MilestoneCoreLogic::shouldRetryTransientHttpFailure(503, true, 4, 5));
+  EXPECT_TRUE(MilestoneCoreLogic::shouldRetryTransientHttpFailure(200, false, 1, 5));
+  EXPECT_FALSE(MilestoneCoreLogic::shouldRetryTransientHttpFailure(200, true, 1, 5));
+  EXPECT_FALSE(MilestoneCoreLogic::shouldRetryTransientHttpFailure(404, true, 1, 5));
+  EXPECT_FALSE(MilestoneCoreLogic::shouldRetryTransientHttpFailure(-1, false, 5, 5));
+}
+
 void testMusicBrainzReleaseGroupParser() {
   MilestoneCoreLogic::MusicBrainzReleaseGroupParser parser;
   MilestoneCoreLogic::resetMusicBrainzReleaseGroupParser(parser);
@@ -190,6 +200,7 @@ int main() {
   testJsonEscapes();
   testUtf8HangulDetection();
   testLateBluetoothEncryptionFailure();
+  testTransientHttpRetry();
   testMusicBrainzReleaseGroupParser();
   testAppleArtworkUrlParser();
 

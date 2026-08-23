@@ -26,6 +26,8 @@ bool utf8ContainsHangul(const char *text);
 bool shouldIgnoreLateBluetoothEncryptionFailure(bool linkAlreadySecured,
                                                 int errorStatus,
                                                 int timeoutStatus);
+bool shouldRetryTransientHttpFailure(int responseCode, bool responseComplete,
+                                     uint8_t attempt, uint8_t maximumAttempts);
 
 struct MusicBrainzReleaseGroupParser {
   char tag[256];

@@ -13,9 +13,10 @@ constexpr uint8_t NOW_ART_CACHE_SLOTS = 6;
 constexpr uint32_t NOW_ART_TRACK_SETTLE_MS = 1400UL;
 constexpr uint32_t NOW_ART_RETRY_MS = 5UL * 60UL * 1000UL;
 constexpr uint32_t NOW_ART_REQUEST_SPACING_MS = 1200UL;
-constexpr uint8_t NOW_ART_LOOKUP_ATTEMPTS = 2;
+constexpr uint8_t NOW_ART_LOOKUP_ATTEMPTS = 5;
 constexpr uint8_t NOW_ART_MAX_CANDIDATES = 3;
 constexpr uint32_t NOW_ART_LOOKUP_RETRY_MS = 1200UL;
+constexpr uint32_t NOW_ART_TRANSPORT_BACKOFF_MS = 1500UL;
 constexpr uint32_t NOW_ART_LOOKUP_CONNECT_TIMEOUT_MS = 8000UL;
 constexpr uint32_t NOW_ART_LOOKUP_TIMEOUT_MS = 15000UL;
 constexpr size_t NOW_ART_MAX_JPEG_BYTES = 220UL * 1024UL;
@@ -130,6 +131,16 @@ String nowArtworkLuceneEscape(const char *text) {
 bool nowArtworkWorkerCancelled(uint32_t generation) {
   return generation != nowArtworkGeneration || thermalWarning || thermalThrottled ||
          thermalSafeMode || temperatureSensorFault;
+}
+
+bool nowArtworkWaitForTransportRetry(uint32_t generation, uint8_t completedAttempt) {
+  const uint32_t startedMs = millis();
+  const uint32_t waitMs = NOW_ART_TRANSPORT_BACKOFF_MS * completedAttempt;
+  while (!elapsed(millis(), startedMs, waitMs)) {
+    if (nowArtworkWorkerCancelled(generation)) return false;
+    delay(20);
+  }
+  return true;
 }
 
 uint8_t nowArtworkReadReleaseGroups(HTTPClient &http, String *mbids, uint8_t capacity,
@@ -373,30 +384,42 @@ void nowArtworkWorker(void *) {
   nowArtworkRtcStage = 1;
   {
     String appleArtworkUrl;
-    {
-      String appleTerm = String(nowArtworkWorkerTitle) + " " + nowArtworkWorkerArtist;
-      if (nowArtworkWorkerAlbum[0]) appleTerm += String(" ") + nowArtworkWorkerAlbum;
-      String appleQuery = "https://itunes.apple.com/search?country=KR&media=music&entity=song&limit=1&term=";
-      appleQuery += nowArtworkUrlEncode(appleTerm.c_str());
-      NetworkClientSecure appleClient;
-      appleClient.setCACert(MILESTONE_UPDATE_ROOT_CA);
-      appleClient.setHandshakeTimeout(8);
-      HTTPClient appleHttp;
-      appleHttp.setConnectTimeout(NOW_ART_LOOKUP_CONNECT_TIMEOUT_MS);
-      appleHttp.setTimeout(NOW_ART_LOOKUP_TIMEOUT_MS);
-      appleHttp.setAcceptEncoding("identity");
-      if (appleHttp.begin(appleClient, appleQuery)) {
-        appleHttp.addHeader("User-Agent", String("MILESTONE-Now/") + FIRMWARE_VERSION);
-        const int response = appleHttp.GET();
-        finalAppleHttpCode = static_cast<int16_t>(response);
-        if (response == HTTP_CODE_OK) {
-          bool appleComplete = false;
-          bool appleTimedOut = false;
-          nowArtworkReadAppleUrl(
-              appleHttp, appleArtworkUrl, appleComplete, appleTimedOut, generation);
+    String appleTerm = String(nowArtworkWorkerTitle) + " " + nowArtworkWorkerArtist;
+    if (nowArtworkWorkerAlbum[0]) appleTerm += String(" ") + nowArtworkWorkerAlbum;
+    String appleQuery = "https://itunes.apple.com/search?country=KR&media=music&entity=song&limit=1&term=";
+    appleQuery += nowArtworkUrlEncode(appleTerm.c_str());
+    for (uint8_t attempt = 1; attempt <= NOW_ART_LOOKUP_ATTEMPTS; ++attempt) {
+      if (nowArtworkWorkerCancelled(generation)) break;
+      bool responseComplete = false;
+      {
+        NetworkClientSecure appleClient;
+        appleClient.setCACert(MILESTONE_UPDATE_ROOT_CA);
+        appleClient.setHandshakeTimeout(8);
+        HTTPClient appleHttp;
+        appleHttp.setConnectTimeout(NOW_ART_LOOKUP_CONNECT_TIMEOUT_MS);
+        appleHttp.setTimeout(NOW_ART_LOOKUP_TIMEOUT_MS);
+        appleHttp.setAcceptEncoding("identity");
+        if (appleHttp.begin(appleClient, appleQuery)) {
+          appleHttp.addHeader("User-Agent", String("MILESTONE-Now/") + FIRMWARE_VERSION);
+          const int response = appleHttp.GET();
+          finalAppleHttpCode = static_cast<int16_t>(response);
+          if (response == HTTP_CODE_OK) {
+            bool appleTimedOut = false;
+            nowArtworkReadAppleUrl(
+                appleHttp, appleArtworkUrl, responseComplete, appleTimedOut, generation);
+            if (appleTimedOut) responseComplete = false;
+          }
+          appleHttp.end();
+        } else {
+          finalAppleHttpCode = HTTPC_ERROR_CONNECTION_REFUSED;
         }
-        appleHttp.end();
       }
+      if (appleArtworkUrl.length() || nowArtworkWorkerCancelled(generation) ||
+          !MilestoneCoreLogic::shouldRetryTransientHttpFailure(
+              finalAppleHttpCode, responseComplete, attempt, NOW_ART_LOOKUP_ATTEMPTS)) break;
+      logLine(String("NOW Apple artwork retry after code=") + finalAppleHttpCode +
+              " attempt=" + attempt);
+      if (!nowArtworkWaitForTransportRetry(generation, attempt)) break;
     }
     // The Apple search TLS client is now destroyed before the image TLS starts.
     if (appleArtworkUrl.length() && !nowArtworkWorkerCancelled(generation)) {
@@ -441,6 +464,7 @@ void nowArtworkWorker(void *) {
       http.setTimeout(NOW_ART_LOOKUP_TIMEOUT_MS);
       http.setAcceptEncoding("identity");
       if (!http.begin(client, queries[queryIndex])) {
+        finalHttpCode = HTTPC_ERROR_CONNECTION_REFUSED;
         result = NowArtworkWorkerResult::NETWORK;
         retryable = true;
       } else {
@@ -486,6 +510,7 @@ void nowArtworkWorker(void *) {
           nowArtworkWorkerCancelled(generation)) break;
       logLine(String("NOW artwork lookup retry after code=") + finalHttpCode +
               " attempt=" + attempt);
+      if (!nowArtworkWaitForTransportRetry(generation, attempt)) break;
       }
       // Only a real zero-result response may advance from album matching to
       // title + artist matching. Transport and server failures keep their diagnosis.

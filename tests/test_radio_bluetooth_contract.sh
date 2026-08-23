@@ -18,7 +18,7 @@ reject() {
   fi
 }
 
-require 'FIRMWARE_VERSION\[\] = "2\.2\.13"' MILESTONE_Core.ino 'firmware version is not 2.2.13'
+require 'FIRMWARE_VERSION\[\] = "2\.2\.14"' MILESTONE_Core.ino 'firmware version is not 2.2.14'
 require 'CONFIG_VERSION = 10' MILESTONE_Core.ino 'configuration schema is not 10'
 require 'bool fixedApSecurity = false;' MILESTONE_Core.ino 'fixed AP security must default off'
 require 'String fixedApPassword;' MILESTONE_Core.ino 'fixed AP password setting missing'
@@ -154,9 +154,13 @@ reject 'appleHttp\.getString\(\)' CoreArtwork.inc 'Apple Search JSON must not be
 require 'Apple search TLS client is now destroyed before the image TLS starts' CoreArtwork.inc 'Apple search and image TLS lifetimes overlap internal RAM'
 require 'if \(!success\) \{' CoreArtwork.inc 'MusicBrainz query allocations must remain lazy after Apple success'
 require 'artwork_apple_code' CorePortal.inc 'NOW portal must expose Apple Search diagnosis separately'
-require 'NOW_ART_LOOKUP_ATTEMPTS = 2' CoreArtwork.inc 'transient MusicBrainz failures need one bounded retry'
+require 'NOW_ART_LOOKUP_ATTEMPTS = 5' CoreArtwork.inc 'transient artwork transport failures need the observed fourth-attempt recovery window'
 require 'NOW_ART_LOOKUP_TIMEOUT_MS = 15000UL' CoreArtwork.inc 'MusicBrainz read timeout is shorter than observed service latency'
 require 'NOW_ART_LOOKUP_RETRY_MS = 1200UL' CoreArtwork.inc 'MusicBrainz retry must respect per-client request spacing'
+require 'NOW_ART_TRANSPORT_BACKOFF_MS = 1500UL' CoreArtwork.inc 'artwork transport retries need bounded increasing backoff'
+require 'NOW Apple artwork retry after code=' CoreArtwork.inc 'Apple Search transport retries must remain observable'
+require 'shouldRetryTransientHttpFailure' CoreArtwork.inc 'artwork retries must distinguish transient transport failures from definitive responses'
+require 'nowArtworkWaitForTransportRetry' CoreArtwork.inc 'artwork retries must be cancellable during backoff'
 require '!elapsed\(millis\(\), lastLookupRequestMs, NOW_ART_LOOKUP_RETRY_MS\)' CoreArtwork.inc 'album-to-recording fallback is not rate paced'
 require 'nowArtworkReadReleaseGroups\(HTTPClient &http' CoreArtwork.inc 'MusicBrainz XML candidates must be parsed as a bounded stream'
 require 'feedMusicBrainzReleaseGroupParser' CoreArtwork.inc 'MusicBrainz release-group parsing must ignore XML attribute order'

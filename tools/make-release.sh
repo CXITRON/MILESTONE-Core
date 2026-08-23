@@ -3,7 +3,7 @@ set -euo pipefail
 
 if (( $# < 1 || $# > 2 )); then
   echo "사용법: $0 VERSION [NOTES]" >&2
-  echo "예: $0 2.2.13 'Ignore delayed BLE timeout after encryption'" >&2
+  echo "예: $0 2.2.14 'Retry transient NOW artwork transports'" >&2
   exit 2
 fi
 

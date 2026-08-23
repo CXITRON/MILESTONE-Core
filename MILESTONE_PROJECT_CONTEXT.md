@@ -1,6 +1,6 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v2.2.13
+> Current baseline: MILESTONE Core v2.2.14
 > Hardware: Waveshare ESP32-S3-Zero + SH1107 128×128 OLED
 > Repository: `CXITRON/MILESTONE-Core`
 
@@ -89,7 +89,7 @@ The `*.inc` runtime files are intentionally included into the sketch as one tran
 Firmware and persistent schema versions are separate concepts.
 
 ```cpp
-FIRMWARE_VERSION = "2.2.13"
+FIRMWARE_VERSION = "2.2.14"
 CONFIG_VERSION = 10
 ```
 
@@ -188,6 +188,8 @@ v2.2.11 fixes a NOW-only automatic update-check deadlock. The update state machi
 v2.2.12 prioritizes the live AMS link while album-art Wi-Fi HTTPS is active. The requested BLE connection range changes from 100–200ms with latency 3 to 40–80ms with zero latency, and supervision timeout increases from six to twelve seconds, reducing radio-starvation disconnects during TLS handshakes. A live BLE peer also requires at least 80KiB free internal heap and a 32KiB largest block before artwork starts; otherwise optional artwork reports `low-memory` without risking the music session. GAP disconnect reason is retained in logs and the portal status API for hardware verification.
 
 v2.2.13 fixes a NOW reconnect race confirmed on physical hardware. NimBLE can report the live bonded link as encrypted and then deliver a delayed `BLE_HS_ETIMEOUT` for the redundant security procedure. The runtime now ignores only that timeout after encryption has already been confirmed, preserving AMS discovery; a timeout before confirmation and every other nonzero encryption status retain the existing disconnect-and-retry behavior.
+
+v2.2.14 hardens optional NOW artwork HTTPS after physical logs showed the local network refusing the first three fresh TLS transports while the fourth GitHub attempt succeeded. Apple Search and MusicBrainz now recreate their TLS/HTTP objects and retry transient negative transport results, HTTP 429/5xx, and incomplete HTTP 200 bodies up to five times with increasing bounded backoff. Definitive 4xx/no-match responses still stop immediately, Wi-Fi stays awake while the worker is active, and AMS playback remains independent of artwork success.
 
 Do not split the OTA transaction merely because the function is long. Its sequential structure encodes safety assumptions.
 

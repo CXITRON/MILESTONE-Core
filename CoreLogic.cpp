@@ -199,6 +199,13 @@ bool shouldIgnoreLateBluetoothEncryptionFailure(bool linkAlreadySecured,
   return linkAlreadySecured && errorStatus == timeoutStatus;
 }
 
+bool shouldRetryTransientHttpFailure(int responseCode, bool responseComplete,
+                                     uint8_t attempt, uint8_t maximumAttempts) {
+  if (attempt >= maximumAttempts) return false;
+  return responseCode < 0 || responseCode == 429 || responseCode >= 500 ||
+         (responseCode == 200 && !responseComplete);
+}
+
 void resetMusicBrainzReleaseGroupParser(MusicBrainzReleaseGroupParser &parser) {
   parser.tag[0] = '\0';
   parser.length = 0;
