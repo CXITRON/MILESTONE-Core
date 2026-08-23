@@ -406,6 +406,11 @@ bool nowArtworkReadAppleUrl(HTTPClient &http, String &url, bool &complete, bool 
 void nowArtworkWorker(void *) {
   const uint32_t generation = nowArtworkWorkerGeneration;
   const uint32_t workerStartedMs = nowArtworkWorkerStartedMs;
+  const esp_err_t wifiPriorityResult = esp_coex_preference_set(ESP_COEX_PREFER_WIFI);
+  if (wifiPriorityResult != ESP_OK) {
+    logLine(String("NOW artwork Wi-Fi coexistence priority failed: ") +
+            esp_err_to_name(wifiPriorityResult));
+  }
   bool success = false;
   NowArtworkWorkerResult result = NowArtworkWorkerResult::NETWORK;
   int16_t finalAppleHttpCode = 0;
@@ -599,6 +604,11 @@ void nowArtworkWorker(void *) {
   } else if (nowArtworkWorkerCancelled(generation)) {
     success = false;
     result = NowArtworkWorkerResult::CANCELLED;
+  }
+  const esp_err_t balanceResult = esp_coex_preference_set(ESP_COEX_PREFER_BALANCE);
+  if (balanceResult != ESP_OK) {
+    logLine(String("NOW artwork coexistence balance restore failed: ") +
+            esp_err_to_name(balanceResult));
   }
   const uint32_t stackFreeBytes = uxTaskGetStackHighWaterMark(nullptr);
   nowArtworkRtcStage = 0;

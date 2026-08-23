@@ -21,6 +21,7 @@
 #include <esp_timer.h>
 #include <esp_err.h>
 #include <esp_wifi.h>
+#include <esp_coexist.h>
 #include <esp_heap_caps.h>
 #include <time.h>
 #include "driver/temperature_sensor.h"
@@ -76,7 +77,7 @@ SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 
 namespace Milestone {
 
-constexpr char FIRMWARE_VERSION[] = "2.2.18";
+constexpr char FIRMWARE_VERSION[] = "2.2.19";
 constexpr char FIRMWARE_PROFILE[] = MILESTONE_FIRMWARE_PROFILE;
 constexpr char FIRMWARE_PROFILE_LABEL[] = MILESTONE_FIRMWARE_PROFILE_LABEL;
 constexpr char FIRMWARE_PROFILE_MARKER[] = MILESTONE_PROFILE_MARKER;
