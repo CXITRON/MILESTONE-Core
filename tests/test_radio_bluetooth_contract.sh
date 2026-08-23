@@ -18,7 +18,7 @@ reject() {
   fi
 }
 
-require 'FIRMWARE_VERSION\[\] = "2\.2\.15"' MILESTONE_Core.ino 'firmware version is not 2.2.15'
+require 'FIRMWARE_VERSION\[\] = "2\.2\.16"' MILESTONE_Core.ino 'firmware version is not 2.2.16'
 require 'CONFIG_VERSION = 10' MILESTONE_Core.ino 'configuration schema is not 10'
 require 'bool fixedApSecurity = false;' MILESTONE_Core.ino 'fixed AP security must default off'
 require 'String fixedApPassword;' MILESTONE_Core.ino 'fixed AP password setting missing'
@@ -163,6 +163,8 @@ require 'nowArtworkWorkerBudgetExpired' CoreArtwork.inc 'artwork provider retrie
 require 'NowArtworkWorkerResult::LOOKUP_TIMEOUT' CoreArtwork.inc 'artwork budget exhaustion must remain distinguishable from cancellation'
 require 'NOW artwork loaded elapsed_ms=' CoreArtwork.inc 'successful artwork latency must remain observable'
 require 'elapsed_ms=' CoreArtwork.inc 'failed artwork latency must remain observable'
+require 'nowArtworkReadJpegWithRetries' CoreArtwork.inc 'Apple and Cover Art image transports need bounded retry recovery'
+require 'NOW artwork download retry after code=' CoreArtwork.inc 'image transport retries must remain observable'
 require 'NOW Apple artwork retry after code=' CoreArtwork.inc 'Apple Search transport retries must remain observable'
 require 'shouldRetryTransientHttpFailure' CoreArtwork.inc 'artwork retries must distinguish transient transport failures from definitive responses'
 require 'nowArtworkWaitForTransportRetry' CoreArtwork.inc 'artwork retries must be cancellable during backoff'

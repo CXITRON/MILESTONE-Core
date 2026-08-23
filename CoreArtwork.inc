@@ -278,6 +278,27 @@ NowArtworkDownloadResult nowArtworkReadJpeg(const String &url, uint8_t *&jpeg, s
                               : NowArtworkDownloadResult::FAILED;
 }
 
+NowArtworkDownloadResult nowArtworkReadJpegWithRetries(
+    const String &url, uint8_t *&jpeg, size_t &jpegSize,
+    int16_t &httpCode, uint32_t generation) {
+  NowArtworkDownloadResult result = NowArtworkDownloadResult::FAILED;
+  for (uint8_t attempt = 1; attempt <= NOW_ART_LOOKUP_ATTEMPTS; ++attempt) {
+    result = nowArtworkReadJpeg(url, jpeg, jpegSize, httpCode, generation);
+    if (result == NowArtworkDownloadResult::READY ||
+        result == NowArtworkDownloadResult::NOT_FOUND ||
+        result == NowArtworkDownloadResult::CANCELLED) break;
+    if (!MilestoneCoreLogic::shouldRetryTransientHttpFailure(
+            httpCode, false, attempt, NOW_ART_LOOKUP_ATTEMPTS)) break;
+    logLine(String("NOW artwork download retry after code=") + httpCode +
+            " attempt=" + attempt);
+    if (!nowArtworkWaitForTransportRetry(generation, attempt)) {
+      result = NowArtworkDownloadResult::CANCELLED;
+      break;
+    }
+  }
+  return result;
+}
+
 void nowArtworkMakeBitmap(const uint16_t *rgb, uint16_t sourceW, uint16_t sourceH,
                           uint8_t *output, uint16_t targetW, uint16_t targetH) {
   memset(output, 0, ((targetW + 7U) / 8U) * targetH);
@@ -438,7 +459,7 @@ void nowArtworkWorker(void *) {
       nowArtworkRtcStage = 2;
       uint8_t *jpeg = nullptr;
       size_t jpegSize = 0;
-      const NowArtworkDownloadResult download = nowArtworkReadJpeg(
+      const NowArtworkDownloadResult download = nowArtworkReadJpegWithRetries(
           appleArtworkUrl, jpeg, jpegSize, finalDownloadCode, generation);
       if (download == NowArtworkDownloadResult::READY) {
         nowArtworkRtcStage = 3;
@@ -539,7 +560,7 @@ void nowArtworkWorker(void *) {
       uint8_t *jpeg = nullptr;
       size_t jpegSize = 0;
       int16_t downloadCode = 0;
-      const NowArtworkDownloadResult download = nowArtworkReadJpeg(
+      const NowArtworkDownloadResult download = nowArtworkReadJpegWithRetries(
           "https://coverartarchive.org/release-group/" + candidates[candidate] + "/front-250",
           jpeg, jpegSize, downloadCode, generation);
       finalDownloadCode = downloadCode;

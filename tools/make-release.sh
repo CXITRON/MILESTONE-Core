@@ -3,7 +3,7 @@ set -euo pipefail
 
 if (( $# < 1 || $# > 2 )); then
   echo "사용법: $0 VERSION [NOTES]" >&2
-  echo "예: $0 2.2.15 'Bound NOW artwork lookup latency'" >&2
+  echo "예: $0 2.2.16 'Retry transient NOW artwork downloads'" >&2
   exit 2
 fi
 
