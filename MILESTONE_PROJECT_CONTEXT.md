@@ -1,6 +1,6 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v2.2.17
+> Current baseline: MILESTONE Core v2.2.18
 > Hardware: Waveshare ESP32-S3-Zero + SH1107 128×128 OLED
 > Repository: `CXITRON/MILESTONE-Core`
 
@@ -89,7 +89,7 @@ The `*.inc` runtime files are intentionally included into the sketch as one tran
 Firmware and persistent schema versions are separate concepts.
 
 ```cpp
-FIRMWARE_VERSION = "2.2.17"
+FIRMWARE_VERSION = "2.2.18"
 CONFIG_VERSION = 10
 ```
 
@@ -196,6 +196,8 @@ v2.2.15 bounds that recovery against normal two-to-four-minute track lengths. On
 v2.2.16 applies the same bounded transient recovery to the actual Apple/CAA JPEG transfer. Hardware logs showed Apple Search reaching HTTP 200, followed by a first image connection failure and an unnecessary MusicBrainz fallback that consumed the 35-second budget. Negative transport results and incomplete HTTP 200 image bodies now recreate the TLS/HTTP objects and retry within the existing shared budget; a definitive 404 still advances immediately and decode failures are not retried as network failures.
 
 v2.2.17 prioritizes cover usefulness within ordinary two-to-four-minute tracks. A new track starts Wi-Fi association during the shortened 800ms metadata debounce, and the shared lookup/download budget is reduced from 35 seconds to 15 seconds with tighter connect/read limits and retry backoff. Diagnostics now distinguish worker time from total track-change-to-result latency. NOW also defers initial BLE advertising until the bounded first Wi-Fi/NTP attempt settles, preventing an immediate bonded iPhone security/connection-parameter transition from overlapping the first STA WPA handshake.
+
+v2.2.18 corrects the v2.2.17 hardware result where repeated Apple TLS transport failures consumed the entire 15-second worker budget before MusicBrainz could run. Apple remains the localized fast path but gets one bounded transport attempt; any failure immediately falls through to MusicBrainz/CAA. Artwork TLS handshakes are capped at three seconds, while the shared 15-second budget and download retry behavior remain intact.
 
 Do not split the OTA transaction merely because the function is long. Its sequential structure encodes safety assumptions.
 

@@ -14,12 +14,14 @@ constexpr uint32_t NOW_ART_TRACK_SETTLE_MS = 800UL;
 constexpr uint32_t NOW_ART_RETRY_MS = 5UL * 60UL * 1000UL;
 constexpr uint32_t NOW_ART_REQUEST_SPACING_MS = 1200UL;
 constexpr uint8_t NOW_ART_LOOKUP_ATTEMPTS = 5;
+constexpr uint8_t NOW_ART_APPLE_ATTEMPTS = 1;
 constexpr uint8_t NOW_ART_MAX_CANDIDATES = 3;
 constexpr uint32_t NOW_ART_LOOKUP_RETRY_MS = 1200UL;
 constexpr uint32_t NOW_ART_TRANSPORT_BACKOFF_MS = 250UL;
 constexpr uint32_t NOW_ART_WORKER_BUDGET_MS = 15000UL;
 constexpr uint32_t NOW_ART_LOOKUP_CONNECT_TIMEOUT_MS = 3500UL;
 constexpr uint32_t NOW_ART_LOOKUP_TIMEOUT_MS = 7000UL;
+constexpr uint32_t NOW_ART_TLS_HANDSHAKE_TIMEOUT_SEC = 3UL;
 constexpr size_t NOW_ART_MAX_JPEG_BYTES = 220UL * 1024UL;
 constexpr size_t NOW_ART_MAX_LOOKUP_BYTES = 48UL * 1024UL;
 constexpr size_t NOW_ART_BLE_MIN_FREE_HEAP = 80UL * 1024UL;
@@ -220,7 +222,7 @@ NowArtworkDownloadResult nowArtworkReadJpeg(const String &url, uint8_t *&jpeg, s
   httpCode = 0;
   NetworkClientSecure client;
   client.setCACert(MILESTONE_UPDATE_ROOT_CA);
-  client.setHandshakeTimeout(5);
+  client.setHandshakeTimeout(NOW_ART_TLS_HANDSHAKE_TIMEOUT_SEC);
   HTTPClient http;
   http.setConnectTimeout(5000);
   http.setTimeout(6000);
@@ -421,13 +423,16 @@ void nowArtworkWorker(void *) {
     if (nowArtworkWorkerAlbum[0]) appleTerm += String(" ") + nowArtworkWorkerAlbum;
     String appleQuery = "https://itunes.apple.com/search?country=KR&media=music&entity=song&limit=1&term=";
     appleQuery += nowArtworkUrlEncode(appleTerm.c_str());
-    for (uint8_t attempt = 1; attempt <= NOW_ART_LOOKUP_ATTEMPTS; ++attempt) {
+    // Apple is the fast localized primary source, not permission to consume
+    // the whole track budget. A transport failure falls through immediately
+    // to the independent MusicBrainz/CAA path.
+    for (uint8_t attempt = 1; attempt <= NOW_ART_APPLE_ATTEMPTS; ++attempt) {
       if (nowArtworkWorkerCancelled(generation)) break;
       bool responseComplete = false;
       {
         NetworkClientSecure appleClient;
         appleClient.setCACert(MILESTONE_UPDATE_ROOT_CA);
-        appleClient.setHandshakeTimeout(5);
+        appleClient.setHandshakeTimeout(NOW_ART_TLS_HANDSHAKE_TIMEOUT_SEC);
         HTTPClient appleHttp;
         appleHttp.setConnectTimeout(NOW_ART_LOOKUP_CONNECT_TIMEOUT_MS);
         appleHttp.setTimeout(NOW_ART_LOOKUP_TIMEOUT_MS);
@@ -449,7 +454,7 @@ void nowArtworkWorker(void *) {
       }
       if (appleArtworkUrl.length() || nowArtworkWorkerCancelled(generation) ||
           !MilestoneCoreLogic::shouldRetryTransientHttpFailure(
-              finalAppleHttpCode, responseComplete, attempt, NOW_ART_LOOKUP_ATTEMPTS)) break;
+              finalAppleHttpCode, responseComplete, attempt, NOW_ART_APPLE_ATTEMPTS)) break;
       logLine(String("NOW Apple artwork retry after code=") + finalAppleHttpCode +
               " attempt=" + attempt);
       if (!nowArtworkWaitForTransportRetry(generation, attempt)) break;
@@ -491,7 +496,7 @@ void nowArtworkWorker(void *) {
       bool retryable = false;
       NetworkClientSecure client;
       client.setCACert(MILESTONE_UPDATE_ROOT_CA);
-      client.setHandshakeTimeout(5);
+      client.setHandshakeTimeout(NOW_ART_TLS_HANDSHAKE_TIMEOUT_SEC);
       HTTPClient http;
       http.setConnectTimeout(NOW_ART_LOOKUP_CONNECT_TIMEOUT_MS);
       http.setTimeout(NOW_ART_LOOKUP_TIMEOUT_MS);

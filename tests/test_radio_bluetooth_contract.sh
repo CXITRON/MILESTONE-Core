@@ -18,7 +18,7 @@ reject() {
   fi
 }
 
-require 'FIRMWARE_VERSION\[\] = "2\.2\.17"' MILESTONE_Core.ino 'firmware version is not 2.2.17'
+require 'FIRMWARE_VERSION\[\] = "2\.2\.18"' MILESTONE_Core.ino 'firmware version is not 2.2.18'
 require 'CONFIG_VERSION = 10' MILESTONE_Core.ino 'configuration schema is not 10'
 require 'bool fixedApSecurity = false;' MILESTONE_Core.ino 'fixed AP security must default off'
 require 'String fixedApPassword;' MILESTONE_Core.ino 'fixed AP password setting missing'
@@ -155,6 +155,8 @@ require 'Apple search TLS client is now destroyed before the image TLS starts' C
 require 'if \(!success\) \{' CoreArtwork.inc 'MusicBrainz query allocations must remain lazy after Apple success'
 require 'artwork_apple_code' CorePortal.inc 'NOW portal must expose Apple Search diagnosis separately'
 require 'NOW_ART_LOOKUP_ATTEMPTS = 5' CoreArtwork.inc 'transient artwork transport failures need the observed fourth-attempt recovery window'
+require 'NOW_ART_APPLE_ATTEMPTS = 1' CoreArtwork.inc 'Apple transport failure must fall through before monopolizing the shared budget'
+require 'NOW_ART_TLS_HANDSHAKE_TIMEOUT_SEC = 3UL' CoreArtwork.inc 'artwork TLS handshake can overrun a short-track budget'
 require 'NOW_ART_LOOKUP_TIMEOUT_MS = 7000UL' CoreArtwork.inc 'NOW artwork read timeout must remain bounded for short tracks'
 require 'NOW_ART_LOOKUP_RETRY_MS = 1200UL' CoreArtwork.inc 'MusicBrainz retry must respect per-client request spacing'
 require 'NOW_ART_TRANSPORT_BACKOFF_MS = 250UL' CoreArtwork.inc 'artwork transport recovery starts too slowly for normal track lengths'
