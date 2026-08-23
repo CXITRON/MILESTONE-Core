@@ -54,9 +54,9 @@ Options:
 
 Examples:
   cd /run/media/citron/T7/Documents/Dev/MILESTONE_Core
-  milestone-release local 2.2.14 "Retry transient NOW artwork transports"
+  milestone-release local 2.2.15 "Bound NOW artwork lookup latency"
 
-  cd /tmp && milestone-release taildrop 2.2.14 "Retry transient NOW artwork transports"
+  cd /tmp && milestone-release taildrop 2.2.15 "Bound NOW artwork lookup latency"
 USAGE
 }
 

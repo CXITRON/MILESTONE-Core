@@ -18,7 +18,7 @@ reject() {
   fi
 }
 
-require 'FIRMWARE_VERSION\[\] = "2\.2\.14"' MILESTONE_Core.ino 'firmware version is not 2.2.14'
+require 'FIRMWARE_VERSION\[\] = "2\.2\.15"' MILESTONE_Core.ino 'firmware version is not 2.2.15'
 require 'CONFIG_VERSION = 10' MILESTONE_Core.ino 'configuration schema is not 10'
 require 'bool fixedApSecurity = false;' MILESTONE_Core.ino 'fixed AP security must default off'
 require 'String fixedApPassword;' MILESTONE_Core.ino 'fixed AP password setting missing'
@@ -157,7 +157,12 @@ require 'artwork_apple_code' CorePortal.inc 'NOW portal must expose Apple Search
 require 'NOW_ART_LOOKUP_ATTEMPTS = 5' CoreArtwork.inc 'transient artwork transport failures need the observed fourth-attempt recovery window'
 require 'NOW_ART_LOOKUP_TIMEOUT_MS = 15000UL' CoreArtwork.inc 'MusicBrainz read timeout is shorter than observed service latency'
 require 'NOW_ART_LOOKUP_RETRY_MS = 1200UL' CoreArtwork.inc 'MusicBrainz retry must respect per-client request spacing'
-require 'NOW_ART_TRANSPORT_BACKOFF_MS = 1500UL' CoreArtwork.inc 'artwork transport retries need bounded increasing backoff'
+require 'NOW_ART_TRANSPORT_BACKOFF_MS = 500UL' CoreArtwork.inc 'artwork transport recovery starts too slowly for normal track lengths'
+require 'NOW_ART_WORKER_BUDGET_MS = 35000UL' CoreArtwork.inc 'one track artwork lookup needs a shared wall-time budget'
+require 'nowArtworkWorkerBudgetExpired' CoreArtwork.inc 'artwork provider retries must share the worker budget'
+require 'NowArtworkWorkerResult::LOOKUP_TIMEOUT' CoreArtwork.inc 'artwork budget exhaustion must remain distinguishable from cancellation'
+require 'NOW artwork loaded elapsed_ms=' CoreArtwork.inc 'successful artwork latency must remain observable'
+require 'elapsed_ms=' CoreArtwork.inc 'failed artwork latency must remain observable'
 require 'NOW Apple artwork retry after code=' CoreArtwork.inc 'Apple Search transport retries must remain observable'
 require 'shouldRetryTransientHttpFailure' CoreArtwork.inc 'artwork retries must distinguish transient transport failures from definitive responses'
 require 'nowArtworkWaitForTransportRetry' CoreArtwork.inc 'artwork retries must be cancellable during backoff'

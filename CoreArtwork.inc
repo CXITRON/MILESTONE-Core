@@ -16,8 +16,9 @@ constexpr uint32_t NOW_ART_REQUEST_SPACING_MS = 1200UL;
 constexpr uint8_t NOW_ART_LOOKUP_ATTEMPTS = 5;
 constexpr uint8_t NOW_ART_MAX_CANDIDATES = 3;
 constexpr uint32_t NOW_ART_LOOKUP_RETRY_MS = 1200UL;
-constexpr uint32_t NOW_ART_TRANSPORT_BACKOFF_MS = 1500UL;
-constexpr uint32_t NOW_ART_LOOKUP_CONNECT_TIMEOUT_MS = 8000UL;
+constexpr uint32_t NOW_ART_TRANSPORT_BACKOFF_MS = 500UL;
+constexpr uint32_t NOW_ART_WORKER_BUDGET_MS = 35000UL;
+constexpr uint32_t NOW_ART_LOOKUP_CONNECT_TIMEOUT_MS = 5000UL;
 constexpr uint32_t NOW_ART_LOOKUP_TIMEOUT_MS = 15000UL;
 constexpr size_t NOW_ART_MAX_JPEG_BYTES = 220UL * 1024UL;
 constexpr size_t NOW_ART_MAX_LOOKUP_BYTES = 48UL * 1024UL;
@@ -67,11 +68,14 @@ volatile int16_t nowArtworkWorkerHttpCode = 0;
 volatile int16_t nowArtworkWorkerDownloadCode = 0;
 volatile uint8_t nowArtworkWorkerAttempts = 0;
 volatile uint8_t nowArtworkWorkerCandidates = 0;
+volatile uint32_t nowArtworkWorkerElapsedMs = 0;
 volatile uint32_t nowArtworkGeneration = 1;
 RTC_DATA_ATTR uint32_t nowArtworkRtcMagic = 0;
 RTC_DATA_ATTR uint8_t nowArtworkRtcStage = 0;
 uint64_t nowArtworkWorkerKey = 0;
 uint32_t nowArtworkWorkerGeneration = 0;
+uint32_t nowArtworkWorkerStartedMs = 0;
+uint32_t nowArtworkWorkerDeadlineMs = 0;
 String nowArtworkState = "idle";
 String nowArtworkInterruptedStage;
 char nowArtworkWorkerTitle[192] = {};
@@ -130,7 +134,14 @@ String nowArtworkLuceneEscape(const char *text) {
 
 bool nowArtworkWorkerCancelled(uint32_t generation) {
   return generation != nowArtworkGeneration || thermalWarning || thermalThrottled ||
-         thermalSafeMode || temperatureSensorFault;
+         thermalSafeMode || temperatureSensorFault ||
+         (nowArtworkWorkerDeadlineMs != 0 &&
+          deadlineReached(millis(), nowArtworkWorkerDeadlineMs));
+}
+
+bool nowArtworkWorkerBudgetExpired() {
+  return nowArtworkWorkerDeadlineMs != 0 &&
+         deadlineReached(millis(), nowArtworkWorkerDeadlineMs);
 }
 
 bool nowArtworkWaitForTransportRetry(uint32_t generation, uint8_t completedAttempt) {
@@ -371,6 +382,7 @@ bool nowArtworkReadAppleUrl(HTTPClient &http, String &url, bool &complete, bool 
 
 void nowArtworkWorker(void *) {
   const uint32_t generation = nowArtworkWorkerGeneration;
+  const uint32_t workerStartedMs = nowArtworkWorkerStartedMs;
   bool success = false;
   NowArtworkWorkerResult result = NowArtworkWorkerResult::NETWORK;
   int16_t finalAppleHttpCode = 0;
@@ -394,7 +406,7 @@ void nowArtworkWorker(void *) {
       {
         NetworkClientSecure appleClient;
         appleClient.setCACert(MILESTONE_UPDATE_ROOT_CA);
-        appleClient.setHandshakeTimeout(8);
+        appleClient.setHandshakeTimeout(5);
         HTTPClient appleHttp;
         appleHttp.setConnectTimeout(NOW_ART_LOOKUP_CONNECT_TIMEOUT_MS);
         appleHttp.setTimeout(NOW_ART_LOOKUP_TIMEOUT_MS);
@@ -458,7 +470,7 @@ void nowArtworkWorker(void *) {
       bool retryable = false;
       NetworkClientSecure client;
       client.setCACert(MILESTONE_UPDATE_ROOT_CA);
-      client.setHandshakeTimeout(8);
+      client.setHandshakeTimeout(5);
       HTTPClient http;
       http.setConnectTimeout(NOW_ART_LOOKUP_CONNECT_TIMEOUT_MS);
       http.setTimeout(NOW_ART_LOOKUP_TIMEOUT_MS);
@@ -555,7 +567,10 @@ void nowArtworkWorker(void *) {
                              : NowArtworkWorkerResult::DOWNLOAD;
     }
   }
-  if (nowArtworkWorkerCancelled(generation)) {
+  if (nowArtworkWorkerBudgetExpired()) {
+    success = false;
+    result = NowArtworkWorkerResult::LOOKUP_TIMEOUT;
+  } else if (nowArtworkWorkerCancelled(generation)) {
     success = false;
     result = NowArtworkWorkerResult::CANCELLED;
   }
@@ -570,6 +585,7 @@ void nowArtworkWorker(void *) {
   nowArtworkWorkerDownloadCode = finalDownloadCode;
   nowArtworkWorkerAttempts = attemptsUsed;
   nowArtworkWorkerCandidates = candidateCount;
+  nowArtworkWorkerElapsedMs = millis() - workerStartedMs;
   nowArtworkWorkerReady = true;
   nowArtworkWorkerRunning = false;
   portEXIT_CRITICAL(&nowArtworkMux);
@@ -599,6 +615,7 @@ void nowArtworkAcceptWorkerResult() {
   int16_t downloadCode;
   uint8_t attempts;
   uint8_t candidates;
+  uint32_t workerElapsedMs;
   portENTER_CRITICAL(&nowArtworkMux);
   ready = nowArtworkWorkerReady;
   success = nowArtworkWorkerSuccess;
@@ -609,6 +626,7 @@ void nowArtworkAcceptWorkerResult() {
   downloadCode = nowArtworkWorkerDownloadCode;
   attempts = nowArtworkWorkerAttempts;
   candidates = nowArtworkWorkerCandidates;
+  workerElapsedMs = nowArtworkWorkerElapsedMs;
   nowArtworkWorkerReady = false;
   portEXIT_CRITICAL(&nowArtworkMux);
   if (!ready) return;
@@ -634,6 +652,7 @@ void nowArtworkAcceptWorkerResult() {
             " apple_http=" + appleHttpCode + " http=" + httpCode +
             " attempts=" + attempts +
             " candidates=" + candidates + " download_http=" + downloadCode +
+            " elapsed_ms=" + String(workerElapsedMs) +
             " stack_free=" + String(stackFreeBytes));
     nowArtworkRetryAtMs = millis() + NOW_ART_RETRY_MS;
     return;
@@ -652,6 +671,10 @@ void nowArtworkAcceptWorkerResult() {
   nowArtworkCache[slot].valid = true;
   nowArtworkVisibleKey = nowArtworkWorkerKey;
   nowArtworkState = "ready";
+  logLine(String("NOW artwork loaded elapsed_ms=") + workerElapsedMs +
+          " apple_http=" + appleHttpCode + " http=" + httpCode +
+          " attempts=" + attempts + " candidates=" + candidates +
+          " download_http=" + downloadCode);
   wakeDisplay();
 }
 
@@ -746,12 +769,15 @@ void processNowArtwork() {
   strlcpy(nowArtworkWorkerAlbum, album.c_str(), sizeof(nowArtworkWorkerAlbum));
   nowArtworkWorkerKey = nowArtworkTrackKey;
   nowArtworkWorkerGeneration = nowArtworkGeneration;
+  nowArtworkWorkerStartedMs = millis();
+  nowArtworkWorkerDeadlineMs = nowArtworkWorkerStartedMs + NOW_ART_WORKER_BUDGET_MS;
   nowArtworkWorkerRunning = true;
   nowArtworkState = "lookup";
   nowArtworkNextRequestMs = millis() + NOW_ART_REQUEST_SPACING_MS;
   if (xTaskCreate(nowArtworkWorker, "now-artwork", NOW_ART_WORKER_STACK_BYTES,
                   nullptr, 1, nullptr) != pdPASS) {
     nowArtworkWorkerRunning = false;
+    nowArtworkWorkerDeadlineMs = 0;
     nowArtworkState = "task-failed";
     nowArtworkRetryAtMs = millis() + NOW_ART_RETRY_MS;
   }

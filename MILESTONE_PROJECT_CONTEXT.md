@@ -1,6 +1,6 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v2.2.14
+> Current baseline: MILESTONE Core v2.2.15
 > Hardware: Waveshare ESP32-S3-Zero + SH1107 128×128 OLED
 > Repository: `CXITRON/MILESTONE-Core`
 
@@ -89,7 +89,7 @@ The `*.inc` runtime files are intentionally included into the sketch as one tran
 Firmware and persistent schema versions are separate concepts.
 
 ```cpp
-FIRMWARE_VERSION = "2.2.14"
+FIRMWARE_VERSION = "2.2.15"
 CONFIG_VERSION = 10
 ```
 
@@ -190,6 +190,8 @@ v2.2.12 prioritizes the live AMS link while album-art Wi-Fi HTTPS is active. The
 v2.2.13 fixes a NOW reconnect race confirmed on physical hardware. NimBLE can report the live bonded link as encrypted and then deliver a delayed `BLE_HS_ETIMEOUT` for the redundant security procedure. The runtime now ignores only that timeout after encryption has already been confirmed, preserving AMS discovery; a timeout before confirmation and every other nonzero encryption status retain the existing disconnect-and-retry behavior.
 
 v2.2.14 hardens optional NOW artwork HTTPS after physical logs showed the local network refusing the first three fresh TLS transports while the fourth GitHub attempt succeeded. Apple Search and MusicBrainz now recreate their TLS/HTTP objects and retry transient negative transport results, HTTP 429/5xx, and incomplete HTTP 200 bodies up to five times with increasing bounded backoff. Definitive 4xx/no-match responses still stop immediately, Wi-Fi stays awake while the worker is active, and AMS playback remains independent of artwork success.
+
+v2.2.15 bounds that recovery against normal two-to-four-minute track lengths. One artwork worker now has a shared 35-second wall-time budget across Apple Search, MusicBrainz, cover download, and decode, rather than allowing every provider to consume its independent maximum. Transport backoff starts at 500ms, fresh lookup TLS connect/handshake limits are five seconds, and completion logs include `elapsed_ms`; budget exhaustion is reported as `lookup-timeout` while track changes and thermal cancellation retain their existing meanings.
 
 Do not split the OTA transaction merely because the function is long. Its sequential structure encodes safety assumptions.
 
