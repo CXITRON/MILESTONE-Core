@@ -18,7 +18,7 @@ reject() {
   fi
 }
 
-require 'FIRMWARE_VERSION\[\] = "2\.2\.12"' MILESTONE_Core.ino 'firmware version is not 2.2.12'
+require 'FIRMWARE_VERSION\[\] = "2\.2\.13"' MILESTONE_Core.ino 'firmware version is not 2.2.13'
 require 'CONFIG_VERSION = 10' MILESTONE_Core.ino 'configuration schema is not 10'
 require 'bool fixedApSecurity = false;' MILESTONE_Core.ino 'fixed AP security must default off'
 require 'String fixedApPassword;' MILESTONE_Core.ino 'fixed AP password setting missing'
@@ -80,6 +80,9 @@ require 'BLE_DISCONNECT_TIMEOUT_MS' CoreBluetooth.inc 'BLE disconnect confirmati
 require 'BLE_SECURITY_TIMEOUT_MS = 15000UL' CoreBluetooth.inc 'BLE security wait must be bounded'
 require 'ble_gap_conn_find\(bluetoothNowPlaying\.connHandle, &connection\)' CoreBluetooth.inc 'live encrypted connection state must be polled'
 require 'connection\.sec_state\.encrypted' CoreBluetooth.inc 'security recovery must verify actual link encryption'
+require 'shouldIgnoreLateBluetoothEncryptionFailure' CoreBluetooth.inc 'a delayed security timeout must not tear down an already encrypted link'
+require 'BLE_HS_ETIMEOUT' CoreBluetooth.inc 'the delayed security exception must remain limited to timeout events'
+require 'BLE late encryption timeout ignored after link confirmation' CoreBluetooth.inc 'ignored delayed security timeouts must remain observable'
 require 'security-timeout' CoreBluetooth.inc 'stuck security must expose a concrete timeout error'
 require 'disconnect\(timedOutHandle, BLE_ERR_REM_USER_CONN_TERM\)' CoreBluetooth.inc 'stuck security must disconnect for a clean retry'
 require 'bluetooth_security_elapsed_ms' CorePortal.inc 'portal status must expose security wait duration'

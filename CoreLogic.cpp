@@ -193,6 +193,12 @@ bool utf8ContainsHangul(const char *text) {
   return false;
 }
 
+bool shouldIgnoreLateBluetoothEncryptionFailure(bool linkAlreadySecured,
+                                                int errorStatus,
+                                                int timeoutStatus) {
+  return linkAlreadySecured && errorStatus == timeoutStatus;
+}
+
 void resetMusicBrainzReleaseGroupParser(MusicBrainzReleaseGroupParser &parser) {
   parser.tag[0] = '\0';
   parser.length = 0;

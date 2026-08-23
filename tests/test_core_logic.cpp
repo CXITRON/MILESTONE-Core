@@ -102,6 +102,18 @@ void testUtf8HangulDetection() {
   EXPECT_FALSE(MilestoneCoreLogic::utf8ContainsHangul("\xE3\x81"));
 }
 
+void testLateBluetoothEncryptionFailure() {
+  constexpr int timeoutStatus = 13;
+  EXPECT_TRUE(MilestoneCoreLogic::shouldIgnoreLateBluetoothEncryptionFailure(
+      true, timeoutStatus, timeoutStatus));
+  EXPECT_FALSE(MilestoneCoreLogic::shouldIgnoreLateBluetoothEncryptionFailure(
+      false, timeoutStatus, timeoutStatus));
+  EXPECT_FALSE(MilestoneCoreLogic::shouldIgnoreLateBluetoothEncryptionFailure(
+      true, 0, timeoutStatus));
+  EXPECT_FALSE(MilestoneCoreLogic::shouldIgnoreLateBluetoothEncryptionFailure(
+      true, 25, timeoutStatus));
+}
+
 void testMusicBrainzReleaseGroupParser() {
   MilestoneCoreLogic::MusicBrainzReleaseGroupParser parser;
   MilestoneCoreLogic::resetMusicBrainzReleaseGroupParser(parser);
@@ -177,6 +189,7 @@ int main() {
   testSha256();
   testJsonEscapes();
   testUtf8HangulDetection();
+  testLateBluetoothEncryptionFailure();
   testMusicBrainzReleaseGroupParser();
   testAppleArtworkUrlParser();
 

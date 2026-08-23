@@ -782,6 +782,11 @@ void processBluetoothNowPlaying() {
           bluetoothNowPlaying.nextSecurityPollMs = millis() + BLE_SECURITY_POLL_MS;
           logLine("BLE encryption event received; descriptor confirmation pending");
         }
+      } else if (MilestoneCoreLogic::shouldIgnoreLateBluetoothEncryptionFailure(
+                     bluetoothNowPlaying.secured, bluetoothEncryptionStatus,
+                     BLE_HS_ETIMEOUT)) {
+        logLine(String("BLE late encryption timeout ignored after link confirmation status=") +
+                bluetoothEncryptionStatus);
       } else {
         bluetoothNowPlaying.secured = false;
         setBluetoothError("pairing-encryption-failed", bluetoothEncryptionStatus);

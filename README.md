@@ -296,13 +296,13 @@ PC의 현재 프로젝트를 직접 수정한 경우에는 **MILESTONE_Core 프�
 
 ```bash
 cd /run/media/citron/T7/Documents/Dev/MILESTONE_Core
-milestone-release local 2.2.12 "Protect BLE during NOW artwork lookup"
+milestone-release local 2.2.13 "Ignore delayed BLE timeout after encryption"
 ```
 
 Tailscale Taildrop으로 `MILESTONE_Core_1.10.6.zip`을 받은 경우에는 교체 대상 프로젝트 디렉터리 밖의 정상적으로 존재하는 디렉터리에서 실행합니다. 기존 프로젝트가 교체될 때 현재 셸 경로가 사라지는 문제를 방지하기 위해 `/tmp`로 이동하는 방식을 권장합니다.
 
 ```bash
-cd /tmp && milestone-release taildrop 2.2.12 "Protect BLE during NOW artwork lookup"
+cd /tmp && milestone-release taildrop 2.2.13 "Ignore delayed BLE timeout after encryption"
 ```
 
 Taildrop 모드는 ZIP을 라이브 프로젝트에 바로 덮어쓰지 않습니다. 별도 staging 디렉터리에서 구조·버전·Git 상태를 검사하고 테스트와 ESP32 릴리즈 빌드까지 성공한 뒤에만 프로젝트를 교체합니다. GitHub 게시 전 실패하면 기존 프로젝트를 자동 복구합니다. `--dry-run`은 테스트/빌드까지만 수행하고 로컬 프로젝트·Git·GitHub를 변경하지 않습니다. `--yes`를 사용하지 않는 기본 동작은 최종 게시 직전에 한 번 확인합니다.
@@ -319,10 +319,10 @@ Taildrop 모드는 ZIP을 라이브 프로젝트에 바로 덮어쓰지 않습�
 
 ```bash
 chmod +x tools/make-release.sh
-./tools/make-release.sh 2.2.12 "Protect BLE during NOW artwork lookup"
+./tools/make-release.sh 2.2.13 "Ignore delayed BLE timeout after encryption"
 ```
 
-기본 설명을 사용하려면 `./tools/make-release.sh 2.2.12`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
+기본 설명을 사용하려면 `./tools/make-release.sh 2.2.13`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
 
 다음 여섯 파일이 `release/`에 생성됩니다.
 
@@ -346,11 +346,11 @@ release/MILESTONE_Now.json
 일반적인 게시에는 위의 `milestone-release`를 사용합니다. 아래 수동 절차는 자동화 도구를 복구하거나 디버깅해야 할 때만 참고합니다.
 
 1. 저장소의 `Releases`에서 `Draft a new release`를 선택합니다.
-2. 버전과 동일한 태그를 만듭니다. 예: `v2.2.12`
-3. Release 제목을 `MILESTONE Core v2.2.12`로 지정합니다.
+2. 버전과 동일한 태그를 만듭니다. 예: `v2.2.13`
+3. Release 제목을 `MILESTONE Core v2.2.13`로 지정합니다.
 4. CORE/MEDIA/NOW의 BIN과 JSON 여섯 파일을 모두 첨부합니다.
 5. Pre-release가 아닌 최신 정식 Release로 게시합니다.
-6. 2.2.11 NOW 기기에서 같은 프로필 2.2.12 OTA, 표지 HTTPS 중 AMS 연결 유지·저메모리 거부·GAP 해제 사유 기록을 기존 Wi-Fi·롤백 보호·진단 이력·설정 보존과 함께 검증합니다.
+6. 2.2.12 NOW 기기에서 같은 프로필 2.2.13 OTA 후, 암호화 확인 뒤 도착한 timeout이 AMS 연결을 끊지 않고 실제 미암호화 timeout·기타 보안 오류는 기존처럼 재연결하는지 검증합니다.
 
 여섯 파일의 이름은 모든 Release에서 정확히 같아야 합니다. 초안이나 Pre-release는 `latest` 업데이트 대상으로 사용하지 않습니다.
 
@@ -402,6 +402,17 @@ Taildrop ZIP의 `milestone-release`가 현재 설치본보다 새로우면, 게�
 - STREAM_MODE에서 일반 백그라운드 기능을 격리하고 PSRAM 240프레임 링버퍼·X/Y dirty-tile OLED 갱신·적응형 출력 주기·프레임 드롭·80°C 스트림 상한으로 영상 수신/표시에 집중
 - 라이브 송신은 96프레임 초기 충전 후 큐 64프레임 이하에서 최대 8프레임씩 144프레임 이상으로 보충하며 ESP32가 소스 시간축과 OLED 출력 클록을 분리해 관리
 - 비차단 3초 부팅 로고와 우상단 NTP `T`·업데이트 `U` 상태 아이콘
+
+## v2.2.13 업데이트 안내
+
+v2.2.13은 NOW에서 iPhone Bluetooth를 다시 켰 때 암호화가 이미 확인됐는데도 뒤늦게 도착한 NimBLE timeout이 연결을 끊는 경쟁 조건을 수정합니다. 실물 ESP32-S3/iPhone 로그에서 `encrypted`, `bonded=yes`, 16-byte key 확인 뒤 `status=13` timeout과 재광고가 반복되는 순서를 확인했습니다.
+
+- 이미 암호화를 확인한 동일 연결의 지연 `BLE_HS_ETIMEOUT`만 무시
+- 암호화 확인 전 timeout과 기타 모든 0이 아닌 보안 상태는 기존 연결 종료·재시도 유지
+- 무시된 지연 timeout을 시리얼 로그에 남겨 실물 재검증 가능
+- AMS 발견·메타데이터·표지 처리, OTA BLE 격리, 설정 스키마 10 유지
+
+정식 버전: `2.2.13`
 
 ## v2.2.12 업데이트 안내
 

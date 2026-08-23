@@ -23,6 +23,9 @@ int compareSemanticVersions(const char *left, const char *right);
 bool validSha256(const char *value);
 bool decodeJsonEscape(char escaped, char &decoded);
 bool utf8ContainsHangul(const char *text);
+bool shouldIgnoreLateBluetoothEncryptionFailure(bool linkAlreadySecured,
+                                                int errorStatus,
+                                                int timeoutStatus);
 
 struct MusicBrainzReleaseGroupParser {
   char tag[256];
