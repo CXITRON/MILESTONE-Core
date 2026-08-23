@@ -10,16 +10,16 @@ constexpr uint16_t NOW_ART_LARGE_H = 88;
 constexpr size_t NOW_ART_SMALL_BYTES = ((NOW_ART_SMALL_W + 7U) / 8U) * NOW_ART_SMALL_H;
 constexpr size_t NOW_ART_LARGE_BYTES = ((NOW_ART_LARGE_W + 7U) / 8U) * NOW_ART_LARGE_H;
 constexpr uint8_t NOW_ART_CACHE_SLOTS = 6;
-constexpr uint32_t NOW_ART_TRACK_SETTLE_MS = 1400UL;
+constexpr uint32_t NOW_ART_TRACK_SETTLE_MS = 800UL;
 constexpr uint32_t NOW_ART_RETRY_MS = 5UL * 60UL * 1000UL;
 constexpr uint32_t NOW_ART_REQUEST_SPACING_MS = 1200UL;
 constexpr uint8_t NOW_ART_LOOKUP_ATTEMPTS = 5;
 constexpr uint8_t NOW_ART_MAX_CANDIDATES = 3;
 constexpr uint32_t NOW_ART_LOOKUP_RETRY_MS = 1200UL;
-constexpr uint32_t NOW_ART_TRANSPORT_BACKOFF_MS = 500UL;
-constexpr uint32_t NOW_ART_WORKER_BUDGET_MS = 35000UL;
-constexpr uint32_t NOW_ART_LOOKUP_CONNECT_TIMEOUT_MS = 5000UL;
-constexpr uint32_t NOW_ART_LOOKUP_TIMEOUT_MS = 15000UL;
+constexpr uint32_t NOW_ART_TRANSPORT_BACKOFF_MS = 250UL;
+constexpr uint32_t NOW_ART_WORKER_BUDGET_MS = 15000UL;
+constexpr uint32_t NOW_ART_LOOKUP_CONNECT_TIMEOUT_MS = 3500UL;
+constexpr uint32_t NOW_ART_LOOKUP_TIMEOUT_MS = 7000UL;
 constexpr size_t NOW_ART_MAX_JPEG_BYTES = 220UL * 1024UL;
 constexpr size_t NOW_ART_MAX_LOOKUP_BYTES = 48UL * 1024UL;
 constexpr size_t NOW_ART_BLE_MIN_FREE_HEAP = 80UL * 1024UL;
@@ -674,6 +674,7 @@ void nowArtworkAcceptWorkerResult() {
             " attempts=" + attempts +
             " candidates=" + candidates + " download_http=" + downloadCode +
             " elapsed_ms=" + String(workerElapsedMs) +
+            " total_elapsed_ms=" + String(millis() - nowArtworkTrackChangedMs) +
             " stack_free=" + String(stackFreeBytes));
     nowArtworkRetryAtMs = millis() + NOW_ART_RETRY_MS;
     return;
@@ -693,6 +694,7 @@ void nowArtworkAcceptWorkerResult() {
   nowArtworkVisibleKey = nowArtworkWorkerKey;
   nowArtworkState = "ready";
   logLine(String("NOW artwork loaded elapsed_ms=") + workerElapsedMs +
+          " total_elapsed_ms=" + String(millis() - nowArtworkTrackChangedMs) +
           " apple_http=" + appleHttpCode + " http=" + httpCode +
           " attempts=" + attempts + " candidates=" + candidates +
           " download_http=" + downloadCode);
@@ -747,6 +749,13 @@ void processNowArtwork() {
   if (!nowArtworkLayoutUsesImage() || !nowArtworkTrackKey ||
       nowArtworkVisibleKey == nowArtworkTrackKey || nowArtworkWorkerRunning) return;
   const uint32_t now = millis();
+  // Overlap association/DHCP with metadata settling instead of starting the
+  // radio only after the debounce has elapsed. Cache hits above remain free of
+  // network work.
+  if (!stationNetworkReady() && config.savedNetworkCount > 0 && !portalActive &&
+      (runtimeState == RuntimeState::WIFI_SLEEP || runtimeState == RuntimeState::RUNNING_OFFLINE)) {
+    startSavedWifiSequence(false);
+  }
   if (!deadlineReached(now, nowArtworkTrackChangedMs + NOW_ART_TRACK_SETTLE_MS)) {
     nowArtworkState = "settling";
     return;

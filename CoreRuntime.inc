@@ -1186,7 +1186,10 @@ void setupFirmware() {
   initializeView();
   if (MILESTONE_HAS_BLUETOOTH) {
     if (bluetoothNowPlayingConfigured()) {
-      if (!initializeBluetoothNowPlaying()) {
+      // A bonded iPhone can connect immediately after advertising starts. Do
+      // not overlap that security transition with the first STA WPA handshake.
+      bluetoothInitialNetworkGate = provisioned;
+      if (!bluetoothInitialNetworkGate && !initializeBluetoothNowPlaying()) {
         logLine("Bluetooth Now Playing initialization failed; continuing without BLE");
       }
     }

@@ -1,6 +1,6 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v2.2.16
+> Current baseline: MILESTONE Core v2.2.17
 > Hardware: Waveshare ESP32-S3-Zero + SH1107 128×128 OLED
 > Repository: `CXITRON/MILESTONE-Core`
 
@@ -89,7 +89,7 @@ The `*.inc` runtime files are intentionally included into the sketch as one tran
 Firmware and persistent schema versions are separate concepts.
 
 ```cpp
-FIRMWARE_VERSION = "2.2.16"
+FIRMWARE_VERSION = "2.2.17"
 CONFIG_VERSION = 10
 ```
 
@@ -194,6 +194,8 @@ v2.2.14 hardens optional NOW artwork HTTPS after physical logs showed the local 
 v2.2.15 bounds that recovery against normal two-to-four-minute track lengths. One artwork worker now has a shared 35-second wall-time budget across Apple Search, MusicBrainz, cover download, and decode, rather than allowing every provider to consume its independent maximum. Transport backoff starts at 500ms, fresh lookup TLS connect/handshake limits are five seconds, and completion logs include `elapsed_ms`; budget exhaustion is reported as `lookup-timeout` while track changes and thermal cancellation retain their existing meanings.
 
 v2.2.16 applies the same bounded transient recovery to the actual Apple/CAA JPEG transfer. Hardware logs showed Apple Search reaching HTTP 200, followed by a first image connection failure and an unnecessary MusicBrainz fallback that consumed the 35-second budget. Negative transport results and incomplete HTTP 200 image bodies now recreate the TLS/HTTP objects and retry within the existing shared budget; a definitive 404 still advances immediately and decode failures are not retried as network failures.
+
+v2.2.17 prioritizes cover usefulness within ordinary two-to-four-minute tracks. A new track starts Wi-Fi association during the shortened 800ms metadata debounce, and the shared lookup/download budget is reduced from 35 seconds to 15 seconds with tighter connect/read limits and retry backoff. Diagnostics now distinguish worker time from total track-change-to-result latency. NOW also defers initial BLE advertising until the bounded first Wi-Fi/NTP attempt settles, preventing an immediate bonded iPhone security/connection-parameter transition from overlapping the first STA WPA handshake.
 
 Do not split the OTA transaction merely because the function is long. Its sequential structure encodes safety assumptions.
 

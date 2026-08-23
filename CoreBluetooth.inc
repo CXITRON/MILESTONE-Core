@@ -736,6 +736,12 @@ void processBluetoothNowPlaying() {
     return;
   }
   if (mediaStreamActive) return;
+  if (bluetoothInitialNetworkGate) {
+    if (runtimeState == RuntimeState::CONNECTING ||
+        runtimeState == RuntimeState::TIME_SYNCING) return;
+    bluetoothInitialNetworkGate = false;
+    logLine("initial Wi-Fi attempt settled; enabling BLE Now Playing");
+  }
   if (!bluetoothNowPlaying.initialized) {
     initializeBluetoothNowPlaying();
     return;
