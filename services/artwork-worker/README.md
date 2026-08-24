@@ -18,7 +18,7 @@ a gamma-0.8 lookup table to dark covers, and applies up to gamma 3.5 to bright
 covers before 4×4 Bayer ordered dithering. It returns a fixed 1,464-byte `MAB1`
 packet containing 60×60 and 88×88 one-bit bitmaps plus CRC-32. Mathematical
 black and white remain unchanged; artwork with mean luminance from 110 through
-160 is not tone-adjusted. The v2.3.1 device makes one bounded HTTP request and
+160 is not tone-adjusted. The v2.3.2 device makes one bounded HTTP request and
 keeps AMS text/progress available when the gateway fails.
 
 The deployment intentionally uses only Workers Free and the Cache API. It does
@@ -38,6 +38,6 @@ npx wrangler login
 npx wrangler deploy
 ```
 
-After deployment, the v2.3.1 firmware uses the port-80
+After deployment, the v2.3.2 firmware uses the port-80
 `http://...workers.dev/v2/artwork` endpoint to avoid BLE/TLS watchdog contention.
 Do not add Cloudflare credentials or `.dev.vars` to Git.

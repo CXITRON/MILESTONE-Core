@@ -18,7 +18,7 @@ reject() {
   fi
 }
 
-require 'FIRMWARE_VERSION\[\] = "2\.3\.1"' MILESTONE_Core.ino 'firmware version is not 2.3.1'
+require 'FIRMWARE_VERSION\[\] = "2\.3\.2"' MILESTONE_Core.ino 'firmware version is not 2.3.2'
 require 'CONFIG_VERSION = 10' MILESTONE_Core.ino 'configuration schema is not 10'
 require 'bool fixedApSecurity = false;' MILESTONE_Core.ino 'fixed AP security must default off'
 require 'String fixedApPassword;' MILESTONE_Core.ino 'fixed AP password setting missing'
@@ -131,6 +131,7 @@ fi
 require 'if \(bluetoothNowPlayingVisible\(\)\)' CoreDisplay.inc 'Now Playing must be an overlay rather than a ninth persistent view'
 require 'u8g2_font_unifont_t_japanese2' CoreDisplay.inc 'NOW metadata Japanese font routing missing'
 require 'utf8ContainsHangul' CoreDisplay.inc 'NOW metadata Korean font routing missing'
+require 'foldLatinDiacriticsUtf8' CoreDisplay.inc 'NOW metadata display-only Latin folding missing'
 require 'drawUTF8X2' CoreDisplay.inc 'NOW title must render larger than the artist'
 require 'bluetoothNowPlayingAlbum\(\)' CoreArtwork.inc 'artwork lookup still needs AMS album metadata'
 require 'AMS_TRACK_ALBUM' CoreBluetooth.inc 'album layout needs AMS album metadata subscription'

@@ -14,7 +14,7 @@ const LARGE_BYTES = Math.ceil(LARGE_WIDTH / 8) * LARGE_HEIGHT;
 const BITMAP_HEADER_BYTES = 16;
 const BITMAP_PACKET_BYTES = BITMAP_HEADER_BYTES + SMALL_BYTES + LARGE_BYTES;
 const BITMAP_CONTENT_TYPE = "application/vnd.milestone.artwork-bitmap";
-const BITMAP_CACHE_VERSION = "mab1-adaptive-tone-catalog-v1";
+const BITMAP_CACHE_VERSION = "mab1-adaptive-tone-catalog-v2";
 const MAX_APPLE_PAGE_BYTES = 48 * 1024;
 const GAMMA_LUT = new Uint8Array(256);
 for (let value = 0; value < GAMMA_LUT.length; value += 1) {
@@ -267,6 +267,11 @@ const KNOWN_ARTWORK_OVERRIDES = [{
   artist: "567",
   url: "https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/fd/9a/66/" +
     "fd9a6669-d1a9-b76b-fd8c-23865ac8b9e3/bigup14486608.jpg/110x110bb-60.jpg",
+}, {
+  title: "ヤラララ - Yararara",
+  artist: "AnythingBecomeMoe",
+  url: "https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/72/b1/e9/" +
+    "72b1e976-3926-37c3-178f-bcdf86d0d4b2/825181217869_cover.jpg/110x110bb-60.jpg",
 }];
 
 function knownArtworkOverride(metadata) {

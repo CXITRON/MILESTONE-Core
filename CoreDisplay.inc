@@ -993,6 +993,12 @@ void drawUpdateScreen() {
 }
 
 #if MILESTONE_HAS_BLUETOOTH
+String nowPlayingDisplayText(const char *text) {
+  char folded[AMS_NOTIFICATION_MAX + 1] = {};
+  MilestoneCoreLogic::foldLatinDiacriticsUtf8(text, folded, sizeof(folded));
+  return String(folded);
+}
+
 void setNowPlayingTextFont(const String &text) {
   display.setFont(MilestoneCoreLogic::utf8ContainsHangul(text.c_str())
                     ? u8g2_font_unifont_t_korean2
@@ -1055,8 +1061,8 @@ void drawBluetoothNowPlayingScreen() {
   drawStatusIcon(112, 0);
   display.drawHLine(0, 14, 128);
 
-  const String title = bluetoothNowPlayingTitle();
-  const String artist = bluetoothNowPlayingArtist();
+  const String title = nowPlayingDisplayText(bluetoothNowPlayingTitle());
+  const String artist = nowPlayingDisplayText(bluetoothNowPlayingArtist());
   switch (config.nowLayout) {
     case NowLayout::TITLE_ONLY:
       setNowPlayingTextFont(title);

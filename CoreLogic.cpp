@@ -31,6 +31,67 @@ int64_t civilOrdinal(const CivilDate &date) {
   return daysBeforeYear(date.year) + dayOfYear(date);
 }
 
+const char *latinAsciiReplacement(uint32_t codepoint) {
+  switch (codepoint) {
+    case 0x00C0: case 0x00C1: case 0x00C2: case 0x00C3: case 0x00C4: case 0x00C5:
+    case 0x0100: case 0x0102: case 0x0104: return "A";
+    case 0x00E0: case 0x00E1: case 0x00E2: case 0x00E3: case 0x00E4: case 0x00E5:
+    case 0x0101: case 0x0103: case 0x0105: return "a";
+    case 0x00C6: return "AE";
+    case 0x00E6: return "ae";
+    case 0x00C7: case 0x0106: case 0x0108: case 0x010A: case 0x010C: return "C";
+    case 0x00E7: case 0x0107: case 0x0109: case 0x010B: case 0x010D: return "c";
+    case 0x00D0: case 0x010E: case 0x0110: return "D";
+    case 0x00F0: case 0x010F: case 0x0111: return "d";
+    case 0x00C8: case 0x00C9: case 0x00CA: case 0x00CB:
+    case 0x0112: case 0x0114: case 0x0116: case 0x0118: case 0x011A: return "E";
+    case 0x00E8: case 0x00E9: case 0x00EA: case 0x00EB:
+    case 0x0113: case 0x0115: case 0x0117: case 0x0119: case 0x011B: return "e";
+    case 0x011C: case 0x011E: case 0x0120: case 0x0122: return "G";
+    case 0x011D: case 0x011F: case 0x0121: case 0x0123: return "g";
+    case 0x0124: case 0x0126: return "H";
+    case 0x0125: case 0x0127: return "h";
+    case 0x00CC: case 0x00CD: case 0x00CE: case 0x00CF:
+    case 0x0128: case 0x012A: case 0x012C: case 0x012E: case 0x0130: return "I";
+    case 0x00EC: case 0x00ED: case 0x00EE: case 0x00EF:
+    case 0x0129: case 0x012B: case 0x012D: case 0x012F: case 0x0131: return "i";
+    case 0x0134: return "J";
+    case 0x0135: return "j";
+    case 0x0136: return "K";
+    case 0x0137: return "k";
+    case 0x0139: case 0x013B: case 0x013D: case 0x013F: case 0x0141: return "L";
+    case 0x013A: case 0x013C: case 0x013E: case 0x0140: case 0x0142: return "l";
+    case 0x00D1: case 0x0143: case 0x0145: case 0x0147: return "N";
+    case 0x00F1: case 0x0144: case 0x0146: case 0x0148: return "n";
+    case 0x00D2: case 0x00D3: case 0x00D4: case 0x00D5: case 0x00D6: case 0x00D8:
+    case 0x014C: case 0x014E: case 0x0150: return "O";
+    case 0x00F2: case 0x00F3: case 0x00F4: case 0x00F5: case 0x00F6: case 0x00F8:
+    case 0x014D: case 0x014F: case 0x0151: return "o";
+    case 0x0152: return "OE";
+    case 0x0153: return "oe";
+    case 0x0154: case 0x0156: case 0x0158: return "R";
+    case 0x0155: case 0x0157: case 0x0159: return "r";
+    case 0x015A: case 0x015C: case 0x015E: case 0x0160: return "S";
+    case 0x015B: case 0x015D: case 0x015F: case 0x0161: return "s";
+    case 0x00DF: return "ss";
+    case 0x0162: case 0x0164: case 0x0166: return "T";
+    case 0x0163: case 0x0165: case 0x0167: return "t";
+    case 0x00DE: return "TH";
+    case 0x00FE: return "th";
+    case 0x00D9: case 0x00DA: case 0x00DB: case 0x00DC:
+    case 0x0168: case 0x016A: case 0x016C: case 0x016E: case 0x0170: case 0x0172: return "U";
+    case 0x00F9: case 0x00FA: case 0x00FB: case 0x00FC:
+    case 0x0169: case 0x016B: case 0x016D: case 0x016F: case 0x0171: case 0x0173: return "u";
+    case 0x0174: return "W";
+    case 0x0175: return "w";
+    case 0x00DD: case 0x0176: case 0x0178: return "Y";
+    case 0x00FD: case 0x00FF: case 0x0177: return "y";
+    case 0x0179: case 0x017B: case 0x017D: return "Z";
+    case 0x017A: case 0x017C: case 0x017E: return "z";
+    default: return nullptr;
+  }
+}
+
 }  // namespace
 
 bool isLeapYear(int year) {
@@ -191,6 +252,56 @@ bool utf8ContainsHangul(const char *text) {
     }
   }
   return false;
+}
+
+size_t foldLatinDiacriticsUtf8(const char *input, char *output, size_t capacity) {
+  if (output == nullptr || capacity == 0) return 0;
+  output[0] = '\0';
+  if (input == nullptr) return 0;
+
+  const uint8_t *cursor = reinterpret_cast<const uint8_t *>(input);
+  size_t written = 0;
+  while (*cursor != 0) {
+    const uint8_t *unit = cursor;
+    uint32_t codepoint = 0;
+    size_t unitLength = 1;
+    size_t continuation = 0;
+    if (*cursor < 0x80U) {
+      codepoint = *cursor;
+    } else if ((*cursor & 0xE0U) == 0xC0U) {
+      codepoint = *cursor & 0x1FU;
+      continuation = 1;
+    } else if ((*cursor & 0xF0U) == 0xE0U) {
+      codepoint = *cursor & 0x0FU;
+      continuation = 2;
+    } else if ((*cursor & 0xF8U) == 0xF0U) {
+      codepoint = *cursor & 0x07U;
+      continuation = 3;
+    }
+
+    bool valid = continuation != 0;
+    for (size_t index = 1; valid && index <= continuation; ++index) {
+      if (cursor[index] == 0 || (cursor[index] & 0xC0U) != 0x80U) {
+        valid = false;
+      } else {
+        codepoint = (codepoint << 6U) | (cursor[index] & 0x3FU);
+      }
+    }
+    if (valid) unitLength += continuation;
+
+    const char *replacement = valid ? latinAsciiReplacement(codepoint) : nullptr;
+    const size_t replacementLength = replacement ? strlen(replacement) : unitLength;
+    if (written + replacementLength >= capacity) break;
+    if (replacement) {
+      memcpy(output + written, replacement, replacementLength);
+    } else {
+      memcpy(output + written, unit, unitLength);
+    }
+    written += replacementLength;
+    cursor += unitLength;
+  }
+  output[written] = '\0';
+  return written;
 }
 
 bool shouldIgnoreLateBluetoothEncryptionFailure(bool linkAlreadySecured,

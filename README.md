@@ -139,11 +139,11 @@ v2.2.0의 NOW 표시 구성은 스키마 10 안의 선택적 `now_layout` 키로
 
 NOW 프로필은 iPhone/iPad의 **Apple Media Service(AMS)** 를 이용해 Bluetooth Now Playing을 표시합니다. 별도의 MILESTONE 전용 앱은 필요하지 않으며 NOW에서는 Bluetooth가 항상 켜집니다. CORE와 MEDIA에는 Bluetooth 런타임이 포함되지 않습니다.
 
-연결과 AMS 구독이 준비되면 곡 제목, 아티스트, 재생/일시정지 상태와 재생 진행률을 표시하고, 앨범명 메타데이터는 표지 검색에만 사용합니다. NOW에서 BOOT 버튼을 1초 미만으로 누르거나 설정 포털의 **NOW 표시**에서 `곡명만`, `곡명 + 아티스트`, `곡명 + 앨범 표지`, `앨범 표지 중심`을 선택합니다. 모든 구성에 진행 막대와 재생/전체 시간이 남고, 텍스트 구성에서는 곡 제목을 아티스트보다 크게 표시합니다. 긴 한글·일본어·영문 텍스트는 UTF-8 스크롤 렌더러를 사용합니다. NOW는 기존 8비트 CORE 순환 마스크와 저장된 화면 순서를 변경하지 않습니다.
+연결과 AMS 구독이 준비되면 곡 제목, 아티스트, 재생/일시정지 상태와 재생 진행률을 표시하고, 앨범명 메타데이터는 표지 검색에만 사용합니다. NOW에서 BOOT 버튼을 1초 미만으로 누르거나 설정 포털의 **NOW 표시**에서 `곡명만`, `곡명 + 아티스트`, `곡명 + 앨범 표지`, `앨범 표지 중심`을 선택합니다. 모든 구성에 진행 막대와 재생/전체 시간이 남고, 텍스트 구성에서는 곡 제목을 아티스트보다 크게 표시합니다. 긴 한글·일본어·영문 텍스트는 UTF-8 스크롤 렌더러를 사용합니다. 내장 글꼴에 없는 일반적인 라틴 악센트는 OLED에 그리는 복사본에서만 ASCII로 접어 `ÁCIDO`를 `ACIDO`처럼 표시하며, 표지 검색·캐시·진단에 쓰는 AMS 원문은 변경하지 않습니다. NOW는 기존 8비트 CORE 순환 마스크와 저장된 화면 순서를 변경하지 않습니다.
 
 표지 구성은 ESP32가 Apple·MusicBrainz·Cover Art Archive를 직접 순회하지 않고 무료 `milestone-artwork` Cloudflare Worker에 AMS 곡명·아티스트·앨범명을 한 번만 전송합니다. ESP32와 Worker 사이의 이 요청만 Wi-Fi/BLE TLS 경합과 `INT WDT`를 피하기 위해 암호화되지 않은 bounded HTTP를 사용하므로 곡 메타데이터는 네트워크에서 평문으로 보일 수 있습니다. Wi-Fi 비밀번호·Apple 계정·인증 토큰은 보내지 않으며 Worker의 외부 카탈로그·이미지 조회는 HTTPS를 유지합니다. Worker는 Deezer의 두 bounded 검색과 Apple Music 공개 검색 페이지의 앞 48KiB만 읽는 bounded 검색을 병렬 실행해 먼저 확인된 표지를 사용합니다. Deezer 비교에서는 악센트 차이와 앨범 끝의 `- EP`·`- Single`만 정규화하고 공동 아티스트 중 공급자에 기록된 구성원 한 명의 일치를 허용하되, 전체 곡 제목 정확 일치를 먼저 요구해 원곡·Slowed·Super Slowed 변형이 섞이지 않게 합니다. Apple 후보는 정규화된 제목과 공동 아티스트의 모든 구성원이 일치하는 경우에만 허용하며 `&`와 쉼표 구분은 같은 의미로 처리하고 작은 JPEG 표지만 가져옵니다. 공개 검색 색인에 아직 없는 검증된 곡은 정확한 정규화 제목·아티스트와 Apple 공개 썸네일 URL만 담은 소규모 예외 목록으로 처리합니다. 이후 JPEG 디코드·축소·휘도 변환·ordered dithering까지 수행합니다. 성공 응답은 60×60과 88×88 1비트 이미지를 함께 담은 고정 1,464바이트 `MAB1` 패킷이며, ESP32는 길이·매직·크기·CRC-32를 검증하고 바로 표시합니다. CRC는 손상 검출과 파서 안전을 위한 것이며 서버 인증을 대신하지 않습니다. 정규화된 메타데이터의 SHA-256 키로 성공 결과는 30일, 표지 없음은 6시간 동안 edge cache에 보관하며 원문 메타데이터를 캐시 URL이나 로그에 넣지 않습니다. Images·R2·KV·유료 데이터베이스를 사용하지 않아 Workers Free 한도를 넘으면 과금되지 않고 요청이 실패합니다. 실배포 캐시 미스 추적에서 변환 성공 건은 6~9ms CPU로 무료 요청당 10ms 범위 안이었고, 기존 펌웨어용 `/v1/artwork` JPEG 응답도 병행 유지합니다. 기기는 최근 6곡을 PSRAM에 보관하며, 곡을 연속으로 넘길 때는 마지막 메타데이터 변경 후 1.5초가 지난 최신 곡만 조회하고 늦게 끝난 이전 결과는 폐기합니다. 중계 실패·표지 없음·오프라인·메모리 부족이어도 추가 공급자로 무제한 확산 요청하지 않고 AMS 텍스트와 진행률을 계속 표시합니다.
 
-어두운 표지가 거의 검게 뭉개지는 경우를 줄이기 위해 Worker는 원본 평균 밝기가 110 미만일 때 미리 계산한 gamma 0.8 LUT와 최대 32단계 노출 상승을 어두운 정도에 비례해 혼합합니다. 반대로 평균 밝기가 160을 넘는 표지는 순백과 순흑을 유지하면서 밝은 정도에 따라 최대 gamma 3.5로 하이라이트를 압축해, 연회색 글씨와 파스텔 디테일이 모두 흰색으로 합쳐지는 현상을 줄입니다. 평균 110~160의 표지는 원래 명암을 유지한 뒤 기존 4×4 Bayer를 적용합니다. 하나의 보정 곡선을 60×60·88×88 출력이 공유합니다. 현재 변환·검색 캐시 키는 `mab1-adaptive-tone-catalog-v1`이며 기존 변환 캐시는 즉시 다시 생성됩니다.
+어두운 표지가 거의 검게 뭉개지는 경우를 줄이기 위해 Worker는 원본 평균 밝기가 110 미만일 때 미리 계산한 gamma 0.8 LUT와 최대 32단계 노출 상승을 어두운 정도에 비례해 혼합합니다. 반대로 평균 밝기가 160을 넘는 표지는 순백과 순흑을 유지하면서 밝은 정도에 따라 최대 gamma 3.5로 하이라이트를 압축해, 연회색 글씨와 파스텔 디테일이 모두 흰색으로 합쳐지는 현상을 줄입니다. 평균 110~160의 표지는 원래 명암을 유지한 뒤 기존 4×4 Bayer를 적용합니다. 하나의 보정 곡선을 60×60·88×88 출력이 공유합니다. 현재 변환·검색 캐시 키는 `mab1-adaptive-tone-catalog-v2`이며 기존 변환·미표시 캐시는 즉시 다시 생성됩니다.
 
 NOW의 업데이트 확인·설치는 먼저 광고를 중단하고, 애플리케이션 플래그뿐 아니라 NimBLE 서버의 실제 peer와 GAP connection handle을 함께 확인해 살아 있는 iPhone 연결을 종료합니다. 연결 종료가 확인되면 NimBLE 객체는 삭제하지 않은 채 유지하고 오래된 AMS/GAP 이벤트를 비운 뒤 HTTPS를 시작합니다. 2.5초 안에 실제 연결이 사라지지 않거나 TLS용 내부 RAM이 부족하면 재부팅을 감수하지 않고 업데이트 작업을 미룹니다. 일반 표지 조회는 AMS 연결을 유지해야 하므로 BLE 연결 간격을 40~80ms·latency 0·12초 supervision timeout으로 요청하고, 내부 RAM이 80KiB 또는 최대 연속 블록 32KiB 미만이면 선택 기능인 표지만 `LOW-MEMORY`로 건너뜁니다. 표지 전송 자체는 v2.3.1부터 TLS를 사용하지 않지만 이 RAM 기준은 Bluetooth와 HTTP 작업의 전체 안정성 여유로 유지합니다.
 
@@ -298,13 +298,13 @@ PC의 현재 프로젝트를 직접 수정한 경우에는 **MILESTONE_Core 프�
 
 ```bash
 cd /run/media/citron/T7/Documents/Dev/MILESTONE_Core
-milestone-release local 2.3.1 "Remove artwork TLS watchdog contention"
+milestone-release local 2.3.2 "Restore indexed artwork and fold Latin metadata"
 ```
 
 Tailscale Taildrop으로 `MILESTONE_Core_1.10.6.zip`을 받은 경우에는 교체 대상 프로젝트 디렉터리 밖의 정상적으로 존재하는 디렉터리에서 실행합니다. 기존 프로젝트가 교체될 때 현재 셸 경로가 사라지는 문제를 방지하기 위해 `/tmp`로 이동하는 방식을 권장합니다.
 
 ```bash
-cd /tmp && milestone-release taildrop 2.3.1 "Remove artwork TLS watchdog contention"
+cd /tmp && milestone-release taildrop 2.3.2 "Restore indexed artwork and fold Latin metadata"
 ```
 
 Taildrop 모드는 ZIP을 라이브 프로젝트에 바로 덮어쓰지 않습니다. 별도 staging 디렉터리에서 구조·버전·Git 상태를 검사하고 테스트와 ESP32 릴리즈 빌드까지 성공한 뒤에만 프로젝트를 교체합니다. GitHub 게시 전 실패하면 기존 프로젝트를 자동 복구합니다. `--dry-run`은 테스트/빌드까지만 수행하고 로컬 프로젝트·Git·GitHub를 변경하지 않습니다. `--yes`를 사용하지 않는 기본 동작은 최종 게시 직전에 한 번 확인합니다.
@@ -321,10 +321,10 @@ Taildrop 모드는 ZIP을 라이브 프로젝트에 바로 덮어쓰지 않습�
 
 ```bash
 chmod +x tools/make-release.sh
-./tools/make-release.sh 2.3.1 "Remove artwork TLS watchdog contention"
+./tools/make-release.sh 2.3.2 "Restore indexed artwork and fold Latin metadata"
 ```
 
-기본 설명을 사용하려면 `./tools/make-release.sh 2.3.1`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
+기본 설명을 사용하려면 `./tools/make-release.sh 2.3.2`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
 
 다음 여섯 파일이 `release/`에 생성됩니다.
 
@@ -348,8 +348,8 @@ release/MILESTONE_Now.json
 일반적인 게시에는 위의 `milestone-release`를 사용합니다. 아래 수동 절차는 자동화 도구를 복구하거나 디버깅해야 할 때만 참고합니다.
 
 1. 저장소의 `Releases`에서 `Draft a new release`를 선택합니다.
-2. 버전과 동일한 태그를 만듭니다. 예: `v2.3.1`
-3. Release 제목을 `MILESTONE Core v2.3.1`로 지정합니다.
+2. 버전과 동일한 태그를 만듭니다. 예: `v2.3.2`
+3. Release 제목을 `MILESTONE Core v2.3.2`로 지정합니다.
 4. CORE/MEDIA/NOW의 BIN과 JSON 여섯 파일을 모두 첨부합니다.
 5. Pre-release가 아닌 최신 정식 Release로 게시합니다.
 6. NOW 실기기에서 `orion / 요네즈 켄시 / BOOTLEG`와 표지가 없는 곡을 재생해 중계 HTTP 200/204가 각각 빠르게 끝나고 AMS 연결·텍스트·진행률이 유지되는지 검증합니다.
@@ -405,6 +405,20 @@ Taildrop ZIP의 `milestone-release`가 현재 설치본보다 새로우면, 게�
 - STREAM_MODE에서 일반 백그라운드 기능을 격리하고 PSRAM 240프레임 링버퍼·X/Y dirty-tile OLED 갱신·적응형 출력 주기·프레임 드롭·80°C 스트림 상한으로 영상 수신/표시에 집중
 - 라이브 송신은 96프레임 초기 충전 후 큐 64프레임 이하에서 최대 8프레임씩 144프레임 이상으로 보충하며 ESP32가 소스 시간축과 OLED 출력 클록을 분리해 관리
 - 비차단 3초 부팅 로고와 우상단 NTP `T`·업데이트 `U` 상태 아이콘
+
+## v2.3.2 업데이트 안내
+
+v2.3.2는 공개 검색 색인에 아직 잡히지 않는 검증된 Apple Music 표지를 복구하고, 내장 글꼴에 없는 라틴 악센트의 NOW 표시를 보완합니다.
+
+- `ヤラララ - Yararara` / `AnythingBecomeMoe`의 직접 Apple 페이지와 썸네일을 검증하고 정확한 제목·아티스트 예외 추가
+- 정확 일치 예외이므로 같은 제목이나 다른 아티스트의 표지를 잘못 가져오지 않음
+- 변환·검색 캐시 세대를 `mab1-adaptive-tone-catalog-v2`로 올려 기존 6시간 미표시 캐시 즉시 우회
+- OLED에 그리는 복사본에서만 일반적인 Latin-1·Latin Extended-A 악센트를 ASCII로 변환
+- `ÁCIDO`는 `ACIDO`, `Beyoncé`는 `Beyonce`로 표시하되 일본어·한글 UTF-8과 AMS 원문은 그대로 유지
+- 원문 곡명·아티스트·앨범은 표지 검색, 캐시 식별과 진단에 계속 사용
+- 설정 스키마 10과 CORE/MEDIA/NOW 프로필 경계, 1,464바이트 `MAB1` 형식 유지
+
+정식 버전: `2.3.2`
 
 ## v2.3.1 업데이트 안내
 

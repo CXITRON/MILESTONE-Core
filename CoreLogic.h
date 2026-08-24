@@ -23,6 +23,7 @@ int compareSemanticVersions(const char *left, const char *right);
 bool validSha256(const char *value);
 bool decodeJsonEscape(char escaped, char &decoded);
 bool utf8ContainsHangul(const char *text);
+size_t foldLatinDiacriticsUtf8(const char *input, char *output, size_t capacity);
 bool shouldIgnoreLateBluetoothEncryptionFailure(bool linkAlreadySecured,
                                                 int errorStatus,
                                                 int timeoutStatus);

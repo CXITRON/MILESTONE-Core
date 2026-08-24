@@ -62,6 +62,14 @@ test("known artwork overrides require an exact normalized title and artist", () 
     knownArtworkOverride({ title: "ぼくのかみさま (nightcore)", artist: "Other" }),
     "",
   );
+  assert.match(
+    knownArtworkOverride({ title: "ヤラララ - Yararara", artist: "AnythingBecomeMoe" }),
+    /825181217869_cover\.jpg\/110x110bb-60\.jpg$/,
+  );
+  assert.equal(
+    knownArtworkOverride({ title: "ヤラララ - Yararara", artist: "Other" }),
+    "",
+  );
 });
 
 test("Apple Music page selection validates the top result title and artist", () => {

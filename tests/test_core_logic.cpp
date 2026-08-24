@@ -102,6 +102,30 @@ void testUtf8HangulDetection() {
   EXPECT_FALSE(MilestoneCoreLogic::utf8ContainsHangul("\xE3\x81"));
 }
 
+void testUtf8LatinFolding() {
+  char output[128] = {};
+  EXPECT_EQ(MilestoneCoreLogic::foldLatinDiacriticsUtf8(
+      "ÁCIDO III (Slowed)", output, sizeof(output)), std::strlen("ACIDO III (Slowed)"));
+  EXPECT_TRUE(std::strcmp(output, "ACIDO III (Slowed)") == 0);
+
+  MilestoneCoreLogic::foldLatinDiacriticsUtf8(
+      "Beyoncé · Måneskin · Łódź · Straße · Æther · Œuvre", output, sizeof(output));
+  EXPECT_TRUE(std::strcmp(
+      output, "Beyonce · Maneskin · Lodz · Strasse · AEther · OEuvre") == 0);
+
+  const char *nonLatin = "ヤラララ · 한글";
+  MilestoneCoreLogic::foldLatinDiacriticsUtf8(nonLatin, output, sizeof(output));
+  EXPECT_TRUE(std::strcmp(output, nonLatin) == 0);
+
+  char bounded[5] = {};
+  EXPECT_EQ(MilestoneCoreLogic::foldLatinDiacriticsUtf8(
+      "ÁBCD", bounded, sizeof(bounded)), 4U);
+  EXPECT_TRUE(std::strcmp(bounded, "ABCD") == 0);
+  char noSplit[4] = {};
+  MilestoneCoreLogic::foldLatinDiacriticsUtf8("日A", noSplit, sizeof(noSplit));
+  EXPECT_TRUE(std::strcmp(noSplit, "日") == 0);
+}
+
 void testLateBluetoothEncryptionFailure() {
   constexpr int timeoutStatus = 13;
   EXPECT_TRUE(MilestoneCoreLogic::shouldIgnoreLateBluetoothEncryptionFailure(
@@ -226,6 +250,7 @@ int main() {
   testSha256();
   testJsonEscapes();
   testUtf8HangulDetection();
+  testUtf8LatinFolding();
   testLateBluetoothEncryptionFailure();
   testTransientHttpRetry();
   testMusicBrainzReleaseGroupParser();
