@@ -2,7 +2,7 @@
 // caches fixed MAB1 one-bit bitmaps. The ESP32 validates the header, dimensions,
 // length, and CRC before displaying them; failures never block AMS text/progress.
 
-const char NOW_ARTWORK_RUNTIME_MARKER[] __attribute__((used)) = "MILESTONE_NOW_ARTWORK_RUNTIME_V3";
+const char NOW_ARTWORK_RUNTIME_MARKER[] __attribute__((used)) = "MILESTONE_NOW_ARTWORK_RUNTIME_V4";
 constexpr uint16_t NOW_ART_SMALL_W = 60;
 constexpr uint16_t NOW_ART_SMALL_H = 60;
 constexpr uint16_t NOW_ART_LARGE_W = 88;
@@ -17,10 +17,10 @@ static_assert(NOW_ART_SMALL_BYTES == MilestoneCoreLogic::ARTWORK_BITMAP_SMALL_BY
 static_assert(NOW_ART_LARGE_BYTES == MilestoneCoreLogic::ARTWORK_BITMAP_LARGE_BYTES);
 static_assert(NOW_ART_BITMAP_PACKET_BYTES == MilestoneCoreLogic::ARTWORK_BITMAP_PACKET_BYTES);
 constexpr uint8_t NOW_ART_CACHE_SLOTS = 6;
-constexpr uint32_t NOW_ART_TRACK_SETTLE_MS = 800UL;
+constexpr uint32_t NOW_ART_TRACK_SETTLE_MS = 1500UL;
 constexpr uint32_t NOW_ART_RETRY_MS = 5UL * 60UL * 1000UL;
 constexpr uint32_t NOW_ART_REQUEST_SPACING_MS = 1200UL;
-constexpr uint8_t NOW_ART_GATEWAY_ATTEMPTS = 2;
+constexpr uint8_t NOW_ART_GATEWAY_ATTEMPTS = 1;
 constexpr uint32_t NOW_ART_TRANSPORT_BACKOFF_MS = 250UL;
 constexpr uint32_t NOW_ART_WORKER_BUDGET_MS = 15000UL;
 constexpr uint32_t NOW_ART_LOOKUP_TIMEOUT_MS = 7000UL;
@@ -412,10 +412,14 @@ bool nowArtworkReadAppleUrl(HTTPClient &http, String &url, bool &complete, bool 
 void nowArtworkWorker(void *) {
   const uint32_t generation = nowArtworkWorkerGeneration;
   const uint32_t workerStartedMs = nowArtworkWorkerStartedMs;
-  const esp_err_t wifiPriorityResult = esp_coex_preference_set(ESP_COEX_PREFER_WIFI);
-  if (wifiPriorityResult != ESP_OK) {
-    logLine(String("NOW artwork Wi-Fi coexistence priority failed: ") +
-            esp_err_to_name(wifiPriorityResult));
+  // The gateway response is only 1,464 bytes. Keeping balanced coexistence is
+  // more important than shaving a small amount from the transfer: forcing
+  // Wi-Fi priority during TLS can starve the live AMS connection and make the
+  // bonded iPhone disconnect back to the advertising screen.
+  const esp_err_t balanceResult = esp_coex_preference_set(ESP_COEX_PREFER_BALANCE);
+  if (balanceResult != ESP_OK) {
+    logLine(String("NOW artwork balanced coexistence request failed: ") +
+            esp_err_to_name(balanceResult));
   }
   bool success = false;
   NowArtworkWorkerResult result = NowArtworkWorkerResult::NETWORK;
@@ -645,11 +649,6 @@ void nowArtworkWorker(void *) {
     success = false;
     result = NowArtworkWorkerResult::CANCELLED;
   }
-  const esp_err_t balanceResult = esp_coex_preference_set(ESP_COEX_PREFER_BALANCE);
-  if (balanceResult != ESP_OK) {
-    logLine(String("NOW artwork coexistence balance restore failed: ") +
-            esp_err_to_name(balanceResult));
-  }
   const uint32_t stackFreeBytes = uxTaskGetStackHighWaterMark(nullptr);
   nowArtworkRtcStage = 0;
   portENTER_CRITICAL(&nowArtworkMux);
@@ -768,6 +767,12 @@ bool nowArtworkLayoutUsesImage() {
 
 bool nowArtworkNeedsNetwork() {
   if (nowArtworkWorkerRunning) return true;
+  // Wi-Fi-off mode is useful outside NOW playback, but cycling STA off after
+  // every cover and associating again for each AMS metadata burst repeatedly
+  // disrupts the shared 2.4 GHz radio. Keep an already connected station up
+  // while a live iPhone session uses an artwork layout, then allow normal
+  // Wi-Fi sleep as soon as Bluetooth disconnects.
+  if (nowArtworkLayoutUsesImage() && bluetoothNowPlayingHasLiveConnection()) return true;
   return nowArtworkLayoutUsesImage() && nowArtworkTrackKey != 0 &&
          nowArtworkVisibleKey != nowArtworkTrackKey &&
          (!nowArtworkRetryAtMs || deadlineReached(millis(), nowArtworkRetryAtMs));
@@ -818,6 +823,10 @@ void processNowArtwork() {
   }
   if (!deadlineReached(now, nowArtworkTrackChangedMs + NOW_ART_TRACK_SETTLE_MS)) {
     nowArtworkState = "settling";
+    return;
+  }
+  if (ntpRequestActive || runtimeState == RuntimeState::TIME_SYNCING) {
+    nowArtworkState = "time-sync-paused";
     return;
   }
   const bool portalStationStable = stationNetworkReady() &&

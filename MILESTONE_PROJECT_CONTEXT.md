@@ -1,6 +1,6 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v2.2.22
+> Current baseline: MILESTONE Core v2.2.23
 > Hardware: Waveshare ESP32-S3-Zero + SH1107 128×128 OLED
 > Repository: `CXITRON/MILESTONE-Core`
 
@@ -89,7 +89,7 @@ The `*.inc` runtime files are intentionally included into the sketch as one tran
 Firmware and persistent schema versions are separate concepts.
 
 ```cpp
-FIRMWARE_VERSION = "2.2.22"
+FIRMWARE_VERSION = "2.2.23"
 CONFIG_VERSION = 10
 ```
 
@@ -206,6 +206,8 @@ v2.2.20 removes the NOW OTA low-RAM retry trap. If a confirmed install still lac
 v2.2.21 moves the optional NOW cover hot path to the free `milestone-artwork` Cloudflare Worker. The device sends bounded title, artist, and album form fields over one HTTPS connection and receives either one cached baseline JPEG thumbnail or a quick no-art response; gateway failure never fans out into Apple/MusicBrainz/CAA requests on the ESP32. The Worker runs near `aws:us-east-1`, where its bounded Deezer title+album/title+artist catalog queries return usable results, hashes normalized metadata for cache keys, keeps positive and negative responses in the edge cache, and uses no paid storage or image product. Live tests returned `orion / 요네즈 켄시 / BOOTLEG` as a 3.3KiB 96×96 baseline JPEG in about one second and a definite miss in under one second. AMS text/progress, six-entry PSRAM caching, thermal cancellation, OTA serialization, and schema 10 remain unchanged.
 
 v2.2.22 moves JPEG decode, resizing, luminance conversion, and ordered dithering from the NOW device to the same free Worker. The backward-compatible `/v1/artwork` path continues to serve JPEGs to v2.2.21, while `/v2/artwork` uses a Wasm MozJPEG decoder and returns a fixed 1,464-byte `MAB1` packet containing 60×60 and 88×88 LSB-first one-bit bitmaps plus a CRC-32. NOW validates the exact length, magic, dimensions, component lengths, and payload CRC before copying either bitmap. Live cache-miss traces measured 6–9ms CPU after CRC/pixel-loop optimization, within the Workers Free 10ms request budget; no Images, R2, KV, or paid database is used. AMS text/progress, the six-entry PSRAM cache, thermal cancellation, OTA serialization, and schema 10 remain unchanged.
+
+v2.2.23 fixes a physical-device radio regression exposed after the smaller bitmap gateway response shipped. Diagnostics showed repeated STA associations every 6–10 seconds during one live NOW session even with -60 to -63 dBm RSSI and a completed NTP sync. Artwork layouts now keep an already associated STA up while an iPhone remains connected instead of applying Wi-Fi-off after each result, the 1,464-byte TLS transfer stays on balanced Wi-Fi/Bluetooth coexistence instead of forcing Wi-Fi priority, and an active NTP exchange serializes ahead of artwork TLS. Metadata settling increases to 1.5 seconds and a failed gateway transport no longer starts an immediate second TLS attempt. Wi-Fi sleep resumes after the Bluetooth session ends; schema 10 and the Worker API remain unchanged.
 
 Do not split the OTA transaction merely because the function is long. Its sequential structure encodes safety assumptions.
 
