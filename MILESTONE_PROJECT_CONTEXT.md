@@ -1,6 +1,6 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v2.2.23
+> Current baseline: MILESTONE Core v2.2.24
 > Hardware: Waveshare ESP32-S3-Zero + SH1107 128×128 OLED
 > Repository: `CXITRON/MILESTONE-Core`
 
@@ -89,7 +89,7 @@ The `*.inc` runtime files are intentionally included into the sketch as one tran
 Firmware and persistent schema versions are separate concepts.
 
 ```cpp
-FIRMWARE_VERSION = "2.2.23"
+FIRMWARE_VERSION = "2.2.24"
 CONFIG_VERSION = 10
 ```
 
@@ -114,7 +114,7 @@ Schema 9 appends `CUSTOM_MEDIA` as View 7 and TopMode 8 without renumbering the 
 
 ### Bluetooth Now Playing, NOW profile, and setup-AP security (v1.11.0, v2.1.0)
 
-`CoreBluetooth.inc` implements iPhone/iPad Now Playing metadata through Apple Media Service (AMS) when the Arduino-ESP32 build exposes NimBLE. Since v2.1.0, the BLE runtime is compiled only into the dedicated NOW image and is always enabled there; CORE and MEDIA contain no BLE runtime. MILESTONE advertises an AMS service solicitation plus a shortened primary-packet name, bonds with the iOS device, discovers the iPhone-hosted AMS service on the same connection, subscribes to Player/Track Entity Update attributes, and renders a large title, artist, playback state, and progress. Korean metadata uses the Korean U8g2 font and non-Korean metadata uses the Japanese font so kana/kanji titles render instead of falling back to empty glyphs. NOW does not add a ninth persistent `View`, so the existing 8-bit cycle mask and saved CORE screen-order contract remain unchanged. A NOW release must fail rather than silently compile the unsupported BLE stub when NimBLE is absent, and binary inspection must find `MILESTONE_BLE_AMS_RUNTIME_V5` only in the NOW image.
+`CoreBluetooth.inc` implements iPhone/iPad Now Playing metadata through Apple Media Service (AMS) when the Arduino-ESP32 build exposes NimBLE. Since v2.1.0, the BLE runtime is compiled only into the dedicated NOW image and is always enabled there; CORE and MEDIA contain no BLE runtime. MILESTONE advertises an AMS service solicitation plus a shortened primary-packet name, bonds with the iOS device, discovers the iPhone-hosted AMS service on the same connection, subscribes to Player/Track Entity Update attributes, and renders a large title, artist, playback state, and progress. Korean metadata uses the Korean U8g2 font and non-Korean metadata uses the Japanese font so kana/kanji titles render instead of falling back to empty glyphs. NOW does not add a ninth persistent `View`, so the existing 8-bit cycle mask and saved CORE screen-order contract remain unchanged. A NOW release must fail rather than silently compile the unsupported BLE stub when NimBLE is absent, and binary inspection must find `MILESTONE_BLE_AMS_RUNTIME_V6` only in the NOW image.
 
 The current implementation parses complete AMS Entity Update notifications and safely displays the received prefix when iOS marks a value as truncated. A later revision may add asynchronous Entity Attribute reads for the full value; do not block the main loop waiting for a GATT read. Pairing and AMS interoperability must be validated on the physical ESP32-S3/iPhone combination before treating the feature as hardware-certified.
 
@@ -208,6 +208,8 @@ v2.2.21 moves the optional NOW cover hot path to the free `milestone-artwork` Cl
 v2.2.22 moves JPEG decode, resizing, luminance conversion, and ordered dithering from the NOW device to the same free Worker. The backward-compatible `/v1/artwork` path continues to serve JPEGs to v2.2.21, while `/v2/artwork` uses a Wasm MozJPEG decoder and returns a fixed 1,464-byte `MAB1` packet containing 60×60 and 88×88 LSB-first one-bit bitmaps plus a CRC-32. NOW validates the exact length, magic, dimensions, component lengths, and payload CRC before copying either bitmap. Live cache-miss traces measured 6–9ms CPU after CRC/pixel-loop optimization, within the Workers Free 10ms request budget; no Images, R2, KV, or paid database is used. AMS text/progress, the six-entry PSRAM cache, thermal cancellation, OTA serialization, and schema 10 remain unchanged.
 
 v2.2.23 fixes a physical-device radio regression exposed after the smaller bitmap gateway response shipped. Diagnostics showed repeated STA associations every 6–10 seconds during one live NOW session even with -60 to -63 dBm RSSI and a completed NTP sync. Artwork layouts now keep an already associated STA up while an iPhone remains connected instead of applying Wi-Fi-off after each result, the 1,464-byte TLS transfer stays on balanced Wi-Fi/Bluetooth coexistence instead of forcing Wi-Fi priority, and an active NTP exchange serializes ahead of artwork TLS. Metadata settling increases to 1.5 seconds and a failed gateway transport no longer starts an immediate second TLS attempt. Wi-Fi sleep resumes after the Bluetooth session ends; schema 10 and the Worker API remain unchanged.
+
+v2.2.24 addresses the remaining physical NOW failure where a gateway transport error was still followed by AMS re-securing or advertising. Balanced coexistence alone did not guarantee enough BLE airtime while the fully awake Wi-Fi modem performed TLS. The bounded artwork worker now temporarily selects Bluetooth-priority coexistence and enables Wi-Fi minimum-modem power save only for the transfer, restoring balanced coexistence and fully awake STA immediately afterward. The requested iPhone connection interval narrows from 40–80ms to 30–40ms with zero latency and the existing 12-second supervision timeout. NTP, OTA, Wi-Fi association ordering, schema 10, and the Worker API remain unchanged.
 
 Do not split the OTA transaction merely because the function is long. Its sequential structure encodes safety assumptions.
 

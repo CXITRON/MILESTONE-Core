@@ -54,9 +54,9 @@ Options:
 
 Examples:
   cd /run/media/citron/T7/Documents/Dev/MILESTONE_Core
-  milestone-release local 2.2.23 "Stabilize NOW artwork radio coexistence"
+  milestone-release local 2.2.24 "Preserve BLE airtime during artwork TLS"
 
-  cd /tmp && milestone-release taildrop 2.2.23 "Stabilize NOW artwork radio coexistence"
+  cd /tmp && milestone-release taildrop 2.2.24 "Preserve BLE airtime during artwork TLS"
 USAGE
 }
 
