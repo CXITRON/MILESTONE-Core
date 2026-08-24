@@ -2,7 +2,7 @@
 // caches fixed MAB1 one-bit bitmaps. The ESP32 validates the header, dimensions,
 // length, and CRC before displaying them; failures never block AMS text/progress.
 
-const char NOW_ARTWORK_RUNTIME_MARKER[] __attribute__((used)) = "MILESTONE_NOW_ARTWORK_RUNTIME_V4";
+const char NOW_ARTWORK_RUNTIME_MARKER[] __attribute__((used)) = "MILESTONE_NOW_ARTWORK_RUNTIME_V5";
 constexpr uint16_t NOW_ART_SMALL_W = 60;
 constexpr uint16_t NOW_ART_SMALL_H = 60;
 constexpr uint16_t NOW_ART_LARGE_W = 88;
@@ -74,7 +74,6 @@ volatile uint8_t nowArtworkWorkerAttempts = 0;
 volatile uint8_t nowArtworkWorkerCandidates = 0;
 volatile uint32_t nowArtworkWorkerElapsedMs = 0;
 volatile uint32_t nowArtworkGeneration = 1;
-bool nowArtworkWorkerWifiPowerSave = false;
 RTC_DATA_ATTR uint32_t nowArtworkRtcMagic = 0;
 RTC_DATA_ATTR uint8_t nowArtworkRtcStage = 0;
 uint64_t nowArtworkWorkerKey = 0;
@@ -413,13 +412,13 @@ bool nowArtworkReadAppleUrl(HTTPClient &http, String &url, bool &complete, bool 
 void nowArtworkWorker(void *) {
   const uint32_t generation = nowArtworkWorkerGeneration;
   const uint32_t workerStartedMs = nowArtworkWorkerStartedMs;
-  // The response is only 1,464 bytes. Give the live AMS link priority while
-  // this bounded TLS exchange is active; the main loop also enables Wi-Fi
-  // modem sleep so coexistence has regular BLE scheduling opportunities.
-  const esp_err_t bluetoothPriorityResult = esp_coex_preference_set(ESP_COEX_PREFER_BT);
-  if (bluetoothPriorityResult != ESP_OK) {
-    logLine(String("NOW artwork Bluetooth coexistence priority failed: ") +
-            esp_err_to_name(bluetoothPriorityResult));
+  // Keep the normal balanced policy. The station is associated before BLE
+  // advertising, so the tiny gateway request does not need a runtime radio
+  // policy or modem-power transition that can stall the shared driver.
+  const esp_err_t balanceResult = esp_coex_preference_set(ESP_COEX_PREFER_BALANCE);
+  if (balanceResult != ESP_OK) {
+    logLine(String("NOW artwork balanced coexistence request failed: ") +
+            esp_err_to_name(balanceResult));
   }
   bool success = false;
   NowArtworkWorkerResult result = NowArtworkWorkerResult::NETWORK;
@@ -649,11 +648,6 @@ void nowArtworkWorker(void *) {
     success = false;
     result = NowArtworkWorkerResult::CANCELLED;
   }
-  const esp_err_t balanceResult = esp_coex_preference_set(ESP_COEX_PREFER_BALANCE);
-  if (balanceResult != ESP_OK) {
-    logLine(String("NOW artwork coexistence balance restore failed: ") +
-            esp_err_to_name(balanceResult));
-  }
   const uint32_t stackFreeBytes = uxTaskGetStackHighWaterMark(nullptr);
   nowArtworkRtcStage = 0;
   portENTER_CRITICAL(&nowArtworkMux);
@@ -713,10 +707,6 @@ void nowArtworkAcceptWorkerResult() {
   nowArtworkWorkerReady = false;
   portEXIT_CRITICAL(&nowArtworkMux);
   if (!ready) return;
-  if (nowArtworkWorkerWifiPowerSave) {
-    WiFi.setSleep(false);
-    nowArtworkWorkerWifiPowerSave = false;
-  }
   if (nowArtworkWorkerKey != nowArtworkTrackKey) {
     nowArtworkState = "settling";
     return;
@@ -776,12 +766,11 @@ bool nowArtworkLayoutUsesImage() {
 
 bool nowArtworkNeedsNetwork() {
   if (nowArtworkWorkerRunning) return true;
-  // Wi-Fi-off mode is useful outside NOW playback, but cycling STA off after
-  // every cover and associating again for each AMS metadata burst repeatedly
-  // disrupts the shared 2.4 GHz radio. Keep an already connected station up
-  // while a live iPhone session uses an artwork layout, then allow normal
-  // Wi-Fi sleep as soon as Bluetooth disconnects.
-  if (nowArtworkLayoutUsesImage() && bluetoothNowPlayingHasLiveConnection()) return true;
+  // An artwork layout requires the station to remain associated from the
+  // initial boot/NTP phase, before BLE starts advertising. Turning Wi-Fi off
+  // while idle and associating only after AMS metadata arrives disconnects the
+  // live iPhone during SETTLING, before the gateway request even begins.
+  if (nowArtworkLayoutUsesImage()) return true;
   return nowArtworkLayoutUsesImage() && nowArtworkTrackKey != 0 &&
          nowArtworkVisibleKey != nowArtworkTrackKey &&
          (!nowArtworkRetryAtMs || deadlineReached(millis(), nowArtworkRetryAtMs));
@@ -826,7 +815,8 @@ void processNowArtwork() {
   // Overlap association/DHCP with metadata settling instead of starting the
   // radio only after the debounce has elapsed. Cache hits above remain free of
   // network work.
-  if (!stationNetworkReady() && config.savedNetworkCount > 0 && !portalActive &&
+  if (!stationNetworkReady() && !bluetoothNowPlayingHasLiveConnection() &&
+      config.savedNetworkCount > 0 && !portalActive &&
       (runtimeState == RuntimeState::WIFI_SLEEP || runtimeState == RuntimeState::RUNNING_OFFLINE)) {
     startSavedWifiSequence(false);
   }
@@ -857,7 +847,7 @@ void processNowArtwork() {
       !deadlineReached(now, nowArtworkNextRequestMs)) return;
   if (!stationNetworkReady()) {
     nowArtworkState = "waiting-wifi";
-    if (config.savedNetworkCount > 0 && !portalActive &&
+    if (!bluetoothNowPlayingHasLiveConnection() && config.savedNetworkCount > 0 && !portalActive &&
         (runtimeState == RuntimeState::WIFI_SLEEP || runtimeState == RuntimeState::RUNNING_OFFLINE)) {
       startSavedWifiSequence(false);
     }
@@ -882,23 +872,8 @@ void processNowArtwork() {
   nowArtworkWorkerRunning = true;
   nowArtworkState = "lookup";
   nowArtworkNextRequestMs = millis() + NOW_ART_REQUEST_SPACING_MS;
-  // MIN_MODEM power save leaves periodic radio gaps for NimBLE while the
-  // HTTPS task waits for TCP/TLS packets. Restore fully awake STA immediately
-  // when the worker result is consumed so ordinary network behavior is
-  // unchanged outside this narrowly scoped transfer.
-  nowArtworkWorkerWifiPowerSave = false;
-  if (liveBluetooth) {
-    nowArtworkWorkerWifiPowerSave = WiFi.setSleep(true);
-    if (!nowArtworkWorkerWifiPowerSave) {
-      logLine("NOW artwork Wi-Fi modem power-save request failed");
-    }
-  }
   if (xTaskCreate(nowArtworkWorker, "now-artwork", NOW_ART_WORKER_STACK_BYTES,
                   nullptr, 1, nullptr) != pdPASS) {
-    if (nowArtworkWorkerWifiPowerSave) {
-      WiFi.setSleep(false);
-      nowArtworkWorkerWifiPowerSave = false;
-    }
     nowArtworkWorkerRunning = false;
     nowArtworkWorkerDeadlineMs = 0;
     nowArtworkState = "task-failed";

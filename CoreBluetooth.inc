@@ -20,8 +20,8 @@ constexpr uint8_t AMS_TRACK_TITLE = 2;
 constexpr uint8_t AMS_TRACK_DURATION = 3;
 constexpr uint8_t AMS_FLAG_TRUNCATED = 0x01;
 constexpr uint32_t AMS_DISCOVERY_RETRY_MS = 5000UL;
-constexpr uint16_t AMS_CONN_INTERVAL_MIN = 24;   // 30 ms in 1.25 ms units.
-constexpr uint16_t AMS_CONN_INTERVAL_MAX = 32;   // 40 ms.
+constexpr uint16_t AMS_CONN_INTERVAL_MIN = 32;   // 40 ms in 1.25 ms units.
+constexpr uint16_t AMS_CONN_INTERVAL_MAX = 64;   // 80 ms.
 constexpr uint16_t AMS_CONN_LATENCY = 0;
 constexpr uint16_t AMS_CONN_TIMEOUT = 1200;      // 12 seconds in 10 ms units.
 constexpr size_t AMS_NOTIFICATION_MAX = 244;
@@ -34,7 +34,7 @@ constexpr uint32_t BLE_SECURITY_POLL_MS = 250UL;
 constexpr char BLE_DEVICE_NAME[] = "MILESTONE";
 // make-release.sh verifies this executed marker in the compiled NOW image,
 // preventing a BLE stub from being published as a working build.
-constexpr char BLE_RUNTIME_MARKER[] = "MILESTONE_BLE_AMS_RUNTIME_V6";
+constexpr char BLE_RUNTIME_MARKER[] = "MILESTONE_BLE_AMS_RUNTIME_V7";
 
 enum class BluetoothRuntimeStage : uint8_t {
   OFF,
