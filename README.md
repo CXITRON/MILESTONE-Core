@@ -141,9 +141,9 @@ NOW 프로필은 iPhone/iPad의 **Apple Media Service(AMS)** 를 이용해 Bluet
 
 연결과 AMS 구독이 준비되면 곡 제목, 아티스트, 재생/일시정지 상태와 재생 진행률을 표시하고, 앨범명 메타데이터는 표지 검색에만 사용합니다. NOW에서 BOOT 버튼을 1초 미만으로 누르거나 설정 포털의 **NOW 표시**에서 `곡명만`, `곡명 + 아티스트`, `곡명 + 앨범 표지`, `앨범 표지 중심`을 선택합니다. 모든 구성에 진행 막대와 재생/전체 시간이 남고, 텍스트 구성에서는 곡 제목을 아티스트보다 크게 표시합니다. 긴 한글·일본어·영문 텍스트는 UTF-8 스크롤 렌더러를 사용합니다. NOW는 기존 8비트 CORE 순환 마스크와 저장된 화면 순서를 변경하지 않습니다.
 
-표지 구성은 ESP32가 Apple·MusicBrainz·Cover Art Archive를 직접 순회하지 않고 무료 `milestone-artwork` Cloudflare Worker에 AMS 곡명·아티스트·앨범명을 한 번만 전송합니다. Worker는 미국 동부 근처에서 Deezer 공개 카탈로그를 `곡명 + 앨범명`, 필요하면 `곡명 + 아티스트` 순서로 제한 조회한 뒤 JPEG 디코드·축소·휘도 변환·ordered dithering까지 수행합니다. 성공 응답은 60×60과 88×88 1비트 이미지를 함께 담은 고정 1,464바이트 `MAB1` 패킷이며, ESP32는 길이·매직·크기·CRC-32를 검증하고 바로 표시합니다. 정규화된 메타데이터의 SHA-256 키로 성공 결과는 30일, 표지 없음은 6시간 동안 edge cache에 보관하며 원문 메타데이터를 캐시 URL이나 로그에 넣지 않습니다. Images·R2·KV·유료 데이터베이스를 사용하지 않아 Workers Free 한도를 넘으면 과금되지 않고 요청이 실패합니다. 실배포 캐시 미스 추적에서 변환 성공 건은 6~9ms CPU로 무료 요청당 10ms 범위 안이었고, 기존 펌웨어용 `/v1/artwork` JPEG 응답도 병행 유지합니다. 기기는 최근 6곡을 PSRAM에 보관하며, 곡을 연속으로 넘길 때는 마지막 메타데이터 변경 후 0.8초가 지난 최신 곡만 조회하고 늦게 끝난 이전 결과는 폐기합니다. 중계 실패·표지 없음·오프라인·메모리 부족이어도 다른 공급자로 확산 요청하지 않고 AMS 텍스트와 진행률을 계속 표시합니다.
+표지 구성은 ESP32가 Apple·MusicBrainz·Cover Art Archive를 직접 순회하지 않고 무료 `milestone-artwork` Cloudflare Worker에 AMS 곡명·아티스트·앨범명을 한 번만 전송합니다. ESP32와 Worker 사이의 이 요청만 Wi-Fi/BLE TLS 경합과 `INT WDT`를 피하기 위해 암호화되지 않은 bounded HTTP를 사용하므로 곡 메타데이터는 네트워크에서 평문으로 보일 수 있습니다. Wi-Fi 비밀번호·Apple 계정·인증 토큰은 보내지 않으며 Worker의 Deezer 카탈로그·이미지 조회는 HTTPS를 유지합니다. Worker는 공개 카탈로그를 `곡명 + 앨범명`, 필요하면 `곡명 + 아티스트` 순서로 제한 조회한 뒤 JPEG 디코드·축소·휘도 변환·ordered dithering까지 수행합니다. 성공 응답은 60×60과 88×88 1비트 이미지를 함께 담은 고정 1,464바이트 `MAB1` 패킷이며, ESP32는 길이·매직·크기·CRC-32를 검증하고 바로 표시합니다. CRC는 손상 검출과 파서 안전을 위한 것이며 서버 인증을 대신하지 않습니다. 정규화된 메타데이터의 SHA-256 키로 성공 결과는 30일, 표지 없음은 6시간 동안 edge cache에 보관하며 원문 메타데이터를 캐시 URL이나 로그에 넣지 않습니다. Images·R2·KV·유료 데이터베이스를 사용하지 않아 Workers Free 한도를 넘으면 과금되지 않고 요청이 실패합니다. 실배포 캐시 미스 추적에서 변환 성공 건은 6~9ms CPU로 무료 요청당 10ms 범위 안이었고, 기존 펌웨어용 `/v1/artwork` JPEG 응답도 병행 유지합니다. 기기는 최근 6곡을 PSRAM에 보관하며, 곡을 연속으로 넘길 때는 마지막 메타데이터 변경 후 1.5초가 지난 최신 곡만 조회하고 늦게 끝난 이전 결과는 폐기합니다. 중계 실패·표지 없음·오프라인·메모리 부족이어도 다른 공급자로 확산 요청하지 않고 AMS 텍스트와 진행률을 계속 표시합니다.
 
-NOW의 업데이트 확인·설치는 먼저 광고를 중단하고, 애플리케이션 플래그뿐 아니라 NimBLE 서버의 실제 peer와 GAP connection handle을 함께 확인해 살아 있는 iPhone 연결을 종료합니다. 연결 종료가 확인되면 NimBLE 객체는 삭제하지 않은 채 유지하고 오래된 AMS/GAP 이벤트를 비운 뒤 HTTPS를 시작합니다. 2.5초 안에 실제 연결이 사라지지 않거나 TLS용 내부 RAM이 부족하면 재부팅을 감수하지 않고 업데이트 작업을 미룹니다. 일반 표지 조회는 AMS 연결을 유지해야 하므로 BLE 연결 간격을 40~80ms·latency 0·12초 supervision timeout으로 요청하고, 내부 RAM이 80KiB 또는 최대 연속 블록 32KiB 미만이면 선택 기능인 표지만 `LOW-MEMORY`로 건너뜁니다.
+NOW의 업데이트 확인·설치는 먼저 광고를 중단하고, 애플리케이션 플래그뿐 아니라 NimBLE 서버의 실제 peer와 GAP connection handle을 함께 확인해 살아 있는 iPhone 연결을 종료합니다. 연결 종료가 확인되면 NimBLE 객체는 삭제하지 않은 채 유지하고 오래된 AMS/GAP 이벤트를 비운 뒤 HTTPS를 시작합니다. 2.5초 안에 실제 연결이 사라지지 않거나 TLS용 내부 RAM이 부족하면 재부팅을 감수하지 않고 업데이트 작업을 미룹니다. 일반 표지 조회는 AMS 연결을 유지해야 하므로 BLE 연결 간격을 40~80ms·latency 0·12초 supervision timeout으로 요청하고, 내부 RAM이 80KiB 또는 최대 연속 블록 32KiB 미만이면 선택 기능인 표지만 `LOW-MEMORY`로 건너뜁니다. 표지 전송 자체는 v2.3.1부터 TLS를 사용하지 않지만 이 RAM 기준은 Bluetooth와 HTTP 작업의 전체 안정성 여유로 유지합니다.
 
 현재 버전은 AMS 알림 안에 완전히 들어온 메타데이터를 표시합니다. iOS가 긴 문자열을 truncated로 표시한 경우 안전하게 수신된 접두부까지만 표시할 수 있으며, 전체 값을 별도 Entity Attribute 읽기로 다시 가져오는 확장은 후속 대상으로 남겨 두었습니다. 또한 ESP32-S3와 실제 iPhone 사이의 페어링·AMS 상호운용은 펌웨어 업로드 후 실기기에서 확인해야 합니다. Android의 범용 현재곡 표시를 이 기능의 지원 범위로 보장하지 않습니다.
 
@@ -296,13 +296,13 @@ PC의 현재 프로젝트를 직접 수정한 경우에는 **MILESTONE_Core 프�
 
 ```bash
 cd /run/media/citron/T7/Documents/Dev/MILESTONE_Core
-milestone-release local 2.3.0 "Serialize NOW Bluetooth and background network recovery"
+milestone-release local 2.3.1 "Remove artwork TLS watchdog contention"
 ```
 
 Tailscale Taildrop으로 `MILESTONE_Core_1.10.6.zip`을 받은 경우에는 교체 대상 프로젝트 디렉터리 밖의 정상적으로 존재하는 디렉터리에서 실행합니다. 기존 프로젝트가 교체될 때 현재 셸 경로가 사라지는 문제를 방지하기 위해 `/tmp`로 이동하는 방식을 권장합니다.
 
 ```bash
-cd /tmp && milestone-release taildrop 2.3.0 "Serialize NOW Bluetooth and background network recovery"
+cd /tmp && milestone-release taildrop 2.3.1 "Remove artwork TLS watchdog contention"
 ```
 
 Taildrop 모드는 ZIP을 라이브 프로젝트에 바로 덮어쓰지 않습니다. 별도 staging 디렉터리에서 구조·버전·Git 상태를 검사하고 테스트와 ESP32 릴리즈 빌드까지 성공한 뒤에만 프로젝트를 교체합니다. GitHub 게시 전 실패하면 기존 프로젝트를 자동 복구합니다. `--dry-run`은 테스트/빌드까지만 수행하고 로컬 프로젝트·Git·GitHub를 변경하지 않습니다. `--yes`를 사용하지 않는 기본 동작은 최종 게시 직전에 한 번 확인합니다.
@@ -319,10 +319,10 @@ Taildrop 모드는 ZIP을 라이브 프로젝트에 바로 덮어쓰지 않습�
 
 ```bash
 chmod +x tools/make-release.sh
-./tools/make-release.sh 2.3.0 "Serialize NOW Bluetooth and background network recovery"
+./tools/make-release.sh 2.3.1 "Remove artwork TLS watchdog contention"
 ```
 
-기본 설명을 사용하려면 `./tools/make-release.sh 2.3.0`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
+기본 설명을 사용하려면 `./tools/make-release.sh 2.3.1`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
 
 다음 여섯 파일이 `release/`에 생성됩니다.
 
@@ -346,8 +346,8 @@ release/MILESTONE_Now.json
 일반적인 게시에는 위의 `milestone-release`를 사용합니다. 아래 수동 절차는 자동화 도구를 복구하거나 디버깅해야 할 때만 참고합니다.
 
 1. 저장소의 `Releases`에서 `Draft a new release`를 선택합니다.
-2. 버전과 동일한 태그를 만듭니다. 예: `v2.3.0`
-3. Release 제목을 `MILESTONE Core v2.3.0`로 지정합니다.
+2. 버전과 동일한 태그를 만듭니다. 예: `v2.3.1`
+3. Release 제목을 `MILESTONE Core v2.3.1`로 지정합니다.
 4. CORE/MEDIA/NOW의 BIN과 JSON 여섯 파일을 모두 첨부합니다.
 5. Pre-release가 아닌 최신 정식 Release로 게시합니다.
 6. NOW 실기기에서 `orion / 요네즈 켄시 / BOOTLEG`와 표지가 없는 곡을 재생해 중계 HTTP 200/204가 각각 빠르게 끝나고 AMS 연결·텍스트·진행률이 유지되는지 검증합니다.
@@ -403,6 +403,19 @@ Taildrop ZIP의 `milestone-release`가 현재 설치본보다 새로우면, 게�
 - STREAM_MODE에서 일반 백그라운드 기능을 격리하고 PSRAM 240프레임 링버퍼·X/Y dirty-tile OLED 갱신·적응형 출력 주기·프레임 드롭·80°C 스트림 상한으로 영상 수신/표시에 집중
 - 라이브 송신은 96프레임 초기 충전 후 큐 64프레임 이하에서 최대 8프레임씩 144프레임 이상으로 보충하며 ESP32가 소스 시간축과 OLED 출력 클록을 분리해 관리
 - 비차단 3초 부팅 로고와 우상단 NTP `T`·업데이트 `U` 상태 아이콘
+
+## v2.3.1 업데이트 안내
+
+v2.3.1은 표지 전송에서 반복된 `NETWORK-FAILED`와 설치 검증 후 발생한 `INT WDT`를 제거하기 위해 ESP32의 표지 TLS 경로를 없앱니다.
+
+- 소유 중인 Worker의 포트 80 POST가 실제 HTTP 200과 동일한 1,464바이트 `MAB1` 패킷을 반환하는지 실배포 검증
+- ESP32→Worker 표지 요청만 bounded 평문 HTTP로 전환해 TLS handshake·인증서·보안 클라이언트 제거
+- 런타임 `esp_coex_preference_set` 호출을 완전히 제거해 Wi-Fi/BLE 드라이버 잠금 중 인터럽트 WDT 가능성 차단
+- 곡명·아티스트·앨범명은 해당 구간에서 암호화되지 않지만 Wi-Fi 비밀번호·Apple 계정·인증 토큰은 전송하지 않음
+- Worker→Deezer 이미지 조회, GitHub OTA와 기타 민감한 통신은 계속 HTTPS 사용
+- 고정 길이·매직·크기·CRC 검증은 메모리 안전과 손상 검출을 유지하지만 응답 인증을 의미하지는 않음
+
+정식 버전: `2.3.1`
 
 ## v2.3.0 업데이트 안내
 

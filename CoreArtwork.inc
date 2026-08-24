@@ -2,7 +2,7 @@
 // caches fixed MAB1 one-bit bitmaps. The ESP32 validates the header, dimensions,
 // length, and CRC before displaying them; failures never block AMS text/progress.
 
-const char NOW_ARTWORK_RUNTIME_MARKER[] __attribute__((used)) = "MILESTONE_NOW_ARTWORK_RUNTIME_V5";
+const char NOW_ARTWORK_RUNTIME_MARKER[] __attribute__((used)) = "MILESTONE_NOW_ARTWORK_RUNTIME_V6";
 constexpr uint16_t NOW_ART_SMALL_W = 60;
 constexpr uint16_t NOW_ART_SMALL_H = 60;
 constexpr uint16_t NOW_ART_LARGE_W = 88;
@@ -267,9 +267,7 @@ NowArtworkDownloadResult nowArtworkReadGatewayBitmap(
     int16_t &httpCode, uint32_t generation) {
   httpCode = 0;
   if (!NOW_ARTWORK_SERVICE_URL[0]) return NowArtworkDownloadResult::FAILED;
-  NetworkClientSecure client;
-  client.setCACert(MILESTONE_UPDATE_ROOT_CA);
-  client.setHandshakeTimeout(NOW_ART_TLS_HANDSHAKE_TIMEOUT_SEC);
+  WiFiClient client;
   HTTPClient http;
   http.setConnectTimeout(5000);
   http.setTimeout(7000);
@@ -412,14 +410,6 @@ bool nowArtworkReadAppleUrl(HTTPClient &http, String &url, bool &complete, bool 
 void nowArtworkWorker(void *) {
   const uint32_t generation = nowArtworkWorkerGeneration;
   const uint32_t workerStartedMs = nowArtworkWorkerStartedMs;
-  // Keep the normal balanced policy. The station is associated before BLE
-  // advertising, so the tiny gateway request does not need a runtime radio
-  // policy or modem-power transition that can stall the shared driver.
-  const esp_err_t balanceResult = esp_coex_preference_set(ESP_COEX_PREFER_BALANCE);
-  if (balanceResult != ESP_OK) {
-    logLine(String("NOW artwork balanced coexistence request failed: ") +
-            esp_err_to_name(balanceResult));
-  }
   bool success = false;
   NowArtworkWorkerResult result = NowArtworkWorkerResult::NETWORK;
   int16_t finalGatewayHttpCode = 0;

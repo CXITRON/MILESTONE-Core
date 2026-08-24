@@ -18,7 +18,7 @@ reject() {
   fi
 }
 
-require 'FIRMWARE_VERSION\[\] = "2\.3\.0"' MILESTONE_Core.ino 'firmware version is not 2.3.0'
+require 'FIRMWARE_VERSION\[\] = "2\.3\.1"' MILESTONE_Core.ino 'firmware version is not 2.3.1'
 require 'CONFIG_VERSION = 10' MILESTONE_Core.ino 'configuration schema is not 10'
 require 'bool fixedApSecurity = false;' MILESTONE_Core.ino 'fixed AP security must default off'
 require 'String fixedApPassword;' MILESTONE_Core.ino 'fixed AP password setting missing'
@@ -140,9 +140,9 @@ require 'AMS_CONN_LATENCY = 0' CoreBluetooth.inc 'AMS peripheral latency can sta
 require 'AMS_CONN_TIMEOUT = 1200' CoreBluetooth.inc 'AMS supervision timeout is too short for Wi-Fi TLS coexistence'
 require 'event->disconnect\.reason' CoreBluetooth.inc 'BLE disconnect reason is not captured for coexistence diagnosis'
 require 'bluetooth_disconnect_reason' CorePortal.inc 'portal must expose the last BLE disconnect reason'
-require 'MILESTONE_NOW_ARTWORK_RUNTIME_V5' CoreArtwork.inc 'NOW artwork runtime marker missing'
+require 'MILESTONE_NOW_ARTWORK_RUNTIME_V6' CoreArtwork.inc 'NOW artwork runtime marker missing'
 require 'NOW_ARTWORK_SERVICE_URL' MILESTONE_Core.ino 'NOW artwork gateway URL is missing'
-require 'https://milestone-artwork\.typhoon-individual\.workers\.dev/v2/artwork' MILESTONE_Core.ino 'NOW bitmap gateway deployment URL is not configured'
+require 'http://milestone-artwork\.typhoon-individual\.workers\.dev/v2/artwork' MILESTONE_Core.ino 'NOW bitmap gateway HTTP URL is not configured'
 require 'NOW_ART_GATEWAY_ATTEMPTS = 1' CoreArtwork.inc 'NOW artwork must not repeat TLS immediately during a live AMS session'
 require 'nowArtworkReadGatewayBitmap' CoreArtwork.inc 'NOW bitmap gateway client is missing'
 require 'http\.POST\(body\)' CoreArtwork.inc 'NOW artwork metadata must use a bounded POST body'
@@ -154,18 +154,26 @@ reject '^#include <jpeg_decoder\.h>' MILESTONE_Core.ino 'NOW still includes the 
 require 'artwork_gateway_code' CorePortal.inc 'NOW portal must expose the gateway HTTP result'
 require 'artwork_gateway_enabled' CorePortal.inc 'NOW portal must expose whether the gateway path is active'
 require '무료 캐시 중계 서비스' PortalPage.h 'NOW portal must explain the gateway artwork path'
+require '암호화되지 않은 HTTP' PortalPage.h 'NOW portal must disclose plaintext artwork metadata transport'
 require 'xTaskCreate\(nowArtworkWorker' CoreArtwork.inc 'artwork lookup must stay off the cooperative main loop'
 require 'NOW_ART_TRACK_SETTLE_MS' CoreArtwork.inc 'rapid track changes need a settle/debounce window'
-require 'NOW_ART_TLS_HANDSHAKE_TIMEOUT_SEC = 3UL' CoreArtwork.inc 'artwork TLS handshake can overrun a short-track budget'
-reject 'esp_coex_preference_set\(ESP_COEX_PREFER_WIFI\)' CoreArtwork.inc 'artwork TLS must not starve the live AMS connection with Wi-Fi priority'
-reject 'esp_coex_preference_set\(ESP_COEX_PREFER_BT\)' CoreArtwork.inc 'artwork TLS must not change coexistence priority at runtime'
-require 'esp_coex_preference_set\(ESP_COEX_PREFER_BALANCE\)' CoreArtwork.inc 'artwork worker must retain balanced radio coexistence'
+reject 'esp_coex_preference_set' CoreArtwork.inc 'artwork transport must not call the coexistence driver at runtime'
+reject '#include <esp_coexist\.h>' MILESTONE_Core.ino 'firmware must not retain the unused coexistence driver header'
 reject 'nowArtworkWorkerWifiPowerSave|WiFi\.setSleep\(true\)' CoreArtwork.inc 'artwork TLS must not toggle modem power state at runtime'
 require 'if \(nowArtworkLayoutUsesImage\(\)\) return true' CoreArtwork.inc 'artwork layout must keep Wi-Fi associated before BLE advertising'
 require '!stationNetworkReady\(\) && !bluetoothNowPlayingHasLiveConnection\(\)' CoreArtwork.inc 'artwork must not start STA association during a live AMS session'
 require 'nowArtworkDefersStationRecovery\(\)' CoreArtwork.inc 'artwork runtime must expose its live-AMS network deferral'
 require 'stationRecoveryDeferredForArtwork = nowArtworkDefersStationRecovery\(\)' CoreRuntime.inc 'general network retries must observe live artwork AMS deferral'
 require '!stationRecoveryDeferredForArtwork' CoreRuntime.inc 'periodic NTP and STA recovery must stay deferred during live artwork AMS'
+python3 - <<'PY_GATEWAY_TRANSPORT'
+from pathlib import Path
+s = Path('CoreArtwork.inc').read_text()
+start = s.index('NowArtworkDownloadResult nowArtworkReadGatewayBitmap(')
+end = s.index('\n#if 0', start)
+body = s[start:end]
+assert 'WiFiClient client;' in body, 'production artwork gateway must use bounded plain HTTP'
+assert 'NetworkClientSecure' not in body, 'production artwork gateway still creates a TLS client'
+PY_GATEWAY_TRANSPORT
 require 'time-sync-paused' CoreArtwork.inc 'artwork TLS must not overlap an active NTP exchange'
 require 'stageFirmwareInstallForRamRecovery\(\)' CoreUpdate.inc 'low-RAM NOW install needs a reboot recovery path'
 require 'loadStagedFirmwareInstallRecord\(\)' CoreRuntime.inc 'RAM recovery install must load before Bluetooth initialization'

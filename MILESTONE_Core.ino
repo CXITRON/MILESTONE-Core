@@ -21,7 +21,6 @@
 #include <esp_timer.h>
 #include <esp_err.h>
 #include <esp_wifi.h>
-#include <esp_coexist.h>
 #include <esp_heap_caps.h>
 #include <time.h>
 #include "driver/temperature_sensor.h"
@@ -74,7 +73,7 @@ SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 
 namespace Milestone {
 
-constexpr char FIRMWARE_VERSION[] = "2.3.0";
+constexpr char FIRMWARE_VERSION[] = "2.3.1";
 constexpr char FIRMWARE_PROFILE[] = MILESTONE_FIRMWARE_PROFILE;
 constexpr char FIRMWARE_PROFILE_LABEL[] = MILESTONE_FIRMWARE_PROFILE_LABEL;
 constexpr char FIRMWARE_PROFILE_MARKER[] = MILESTONE_PROFILE_MARKER;
@@ -89,7 +88,7 @@ constexpr char UPDATE_MANIFEST_ASSET[] = MILESTONE_MANIFEST_ASSET;
 // The configured gateway is exclusive: a gateway failure leaves the optional
 // cover unavailable instead of fanning out into multiple on-device providers.
 constexpr char NOW_ARTWORK_SERVICE_URL[] =
-    "https://milestone-artwork.typhoon-individual.workers.dev/v2/artwork";
+    "http://milestone-artwork.typhoon-individual.workers.dev/v2/artwork";
 constexpr uint16_t CONFIG_VERSION = 10;
 constexpr uint8_t VIEW_COUNT = 8;
 constexpr uint8_t MAX_SAVED_NETWORKS = 8;

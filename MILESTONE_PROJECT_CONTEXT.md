@@ -1,6 +1,6 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v2.3.0
+> Current baseline: MILESTONE Core v2.3.1
 > Hardware: Waveshare ESP32-S3-Zero + SH1107 128×128 OLED
 > Repository: `CXITRON/MILESTONE-Core`
 
@@ -89,7 +89,7 @@ The `*.inc` runtime files are intentionally included into the sketch as one tran
 Firmware and persistent schema versions are separate concepts.
 
 ```cpp
-FIRMWARE_VERSION = "2.3.0"
+FIRMWARE_VERSION = "2.3.1"
 CONFIG_VERSION = 10
 ```
 
@@ -214,6 +214,8 @@ v2.2.24 addresses the remaining physical NOW failure where a gateway transport e
 v2.2.25 fixes the actual `SETTLING` to `SECURING` transition seen on hardware: the disconnect occurred before artwork TLS, when Wi-Fi-off mode had shut down STA after boot NTP and the first AMS metadata then started a fresh association. Artwork layouts now keep the boot-established station associated even before an iPhone connects, and a live AMS session never starts a new STA association. Text layouts retain the configured Wi-Fi-off behavior. The v2.2.24 runtime modem-power/coexistence transitions and shortened connection interval are removed after one candidate boot produced an interrupt watchdog reset; artwork TLS remains on the normal balanced policy. Schema 10 and the Worker API remain unchanged.
 
 v2.3.0 closes the remaining common-runtime path after the v2.2.25 artwork-specific fix. While an iPhone is live in an artwork layout, the general network state machine now defers periodic NTP, offline retry, and saved-STA recovery instead of starting them independently of `CoreArtwork.inc`; automatic update reconnection observes the same deferral. The due work remains pending and resumes naturally after Bluetooth disconnects. Boot still establishes STA and completes its bounded NTP attempt before BLE advertising, artwork TLS stays on balanced coexistence, text-only layouts retain Wi-Fi-off behavior, and schema 10 is unchanged.
+
+v2.3.1 responds to the confirmed post-validation `INT WDT` and persistent `network-failed` during the artwork transport. Live deployment testing proved that the owned Workers endpoint accepts port-80 POST directly and returns the same fixed 1,464-byte `MAB1` response. The NOW device therefore uses bounded plain HTTP for this one non-credential metadata/bitmap exchange, removing its TLS client and every runtime `esp_coex_preference_set` call; Cloudflare's upstream catalog/image work remains HTTPS. Track metadata is not encrypted on the device-to-Worker hop, which is disclosed in the portal and README. Exact length, magic, dimensions, component sizes, and CRC still protect parser/memory integrity but are not authentication. OTA and all other sensitive firmware traffic remain HTTPS; schema 10 is unchanged.
 
 Do not split the OTA transaction merely because the function is long. Its sequential structure encodes safety assumptions.
 

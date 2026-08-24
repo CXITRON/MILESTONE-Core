@@ -54,9 +54,9 @@ Options:
 
 Examples:
   cd /run/media/citron/T7/Documents/Dev/MILESTONE_Core
-  milestone-release local 2.3.0 "Serialize NOW Bluetooth and background network recovery"
+  milestone-release local 2.3.1 "Remove artwork TLS watchdog contention"
 
-  cd /tmp && milestone-release taildrop 2.3.0 "Serialize NOW Bluetooth and background network recovery"
+  cd /tmp && milestone-release taildrop 2.3.1 "Remove artwork TLS watchdog contention"
 USAGE
 }
 
