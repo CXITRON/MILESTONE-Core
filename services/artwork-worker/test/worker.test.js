@@ -4,6 +4,7 @@ import jpeg from "jpeg-js";
 import worker, {
   chooseAppleArtwork,
   chooseDeezerArtwork,
+  extractAppleMusicPageArtwork,
   extractReleaseGroups,
   crc32,
   makeAdaptiveToneLut,
@@ -48,6 +49,19 @@ test("Apple result selection prefers an exact localized track and artist", () =>
     { trackName: "Ｏｒｉｏｎ", artistName: "요네즈  켄시", artworkUrl100: "https://img/exact.jpg" },
   ];
   assert.equal(chooseAppleArtwork(results, "Orion", "요네즈 켄시"), "https://img/exact.jpg");
+});
+
+test("Apple Music page selection validates the top result title and artist", () => {
+  const html = '<div class="top" data-testid="top-search-result" ' +
+    'aria-label="マーシャル・マキシマイザー (feat. 可不) · 노래 · 柊マグネタイト">' +
+    '<source srcset="https://is1-ssl.mzstatic.com/image/thumb/id/110x110bb-60.jpg 110w">';
+  assert.equal(
+    extractAppleMusicPageArtwork(
+      html, "マーシャル・マキシマイザー (feat. 可不)", "柊マグネタイト",
+    ),
+    "https://is1-ssl.mzstatic.com/image/thumb/id/110x110bb-60.jpg",
+  );
+  assert.equal(extractAppleMusicPageArtwork(html, "Other", "柊マグネタイト"), "");
 });
 
 test("Deezer selection can match album when the artist name is localized", () => {
@@ -183,6 +197,47 @@ test("worker returns and reuses a converted bitmap cache entry", async () => {
   assert.equal(second.status, 200);
   assert.equal(deezerCalls, 1);
   assert.equal(imageCalls, 1);
+});
+
+test("worker falls back to a validated Apple Music page result when Deezer has none", async () => {
+  const cache = new MemoryCache();
+  let deezerCalls = 0;
+  let appleCalls = 0;
+  const rgba = new Uint8Array(16 * 16 * 4).fill(255);
+  const jpegBytes = jpeg.encode({ data: rgba, width: 16, height: 16 }, 90).data;
+  const upstream = async (url) => {
+    const value = String(url);
+    if (value.startsWith("https://api.deezer.com/search")) {
+      deezerCalls += 1;
+      return Response.json({ data: [] });
+    }
+    if (value.startsWith("https://music.apple.com/kr/search")) {
+      appleCalls += 1;
+      return new Response(
+        '<div data-testid="top-search-result" ' +
+        'aria-label="マーシャル・マキシマイザー (feat. 可不) · 노래 · 柊マグネタイト">' +
+        '<source srcset="https://img.example/apple.jpg/110x110bb-60.jpg 110w">',
+      );
+    }
+    if (value === "https://img.example/apple.jpg/110x110bb-60.jpg") {
+      return new Response(jpegBytes, {
+        headers: { "Content-Type": "image/jpeg", "Content-Length": String(jpegBytes.byteLength) },
+      });
+    }
+    throw new Error(`unexpected URL: ${value}`);
+  };
+  const response = await worker.fetch(new Request("https://worker.example/v2/artwork", {
+    method: "POST",
+    body: new URLSearchParams({
+      title: "マーシャル・マキシマイザー (feat. 可不)",
+      artist: "柊マグネタイト",
+      album: "KAF+YOU KAFU COMPILATION ALBUM シンメトリー",
+    }),
+  }), { __cache: cache, __fetch: upstream, __decode: decodeForTest }, { waitUntil() {} });
+  assert.equal(response.status, 200);
+  assert.equal(deezerCalls, 2);
+  assert.equal(appleCalls, 1);
+  assert.equal((await response.arrayBuffer()).byteLength, 1464);
 });
 
 test("v1 endpoint remains JPEG-compatible during firmware rollout", async () => {

@@ -1,9 +1,12 @@
 # MILESTONE Artwork Worker
 
 This Cloudflare Worker is the optional artwork gateway for the NOW firmware.
-It performs two bounded Deezer catalog searches, selects a 96-pixel provider
-thumbnail, and stores positive and negative responses in the Cloudflare edge
-cache. `/v1/artwork` preserves the JPEG response for v2.2.21 devices.
+It races two bounded Deezer catalog searches against the first 48 KiB of Apple
+Music's public search page. The Apple result is accepted only when its top
+result contains both the normalized title and artist, and only its bounded JPEG
+thumbnail is fetched. Positive and negative responses are stored in the
+Cloudflare edge cache. `/v1/artwork` preserves the JPEG response for v2.2.21
+devices.
 `/v2/artwork` decodes with Wasm MozJPEG, applies bounded adaptive exposure and
 a gamma-0.8 lookup table only to dark covers, then uses 4×4 Bayer ordered
 dithering. It returns a fixed 1,464-byte `MAB1` packet containing 60×60 and

@@ -14,7 +14,8 @@ const LARGE_BYTES = Math.ceil(LARGE_WIDTH / 8) * LARGE_HEIGHT;
 const BITMAP_HEADER_BYTES = 16;
 const BITMAP_PACKET_BYTES = BITMAP_HEADER_BYTES + SMALL_BYTES + LARGE_BYTES;
 const BITMAP_CONTENT_TYPE = "application/vnd.milestone.artwork-bitmap";
-const BITMAP_CACHE_VERSION = "mab1-adaptive-tone-v1";
+const BITMAP_CACHE_VERSION = "mab1-adaptive-tone-apple-page-v1";
+const MAX_APPLE_PAGE_BYTES = 48 * 1024;
 const GAMMA_LUT = new Uint8Array(256);
 for (let value = 0; value < GAMMA_LUT.length; value += 1) {
   GAMMA_LUT[value] = Math.round(255 * Math.pow(value / 255, 0.8));
@@ -72,6 +73,25 @@ async function readLimited(response, maximum) {
     offset += chunk.byteLength;
   }
   return joined;
+}
+
+async function readPrefix(response, maximum) {
+  const reader = response.body?.getReader();
+  if (!reader) return new Uint8Array();
+  const output = new Uint8Array(maximum);
+  let total = 0;
+  while (total < maximum) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    const available = Math.min(value.byteLength, maximum - total);
+    output.set(value.subarray(0, available), total);
+    total += available;
+    if (available < value.byteLength || total === maximum) {
+      await reader.cancel("prefix-complete");
+      break;
+    }
+  }
+  return output.subarray(0, total);
 }
 
 function timeoutSignal(milliseconds) {
@@ -181,6 +201,44 @@ async function appleArtwork(fetcher, metadata, trace) {
   return chooseAppleArtwork(body.results, metadata.title, metadata.artist);
 }
 
+function decodeHtmlAttribute(value) {
+  return String(value || "")
+    .replace(/&quot;/giu, '"')
+    .replace(/&#(?:0*39|x0*27);/giu, "'")
+    .replace(/&amp;/giu, "&")
+    .replace(/&lt;/giu, "<")
+    .replace(/&gt;/giu, ">");
+}
+
+function extractAppleMusicPageArtwork(html, title, artist) {
+  const block = /<div\b[^>]*data-testid="top-search-result"[^>]*aria-label="([^"]*)"[^>]*>([\s\S]{0,16000})/iu.exec(
+    html,
+  );
+  if (!block) return "";
+  const label = comparableText(decodeHtmlAttribute(block[1]));
+  if (!label.includes(comparableText(title)) || !label.includes(comparableText(artist))) {
+    return "";
+  }
+  const artwork = /https:\/\/[^"'\s,]+\/110x110bb-60\.jpg/iu.exec(block[2])?.[0] || "";
+  return decodeHtmlAttribute(artwork);
+}
+
+async function appleMusicPageArtwork(fetcher, metadata, trace) {
+  const url = new URL("https://music.apple.com/kr/search");
+  url.search = new URLSearchParams({ term: `${metadata.title} ${metadata.artist}` });
+  const response = await boundedFetch(fetcher, url, {
+    headers: { "User-Agent": USER_AGENT, Accept: "text/html" },
+  });
+  trace.push(`apple-page:${response.status}`);
+  if (!response.ok) return "";
+  const bytes = await readPrefix(response, MAX_APPLE_PAGE_BYTES);
+  const artwork = extractAppleMusicPageArtwork(
+    new TextDecoder().decode(bytes), metadata.title, metadata.artist,
+  );
+  trace.push(`apple-page-match:${artwork ? 1 : 0}`);
+  return artwork;
+}
+
 function musicBrainzQuery(kind, value, artist) {
   const url = new URL(`https://musicbrainz.org/ws/2/${kind}/`);
   const field = kind === "release-group" ? "release" : "recording";
@@ -210,8 +268,7 @@ async function musicBrainzCandidates(fetcher, metadata, trace) {
   return [];
 }
 
-async function sourceArtwork(fetcher, metadata) {
-  const trace = [];
+async function deezerSourceArtwork(fetcher, metadata, trace) {
   try {
     const deezerUrl = await deezerArtwork(fetcher, metadata, trace);
     if (deezerUrl) {
@@ -225,6 +282,57 @@ async function sourceArtwork(fetcher, metadata) {
   } catch (error) {
     trace.push(`deezer-error:${error?.message || "unknown"}`);
   }
+  return null;
+}
+
+async function appleSourceArtwork(fetcher, metadata, trace) {
+  try {
+    const appleUrl = await appleMusicPageArtwork(fetcher, metadata, trace);
+    if (appleUrl) {
+      const response = await boundedFetch(fetcher, appleUrl, {
+        headers: { "User-Agent": USER_AGENT, Accept: "image/jpeg,image/*" },
+        redirect: "follow",
+      });
+      trace.push(`apple-page-image:${response.status}`);
+      if (response.ok) return { response, trace };
+    }
+  } catch (error) {
+    trace.push(`apple-page-error:${error?.message || "unknown"}`);
+  }
+  return null;
+}
+
+async function firstSuccessfulArtwork(promises) {
+  return new Promise((resolve) => {
+    let pending = promises.length;
+    let settled = false;
+    for (const promise of promises) {
+      Promise.resolve(promise).then((value) => {
+        if (settled) return;
+        if (value) {
+          settled = true;
+          resolve(value);
+        } else if (--pending === 0) {
+          settled = true;
+          resolve(null);
+        }
+      }, () => {
+        if (!settled && --pending === 0) {
+          settled = true;
+          resolve(null);
+        }
+      });
+    }
+  });
+}
+
+async function sourceArtwork(fetcher, metadata) {
+  const trace = [];
+  const source = await firstSuccessfulArtwork([
+    deezerSourceArtwork(fetcher, metadata, trace),
+    appleSourceArtwork(fetcher, metadata, trace),
+  ]);
+  if (source) return source;
   return { response: null, trace };
 }
 
@@ -440,6 +548,7 @@ export {
   comparableText,
   crc32,
   extractReleaseGroups,
+  extractAppleMusicPageArtwork,
   handleArtwork,
   makeAdaptiveToneLut,
   makeBitmapPacket,
