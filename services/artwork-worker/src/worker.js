@@ -14,7 +14,7 @@ const LARGE_BYTES = Math.ceil(LARGE_WIDTH / 8) * LARGE_HEIGHT;
 const BITMAP_HEADER_BYTES = 16;
 const BITMAP_PACKET_BYTES = BITMAP_HEADER_BYTES + SMALL_BYTES + LARGE_BYTES;
 const BITMAP_CONTENT_TYPE = "application/vnd.milestone.artwork-bitmap";
-const BITMAP_CACHE_VERSION = "mab1-adaptive-tone-balanced-v1";
+const BITMAP_CACHE_VERSION = "mab1-adaptive-tone-known-v1";
 const MAX_APPLE_PAGE_BYTES = 48 * 1024;
 const GAMMA_LUT = new Uint8Array(256);
 for (let value = 0; value < GAMMA_LUT.length; value += 1) {
@@ -243,6 +243,22 @@ async function appleMusicPageArtwork(fetcher, metadata, trace) {
   return artwork;
 }
 
+const KNOWN_ARTWORK_OVERRIDES = [{
+  title: "ぼくのかみさま (nightcore)",
+  artist: "567",
+  url: "https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/fd/9a/66/" +
+    "fd9a6669-d1a9-b76b-fd8c-23865ac8b9e3/bigup14486608.jpg/110x110bb-60.jpg",
+}];
+
+function knownArtworkOverride(metadata) {
+  const title = comparableText(metadata.title);
+  const artist = comparableText(metadata.artist);
+  return KNOWN_ARTWORK_OVERRIDES.find(
+    (item) => comparableText(item.title) === title &&
+      comparableText(item.artist) === artist,
+  )?.url || "";
+}
+
 function musicBrainzQuery(kind, value, artist) {
   const url = new URL(`https://musicbrainz.org/ws/2/${kind}/`);
   const field = kind === "release-group" ? "release" : "recording";
@@ -291,7 +307,9 @@ async function deezerSourceArtwork(fetcher, metadata, trace) {
 
 async function appleSourceArtwork(fetcher, metadata, trace) {
   try {
-    const appleUrl = await appleMusicPageArtwork(fetcher, metadata, trace);
+    let appleUrl = knownArtworkOverride(metadata);
+    trace.push(`known-match:${appleUrl ? 1 : 0}`);
+    if (!appleUrl) appleUrl = await appleMusicPageArtwork(fetcher, metadata, trace);
     if (appleUrl) {
       const response = await boundedFetch(fetcher, appleUrl, {
         headers: { "User-Agent": USER_AGENT, Accept: "image/jpeg,image/*" },
@@ -567,6 +585,7 @@ export {
   crc32,
   extractReleaseGroups,
   extractAppleMusicPageArtwork,
+  knownArtworkOverride,
   handleArtwork,
   makeAdaptiveToneLut,
   makeBitmapPacket,

@@ -10,6 +10,7 @@ import worker, {
   makeAdaptiveToneLut,
   makeBitmapPacket,
   makeMonochromeBitmap,
+  knownArtworkOverride,
   normalizeText,
 } from "../src/worker.js";
 
@@ -49,6 +50,18 @@ test("Apple result selection prefers an exact localized track and artist", () =>
     { trackName: "Ｏｒｉｏｎ", artistName: "요네즈  켄시", artworkUrl100: "https://img/exact.jpg" },
   ];
   assert.equal(chooseAppleArtwork(results, "Orion", "요네즈 켄시"), "https://img/exact.jpg");
+});
+
+test("known artwork overrides require an exact normalized title and artist", () => {
+  assert.match(
+    knownArtworkOverride({ title: "  ぼくのかみさま (nightcore) ", artist: "567" }),
+    /bigup14486608\.jpg\/110x110bb-60\.jpg$/,
+  );
+  assert.equal(knownArtworkOverride({ title: "ぼくのかみさま", artist: "567" }), "");
+  assert.equal(
+    knownArtworkOverride({ title: "ぼくのかみさま (nightcore)", artist: "Other" }),
+    "",
+  );
 });
 
 test("Apple Music page selection validates the top result title and artist", () => {
@@ -274,6 +287,37 @@ test("worker falls back to a validated Apple Music page result when Deezer has n
   assert.equal(response.status, 200);
   assert.equal(deezerCalls, 2);
   assert.equal(appleCalls, 1);
+  assert.equal((await response.arrayBuffer()).byteLength, 1464);
+});
+
+test("worker uses an exact known override when public search indexes miss", async () => {
+  const cache = new MemoryCache();
+  let knownImageCalls = 0;
+  const rgba = new Uint8Array(16 * 16 * 4).fill(255);
+  const jpegBytes = jpeg.encode({ data: rgba, width: 16, height: 16 }, 90).data;
+  const upstream = async (url) => {
+    const value = String(url);
+    if (value.startsWith("https://api.deezer.com/search")) {
+      return Response.json({ data: [] });
+    }
+    if (value.includes("bigup14486608.jpg/110x110bb-60.jpg")) {
+      knownImageCalls += 1;
+      return new Response(jpegBytes, {
+        headers: { "Content-Type": "image/jpeg", "Content-Length": String(jpegBytes.byteLength) },
+      });
+    }
+    throw new Error(`unexpected URL: ${value}`);
+  };
+  const response = await worker.fetch(new Request("https://worker.example/v2/artwork", {
+    method: "POST",
+    body: new URLSearchParams({
+      title: "ぼくのかみさま (nightcore)",
+      artist: "567",
+      album: "ぼくのかみさま (nightcore) - Single",
+    }),
+  }), { __cache: cache, __fetch: upstream, __decode: decodeForTest }, { waitUntil() {} });
+  assert.equal(response.status, 200);
+  assert.equal(knownImageCalls, 1);
   assert.equal((await response.arrayBuffer()).byteLength, 1464);
 });
 

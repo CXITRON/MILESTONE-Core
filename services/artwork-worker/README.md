@@ -5,7 +5,9 @@ It races two bounded Deezer catalog searches against the first 48 KiB of Apple
 Music's public search page. Apple candidates in that prefix are accepted only
 when they contain the normalized title and every joint-artist component; `&`
 and comma separators are equivalent. Only the matched bounded JPEG thumbnail
-is fetched. Positive and negative responses are stored in the
+is fetched. A small reviewed override table covers catalog items whose public
+search index is missing; overrides require an exact normalized title and artist
+and contain only Apple's public thumbnail URL. Positive and negative responses are stored in the
 Cloudflare edge cache. `/v1/artwork` preserves the JPEG response for v2.2.21
 devices.
 `/v2/artwork` decodes with Wasm MozJPEG, applies bounded adaptive exposure and
