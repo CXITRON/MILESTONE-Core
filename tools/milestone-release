@@ -54,9 +54,9 @@ Options:
 
 Examples:
   cd /run/media/citron/T7/Documents/Dev/MILESTONE_Core
-  milestone-release local 2.3.4 "Stabilize MEDIA streaming transport"
+  milestone-release local 2.3.5 "Fix MEDIA stream pacing and starvation"
 
-  cd /tmp && milestone-release taildrop 2.3.4 "Stabilize MEDIA streaming transport"
+  cd /tmp && milestone-release taildrop 2.3.5 "Fix MEDIA stream pacing and starvation"
 USAGE
 }
 

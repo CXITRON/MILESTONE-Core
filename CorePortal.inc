@@ -372,7 +372,14 @@ void handleMediaStreamPushRaw() {
     return;
   }
   if (raw.status == RAW_WRITE) {
-    if (!mediaStreamRawFailed) writeMediaStreamRawChunk(raw.buf, raw.currentSize);
+    if (!mediaStreamRawFailed) {
+      writeMediaStreamRawChunk(raw.buf, raw.currentSize);
+      // WebServer services a complete raw request inside handleClient(). A
+      // large refill must not freeze OLED pacing until the whole POST returns.
+      if (mediaStreamPhase == MediaStreamPhase::PLAYING) {
+        renderMediaStreamFrameIfDue(millis());
+      }
+    }
     return;
   }
   if (raw.status == RAW_END) {

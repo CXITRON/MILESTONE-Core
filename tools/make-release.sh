@@ -3,7 +3,7 @@ set -euo pipefail
 
 if (( $# < 1 || $# > 2 )); then
   echo "사용법: $0 VERSION [NOTES]" >&2
-  echo "예: $0 2.3.4 'Stabilize MEDIA streaming transport'" >&2
+  echo "예: $0 2.3.5 'Fix MEDIA stream pacing and starvation'" >&2
   exit 2
 fi
 

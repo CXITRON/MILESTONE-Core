@@ -42,7 +42,7 @@ constexpr uint16_t MEDIA_STREAM_NETWORK_SLICE_MS = 12;
 constexpr uint16_t MEDIA_STREAM_MAX_RENDER_INTERVAL_MS = 250;
 constexpr uint16_t MEDIA_STREAM_MIN_FPS = 5;
 constexpr uint16_t MEDIA_STREAM_MAX_FPS = 24;
-constexpr uint32_t MEDIA_STREAM_STALE_MS = 5000UL;
+constexpr uint32_t MEDIA_STREAM_STALE_MS = 15000UL;
 constexpr uint32_t MEDIA_STREAM_RESOURCE_CHECK_MS = 2000UL;
 constexpr uint32_t MEDIA_STREAM_MIN_FREE_HEAP = 52U * 1024U;
 constexpr uint32_t MEDIA_STREAM_MIN_LARGEST_HEAP_BLOCK = 20U * 1024U;
@@ -889,6 +889,15 @@ void resetMediaStreamRawState() {
 
 void stopMediaStream() {
   const bool wasActive = mediaStreamActive;
+  if (wasActive) {
+    Serial.printf("[MILESTONE] STREAM_MODE stop: reason=%s, queue=%u, received=%lu, displayed=%lu, dropped=%lu, underruns=%u\n",
+                  mediaStreamLastStopReason ? mediaStreamLastStopReason : "unknown",
+                  static_cast<unsigned>(mediaStreamQueueCount),
+                  static_cast<unsigned long>(mediaStreamReceivedFrames),
+                  static_cast<unsigned long>(mediaStreamDisplayedFrames),
+                  static_cast<unsigned long>(mediaStreamDroppedFrames),
+                  static_cast<unsigned>(mediaStreamUnderruns));
+  }
   mediaStreamActive = false;
   mediaStreamPhase = MediaStreamPhase::INACTIVE;
   mediaStreamThermalWarning = false;
@@ -1319,6 +1328,7 @@ bool renderMediaStreamFrameIfDue(uint32_t now) {
     mediaStreamNextFrameMs += stale * mediaStreamFrameIntervalMs;
   }
 
+  const uint32_t scheduledRenderMs = mediaStreamNextRenderMs;
   const uint8_t *frame = mediaStreamQueue +
       static_cast<size_t>(mediaStreamQueueHead) * MilestoneMedia::FRAME_BYTES;
   flushMediaStreamFrame(frame);
@@ -1330,7 +1340,13 @@ bool renderMediaStreamFrameIfDue(uint32_t now) {
   updateMediaStreamMeasuredFps(afterFlush);
   mediaStreamNextFrameMs += mediaStreamFrameIntervalMs;
   mediaStreamRenderIntervalMs = mediaStreamSafeRenderIntervalMs();
-  mediaStreamNextRenderMs = now + mediaStreamRenderIntervalMs;
+  // Advance from the prior deadline instead of the time this loop happened to
+  // run. HTTP receive jitter must not accumulate into visible slow playback.
+  mediaStreamNextRenderMs = scheduledRenderMs + mediaStreamRenderIntervalMs;
+  if (deadlineReached(afterFlush,
+                      mediaStreamNextRenderMs + mediaStreamRenderIntervalMs * 2U)) {
+    mediaStreamNextRenderMs = afterFlush + mediaStreamRenderIntervalMs;
+  }
 
   if (deadlineReached(afterFlush, mediaStreamNextFrameMs + mediaStreamFrameIntervalMs * 4U)) {
     // A very long HTTP/I2C stall should not create an ever-growing catch-up
