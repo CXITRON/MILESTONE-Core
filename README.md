@@ -299,13 +299,13 @@ PC의 현재 프로젝트를 직접 수정한 경우에는 **MILESTONE_Core 프�
 
 ```bash
 cd /run/media/citron/T7/Documents/Dev/MILESTONE_Core
-milestone-release local 2.3.5 "Fix MEDIA stream pacing and starvation"
+milestone-release local 2.3.6 "Resume NTP after MEDIA streaming"
 ```
 
 Tailscale Taildrop으로 `MILESTONE_Core_1.10.6.zip`을 받은 경우에는 교체 대상 프로젝트 디렉터리 밖의 정상적으로 존재하는 디렉터리에서 실행합니다. 기존 프로젝트가 교체될 때 현재 셸 경로가 사라지는 문제를 방지하기 위해 `/tmp`로 이동하는 방식을 권장합니다.
 
 ```bash
-cd /tmp && milestone-release taildrop 2.3.5 "Fix MEDIA stream pacing and starvation"
+cd /tmp && milestone-release taildrop 2.3.6 "Resume NTP after MEDIA streaming"
 ```
 
 Taildrop 모드는 ZIP을 라이브 프로젝트에 바로 덮어쓰지 않습니다. 별도 staging 디렉터리에서 구조·버전·Git 상태를 검사하고 테스트와 ESP32 릴리즈 빌드까지 성공한 뒤에만 프로젝트를 교체합니다. GitHub 게시 전 실패하면 기존 프로젝트를 자동 복구합니다. `--dry-run`은 테스트/빌드까지만 수행하고 로컬 프로젝트·Git·GitHub를 변경하지 않습니다. `--yes`를 사용하지 않는 기본 동작은 최종 게시 직전에 한 번 확인합니다.
@@ -322,10 +322,10 @@ Taildrop 모드는 ZIP을 라이브 프로젝트에 바로 덮어쓰지 않습�
 
 ```bash
 chmod +x tools/make-release.sh
-./tools/make-release.sh 2.3.5 "Fix MEDIA stream pacing and starvation"
+./tools/make-release.sh 2.3.6 "Resume NTP after MEDIA streaming"
 ```
 
-기본 설명을 사용하려면 `./tools/make-release.sh 2.3.5`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
+기본 설명을 사용하려면 `./tools/make-release.sh 2.3.6`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
 
 다음 여섯 파일이 `release/`에 생성됩니다.
 
@@ -349,8 +349,8 @@ release/MILESTONE_Now.json
 일반적인 게시에는 위의 `milestone-release`를 사용합니다. 아래 수동 절차는 자동화 도구를 복구하거나 디버깅해야 할 때만 참고합니다.
 
 1. 저장소의 `Releases`에서 `Draft a new release`를 선택합니다.
-2. 버전과 동일한 태그를 만듭니다. 예: `v2.3.5`
-3. Release 제목을 `MILESTONE Core v2.3.5`로 지정합니다.
+2. 버전과 동일한 태그를 만듭니다. 예: `v2.3.6`
+3. Release 제목을 `MILESTONE Core v2.3.6`로 지정합니다.
 4. CORE/MEDIA/NOW의 BIN과 JSON 여섯 파일을 모두 첨부합니다.
 5. Pre-release가 아닌 최신 정식 Release로 게시합니다.
 6. NOW 실기기에서 `orion / 요네즈 켄시 / BOOTLEG`와 표지가 없는 곡을 재생해 중계 HTTP 200/204가 각각 빠르게 끝나고 AMS 연결·텍스트·진행률이 유지되는지 검증합니다.
@@ -405,7 +405,22 @@ Taildrop ZIP의 `milestone-release`가 현재 설치본보다 새로우면, 게�
 - 저장형 미디어와 분리된 `/stream` 전용 페이지, 브라우저 전체 선변환, RAW/XOR-RLE frame-record 전송을 사용하는 실시간 스트리밍
 - STREAM_MODE에서 일반 백그라운드 기능을 격리하고 PSRAM 240프레임 링버퍼·X/Y dirty-tile OLED 갱신·적응형 출력 주기·프레임 드롭·80°C 스트림 상한으로 영상 수신/표시에 집중
 - 라이브 송신은 96프레임 초기 충전 후 큐 64프레임 이하에서 최대 24프레임씩 144프레임 이상으로 보충하며 ESP32가 소스 시간축과 OLED 출력 클록을 분리해 관리
+- 라이브 스트림 시작 시 진행 중인 NTP는 중단·보류하고 STREAM_MODE 종료 뒤 기존 Wi-Fi 시험·수동 동기화·업데이트 대기 흐름으로 자동 재개
 - 비차단 3초 부팅 로고와 우상단 NTP `T`·업데이트 `U` 상태 아이콘
+
+## v2.3.6 업데이트 안내
+
+v2.3.6은 MEDIA에서 시간 동기화가 진행 중일 때 라이브 스트리밍을 시작할 수 없던 직렬화 정책을 안전한 일시 중단·재개 방식으로 변경합니다.
+
+- 스트림 시작 요청 시 진행 중인 lwIP SNTP를 중단하고 기존 동기화 목적을 deferred 상태로 보존
+- Wi‑Fi 시험의 시간 확인, 사용자가 누른 수동 동기화, 업데이트 전 시간 확인을 STREAM_MODE 종료 뒤 새 NTP 요청으로 자동 재개
+- NTP를 중단한 동안 `TIME_SYNCING` 런타임을 유지하지 않아 스트림 전용 loop와 상태 표시가 충돌하지 않도록 수정
+- PSRAM 스트림 버퍼 확보 실패로 STREAM_MODE 진입이 거절되면 NTP를 즉시 복구
+- 종료 시 STA 네트워크가 사라졌다면 원래 대기 작업을 명시적으로 실패 처리해 무기한 pending 방지
+- 실제 Wi‑Fi 연결 시험 중이거나 펌웨어 전송 중인 경우의 스트림 시작 차단은 유지
+- 설정 스키마 10과 CORE/MEDIA/NOW 프로필 경계 유지
+
+정식 버전: `2.3.6`
 
 ## v2.3.5 업데이트 안내
 

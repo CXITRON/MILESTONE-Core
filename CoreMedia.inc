@@ -107,6 +107,7 @@ uint8_t *mediaStreamQueue = nullptr;
 uint8_t *mediaStreamRawPacket = nullptr;
 uint8_t *mediaStreamDecodeFrame = nullptr;
 bool mediaStreamActive = false;
+bool mediaStreamResumeNtpAfterExit = false;
 MediaStreamPhase mediaStreamPhase = MediaStreamPhase::INACTIVE;
 bool mediaStreamRawActive = false;
 bool mediaStreamRawComplete = false;

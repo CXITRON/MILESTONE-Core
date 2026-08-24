@@ -1044,6 +1044,7 @@ void leaveMediaStreamPerformanceMode() {
     startMdns();
   }
   if (portalActive && !thermalSafeMode) setRuntimeState(RuntimeState::SETUP_AP);
+  resumeDeferredNtpAfterMediaStream();
   appliedLedColor = UINT32_MAX;
   lastDisplayMs = 0;
   wakeDisplay();

@@ -18,7 +18,7 @@ reject() {
   fi
 }
 
-require 'FIRMWARE_VERSION\[\] = "2\.3\.5"' MILESTONE_Core.ino 'firmware version is not 2.3.5'
+require 'FIRMWARE_VERSION\[\] = "2\.3\.6"' MILESTONE_Core.ino 'firmware version is not 2.3.6'
 require 'if \(oledReady && !portalActive && !updateCheckIndicatorRendered\) return;' CoreRuntime.inc 'portal manifest checks can deadlock waiting for the non-portal U icon'
 require 'UPDATE_PORTAL_HTTP_CONNECT_TIMEOUT_MS' CoreUpdate.inc 'portal manifest checks need a bounded connect timeout'
 require 'UPDATE_PORTAL_TLS_HANDSHAKE_TIMEOUT_SEC' CoreUpdate.inc 'portal manifest checks need a bounded TLS timeout'
@@ -115,7 +115,8 @@ PY_PORTAL_PROFILE_RECONNECT_ORDER
 require 'time_sync_pending' CorePortal.inc 'manual time-sync progress state missing from status API'
 require 'timeSyncPolling' PortalPage.h 'manual time-sync UI must poll through completion'
 require 'pendingUpdateCheckReason != UpdateCheckReason::MANUAL' CoreRuntime.inc 'automatic update checks must defer while setup portal is active'
-require 'if \(mediaUploadActive \|\| firmwareUpdateBusy\(\) \|\| ntpRequestActive \|\|' CorePortal.inc 'stream start must reject active time synchronization'
+require 'mediaStreamResumeNtpAfterExit = true' CorePortal.inc 'stream start must defer active time synchronization instead of rejecting playback'
+require 'resumeDeferredNtpAfterMediaStream\(\)' CoreRuntime.inc 'stream exit must resume deferred time synchronization'
 reject 'portalClosingAfterSuccess = true' CorePortal.inc 'successful Wi-Fi test must not arm automatic AP shutdown'
 reject 'PORTAL_SUCCESS_HOLD_MS' MILESTONE_Core.ino 'obsolete post-success AP shutdown delay remains'
 require 'id="wifi_scan_btn"' PortalPage.h 'portal scan button needs an explicit busy state'

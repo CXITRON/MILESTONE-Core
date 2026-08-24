@@ -305,6 +305,47 @@ void handleMediaStreamStatus() {
   sendJson(200, mediaStreamStatusJson());
 }
 
+void failWifiTest(const String &reason);
+void failPortalFirmwareNetworkWait(const String &reason);
+
+bool pauseNtpForMediaStream() {
+  const bool timeSyncBusy = ntpRequestActive ||
+                            runtimeState == RuntimeState::TIME_SYNCING ||
+                            wifiTestState == WifiTestState::TIME_SYNCING;
+  if (!timeSyncBusy) return false;
+  mediaStreamResumeNtpAfterExit = true;
+  stopNtpService();
+  // STREAM_MODE owns the portal until exit. Preserve the higher-level Wi-Fi
+  // test/manual/update intent, but do not leave the runtime claiming an NTP
+  // transaction is active while its completion loop is suspended.
+  if (runtimeState == RuntimeState::TIME_SYNCING) {
+    setRuntimeState(RuntimeState::SETUP_AP);
+  }
+  logLine("NTP paused for STREAM_MODE; it will resume after exit");
+  return true;
+}
+
+void resumeDeferredNtpAfterMediaStream() {
+  if (!mediaStreamResumeNtpAfterExit) return;
+  mediaStreamResumeNtpAfterExit = false;
+  if (thermalSafeMode || temperatureSensorFault) return;
+  if (!stationNetworkReady() || !beginNtpRequest()) {
+    const String reason = "스트리밍 종료 뒤 시간 동기화를 재개할 네트워크가 준비되지 않았습니다.";
+    if (wifiTestState == WifiTestState::TIME_SYNCING) {
+      failWifiTest(reason);
+    } else {
+      finishPortalTimeSyncTracking(false, reason);
+      failPortalFirmwareNetworkWait(reason);
+      setRuntimeState(portalActive ? RuntimeState::SETUP_AP : RuntimeState::RUNNING_OFFLINE);
+      if (!portalActive) scheduleRetry(true);
+    }
+    logLine("deferred NTP resume failed after STREAM_MODE");
+    return;
+  }
+  setRuntimeState(RuntimeState::TIME_SYNCING);
+  logLine("NTP resumed after STREAM_MODE");
+}
+
 void handleMediaStreamStart() {
   if (!authorizePortalRequest()) return;
   if (!MILESTONE_HAS_MEDIA) {
@@ -313,10 +354,8 @@ void handleMediaStreamStart() {
   if (mediaStreamActive) {
     return sendJson(409, "{\"error\":\"이미 다른 스트리밍 세션이 실행 중입니다.\"}");
   }
-  const bool wifiTestBusy = wifiTestState == WifiTestState::CONNECTING ||
-                            wifiTestState == WifiTestState::TIME_SYNCING;
-  if (mediaUploadActive || firmwareUpdateBusy() || ntpRequestActive ||
-      runtimeState == RuntimeState::TIME_SYNCING || wifiTestBusy) {
+  if (mediaUploadActive || firmwareUpdateBusy() ||
+      wifiTestState == WifiTestState::CONNECTING) {
     return sendJson(409, "{\"error\":\"미디어 저장·Wi-Fi 시험·펌웨어 작업이 끝난 뒤 시작하세요.\"}");
   }
   refreshChipTemperature(true);
@@ -328,7 +367,9 @@ void handleMediaStreamStart() {
   if (!parseUintArg("fps", fps) || fps < MEDIA_STREAM_MIN_FPS || fps > MEDIA_STREAM_MAX_FPS) {
     return sendJson(400, "{\"error\":\"스트리밍 FPS는 5~24 범위여야 합니다.\"}");
   }
+  pauseNtpForMediaStream();
   if (!startMediaStream(static_cast<uint16_t>(fps))) {
+    resumeDeferredNtpAfterMediaStream();
     return sendJson(503, "{\"error\":\"PSRAM 스트림 버퍼를 확보하지 못했습니다.\"}");
   }
   portalStartedMs = millis();
