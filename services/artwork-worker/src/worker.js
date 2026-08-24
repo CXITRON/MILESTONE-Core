@@ -14,7 +14,7 @@ const LARGE_BYTES = Math.ceil(LARGE_WIDTH / 8) * LARGE_HEIGHT;
 const BITMAP_HEADER_BYTES = 16;
 const BITMAP_PACKET_BYTES = BITMAP_HEADER_BYTES + SMALL_BYTES + LARGE_BYTES;
 const BITMAP_CONTENT_TYPE = "application/vnd.milestone.artwork-bitmap";
-const BITMAP_CACHE_VERSION = "mab1-adaptive-tone-apple-page-v2";
+const BITMAP_CACHE_VERSION = "mab1-adaptive-tone-balanced-v1";
 const MAX_APPLE_PAGE_BYTES = 48 * 1024;
 const GAMMA_LUT = new Uint8Array(256);
 for (let value = 0; value < GAMMA_LUT.length; value += 1) {
@@ -349,6 +349,20 @@ function makeAdaptiveToneLut(rgb, sourceWidth, sourceHeight, channels = 4) {
       (rgb[offset] * 54 + rgb[offset + 1] * 183 + rgb[offset + 2] * 19) >> 8;
   }
   const mean = luminanceTotal / pixels;
+  // Bright covers need the inverse protection: the 4x4 Bayer thresholds top
+  // out below the light-gray range, so pale text and pastel detail would
+  // otherwise become solid white. A mean-dependent gamma compresses only
+  // bright covers while keeping mathematical white at 255 and black at 0.
+  // The bounded curve reaches gamma 3.5 only for extremely bright artwork.
+  if (mean > 160) {
+    const strength = Math.max(0, Math.min(1, (mean - 160) / 70));
+    const gamma = 1 + 2.5 * strength;
+    const tone = new Uint8Array(256);
+    for (let value = 0; value < tone.length; value += 1) {
+      tone[value] = Math.round(255 * Math.pow(value / 255, gamma));
+    }
+    return tone;
+  }
   // Covers whose average is already in the middle range keep their original
   // tone. Darker covers receive a bounded blend toward gamma 0.8 plus at most
   // 32 levels of exposure lift. Exact near-black remains black, preserving
@@ -505,7 +519,7 @@ async function handleArtwork(request, env, context, format = "mab1") {
           "Content-Type": BITMAP_CONTENT_TYPE,
           "Content-Length": String(bitmap.byteLength),
           "X-Milestone-Artwork": "2",
-          "X-Milestone-Tone": "adaptive-v1",
+          "X-Milestone-Tone": "adaptive-v2",
           "X-Milestone-Upstream": trace,
         });
       } else {

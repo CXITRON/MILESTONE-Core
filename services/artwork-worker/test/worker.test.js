@@ -143,6 +143,31 @@ test("adaptive tone correction preserves deliberate true black", () => {
   );
 });
 
+test("adaptive tone correction recovers pale detail on bright covers", () => {
+  const bright = new Uint8Array(16 * 16 * 4);
+  for (let offset = 0; offset < bright.length; offset += 4) {
+    bright[offset] = 220;
+    bright[offset + 1] = 220;
+    bright[offset + 2] = 220;
+    bright[offset + 3] = 255;
+  }
+  const uncorrected = makeMonochromeBitmap(bright, 16, 16, 16, 16, 4, null);
+  const corrected = makeMonochromeBitmap(bright, 16, 16, 16, 16);
+  const whiteBits = (bitmap) => [...bitmap]
+    .reduce((total, byte) => total + byte.toString(2).replaceAll("0", "").length, 0);
+  assert.equal(whiteBits(uncorrected), 256);
+  assert.ok(whiteBits(corrected) < 256, "light gray should no longer collapse to white");
+  assert.ok(whiteBits(corrected) >= 128, "highlight compression must remain bounded");
+});
+
+test("bright-cover correction preserves mathematical white", () => {
+  const white = new Uint8Array(16 * 16 * 4).fill(255);
+  assert.deepEqual(
+    makeMonochromeBitmap(white, 16, 16, 16, 16),
+    new Uint8Array(32).fill(255),
+  );
+});
+
 test("bitmap packet contains both fixed sizes and a payload CRC", async () => {
   const rgba = new Uint8Array(16 * 16 * 4);
   for (let offset = 0; offset < rgba.length; offset += 4) {
@@ -202,7 +227,7 @@ test("worker returns and reuses a converted bitmap cache entry", async () => {
   assert.equal(first.status, 200);
   assert.equal(first.headers.get("content-type"), "application/vnd.milestone.artwork-bitmap");
   assert.equal(first.headers.get("x-milestone-artwork"), "2");
-  assert.equal(first.headers.get("x-milestone-tone"), "adaptive-v1");
+  assert.equal(first.headers.get("x-milestone-tone"), "adaptive-v2");
   assert.equal((await first.arrayBuffer()).byteLength, 1464);
 
   const second = await worker.fetch(makeRequest(), env, context);
