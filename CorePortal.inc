@@ -313,8 +313,10 @@ void handleMediaStreamStart() {
   if (mediaStreamActive) {
     return sendJson(409, "{\"error\":\"이미 다른 스트리밍 세션이 실행 중입니다.\"}");
   }
+  const bool wifiTestBusy = wifiTestState == WifiTestState::CONNECTING ||
+                            wifiTestState == WifiTestState::TIME_SYNCING;
   if (mediaUploadActive || firmwareUpdateBusy() || ntpRequestActive ||
-      runtimeState == RuntimeState::TIME_SYNCING || wifiTestState != WifiTestState::IDLE) {
+      runtimeState == RuntimeState::TIME_SYNCING || wifiTestBusy) {
     return sendJson(409, "{\"error\":\"미디어 저장·Wi-Fi 시험·펌웨어 작업이 끝난 뒤 시작하세요.\"}");
   }
   refreshChipTemperature(true);

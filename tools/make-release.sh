@@ -3,7 +3,7 @@ set -euo pipefail
 
 if (( $# < 1 || $# > 2 )); then
   echo "사용법: $0 VERSION [NOTES]" >&2
-  echo "예: $0 2.3.3 'Keep artwork Wi-Fi after update checks'" >&2
+  echo "예: $0 2.3.4 'Stabilize MEDIA streaming transport'" >&2
   exit 2
 fi
 

@@ -992,6 +992,18 @@ void drawUpdateScreen() {
   display.sendBuffer();
 }
 
+#if MILESTONE_HAS_MEDIA
+void drawMediaStreamStartingScreen() {
+  if (!oledReady) return;
+  display.clearBuffer();
+  display.setFont(u8g2_font_7x14B_tf);
+  drawCenteredStr("STREAM MODE", 54);
+  display.setFont(u8g2_font_6x10_tf);
+  drawCenteredStr("BUFFERING", 79);
+  display.sendBuffer();
+}
+#endif
+
 #if MILESTONE_HAS_BLUETOOTH
 String nowPlayingDisplayText(const char *text) {
   char folded[AMS_NOTIFICATION_MAX + 1] = {};

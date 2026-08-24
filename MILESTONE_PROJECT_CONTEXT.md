@@ -1,6 +1,6 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v2.3.3
+> Current baseline: MILESTONE Core v2.3.4
 > Hardware: Waveshare ESP32-S3-Zero + SH1107 128×128 OLED
 > Repository: `CXITRON/MILESTONE-Core`
 
@@ -89,7 +89,7 @@ The `*.inc` runtime files are intentionally included into the sketch as one tran
 Firmware and persistent schema versions are separate concepts.
 
 ```cpp
-FIRMWARE_VERSION = "2.3.3"
+FIRMWARE_VERSION = "2.3.4"
 CONFIG_VERSION = 10
 ```
 
@@ -220,6 +220,8 @@ v2.3.1 responds to the confirmed post-validation `INT WDT` and persistent `netwo
 v2.3.2 folds common unsupported Latin diacritics to their ASCII equivalents only in the NOW OLED display copy, so metadata such as `ÁCIDO` renders as `ACIDO` without adding another font blob. Japanese, Korean, and other UTF-8 sequences remain byte-for-byte unchanged, while the original AMS title, artist, and album remain untouched for artwork lookup, cache identity, and diagnostics. The Worker also adds an exact title-and-artist override for the verified `ヤラララ - Yararara` Apple thumbnail because both bounded public catalog searches currently return no match despite the direct release page existing. Schema 10 and the `MAB1` packet remain unchanged.
 
 v2.3.3 fixes the boot-update completion path bypassing the NOW artwork network requirement. Every update success, terminal failure, error hold, and postponed prompt now clears its deferred-sleep marker through one helper that enters `WIFI_OFF` only when `nowArtworkNeedsNetwork()` is false. Artwork layouts therefore retain the STA association established before BLE advertising, while text-only layouts preserve their configured Wi-Fi-off behavior. Live AMS sessions still prohibit starting a new association, avoiding the earlier radio-contention disconnect; schema 10 is unchanged.
+
+v2.3.4 fixes three MEDIA runtime stalls and the low-rate live sender path. Stored-media playback now renders the pending update `U` marker so automatic checks cannot wait forever behind the MEDIA-owned framebuffer, and STREAM_MODE entry immediately replaces stale portal/NTP pixels with a buffering screen. Completed Wi-Fi test results no longer block a later stream start. Live push batches increase from 8 to 24 bounded frames to amortize Arduino WebServer's connection-close overhead, in-flight raw bodies cannot trip the stale-sender watchdog, fetches have a bounded abort timeout, and refill estimates follow measured OLED drain rate rather than requested source FPS. The sender reports a recent transfer rate; schema 10 and all profile boundaries are unchanged.
 
 The post-v2.3.1 Worker tone update retains the 4×4 Bayer packet contract but adds bounded adaptive correction at both luminance extremes. Mean luminance below 110 blends toward a gamma-0.8 lift capped at 32 while preserving 0–6 as true black; mean luminance above 160 blends toward gamma 3.5 highlight compression while preserving exact black and white. The curve is shared by both output sizes. Exact catalog exceptions use normalized title-and-artist equality, and cache generation `mab1-adaptive-tone-catalog-v2` bypasses prior positive and negative entries; packet format does not change.
 

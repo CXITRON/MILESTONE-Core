@@ -25,7 +25,10 @@ constexpr char MEDIA_UPLOAD_TEMP[] = "/media/upload.tmp";
 // whole source; the ESP32 only receives paced 128x128 one-bit frames into a
 // PSRAM ring and flushes them to the SH1107. No live frame is written to flash.
 constexpr uint8_t MEDIA_STREAM_QUEUE_FRAMES = 240;
-constexpr uint8_t MEDIA_STREAM_MAX_PUSH_FRAMES = 8;
+// Arduino WebServer closes every HTTP response, so larger bounded batches
+// amortize TCP setup/teardown on iPhone captive-AP links. Twenty-four raw
+// frames remain below 50 KiB and the request scratch buffer lives in PSRAM.
+constexpr uint8_t MEDIA_STREAM_MAX_PUSH_FRAMES = 24;
 constexpr uint8_t MEDIA_STREAM_PREBUFFER_FRAMES = 96;
 constexpr uint8_t MEDIA_STREAM_REBUFFER_FRAMES = 48;
 constexpr size_t MEDIA_STREAM_PACKET_MAX_BYTES =
@@ -73,6 +76,7 @@ struct MediaCatalog {
 MediaCatalog mediaCatalog;
 MediaCatalog mediaCatalogScratch;
 bool mediaStorageReady = false;
+bool mediaUpdateIndicatorDrawn = false;
 char mediaIndexActiveSlot = 0;
 uint8_t *mediaFrameBuffer = nullptr;
 uint8_t *mediaFrameRecordBuffer = nullptr;
@@ -520,7 +524,26 @@ bool advanceMediaFrameIfDue(uint32_t now) {
 }
 
 bool renderMediaFrameIfNeeded(uint32_t now) {
+  if (updateState == UpdateState::CHECKING && !updateCheckIndicatorRendered) {
+    display.setDrawColor(0);
+    display.drawBox(114, 0, 14, 11);
+    display.setDrawColor(1);
+    display.setFont(u8g2_font_6x10_tf);
+    display.drawStr(118, 9, "U");
+    display.sendBuffer();
+    mediaUpdateIndicatorDrawn = true;
+    updateCheckIndicatorRendered = true;
+    return true;
+  }
   if (mediaPlaybackCatalogIndex == 0xFF && !selectNextMediaItem()) return false;
+  if (mediaUpdateIndicatorDrawn && updateState != UpdateState::CHECKING) {
+    mediaUpdateIndicatorDrawn = false;
+    if (mediaFrameBuffer && mediaPlaybackCatalogIndex != 0xFF && !mediaPlaybackFailed) {
+      memcpy(display.getBufferPtr(), mediaFrameBuffer, MilestoneMedia::FRAME_BYTES);
+      display.sendBuffer();
+      return true;
+    }
+  }
   advanceMediaFrameIfDue(now);
   if (mediaPlaybackFailed || !mediaPlaybackFrameReady || !mediaFrameBuffer) return false;
   memcpy(display.getBufferPtr(), mediaFrameBuffer, MilestoneMedia::FRAME_BYTES);
@@ -1144,7 +1167,7 @@ void processMediaStreamState(uint32_t now) {
   // A deep jitter buffer can legitimately go several seconds without another
   // POST. Only treat the sender as stale when the device is actually waiting
   // for data or the remaining queue has fallen into the rebuffer range.
-  if (!mediaStreamSourceEnded &&
+  if (!mediaStreamSourceEnded && !mediaStreamRawActive &&
       (mediaStreamPhase == MediaStreamPhase::BUFFERING ||
        mediaStreamQueueCount <= MEDIA_STREAM_REBUFFER_FRAMES) &&
       elapsed(now, mediaStreamLastPushMs, MEDIA_STREAM_STALE_MS)) {

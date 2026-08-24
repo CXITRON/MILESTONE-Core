@@ -199,6 +199,7 @@ v1.10.5부터 **실시간 스트리밍**은 저장형 미디어와 분리된 `/s
 - FPS: 5 / 10 / 15 / 18 / 20fps, 24fps Experimental
 - 전송: `application/octet-stream` binary frame records + 작은 binary ACK. 첫 프레임은 RAW, 이후 프레임은 이득이 있을 때 MSM1과 같은 XOR-RLE delta를 사용하며, session/sequence/frame-count/encoded-byte 메타데이터는 명시적으로 수집한 `X-MILESTONE-*` 요청 헤더로 전달
 - 버퍼: PSRAM 240프레임(480KiB) 링버퍼, 96프레임 초기 선버퍼와 48프레임 재버퍼 기준, 장치 처리량에 맞춘 시간축 프레임 드롭
+- 송신 제어: 연결당 최대 24프레임의 제한된 묶음, 5초 POST 중단 제한, 실측 OLED 소비 FPS 기반 큐 추정과 최근 구간 송신 FPS 표시
 - 저장 한도: ESP32에는 MSM1의 1024프레임·160KiB 제한을 적용하지 않고 스트림 프레임도 LittleFS/NVS에 쓰지 않음. 단, 송신 브라우저의 전체 선변환 버퍼는 48MiB 이하
 - 실행 격리: 스트리밍 중 일반 NTP·OTA·진단·화면 순환·저장형 미디어·일반 LED 처리와 불필요한 포털 API를 차단하고 수신·버퍼·OLED·BOOT·온도/자원 보호에 집중
 - 열 정책: 75°C 경고, 80°C에서 스트림 중단, 85°C 이상은 기존 강제 과열 보호
@@ -298,13 +299,13 @@ PC의 현재 프로젝트를 직접 수정한 경우에는 **MILESTONE_Core 프�
 
 ```bash
 cd /run/media/citron/T7/Documents/Dev/MILESTONE_Core
-milestone-release local 2.3.3 "Keep artwork Wi-Fi after update checks"
+milestone-release local 2.3.4 "Stabilize MEDIA streaming transport"
 ```
 
 Tailscale Taildrop으로 `MILESTONE_Core_1.10.6.zip`을 받은 경우에는 교체 대상 프로젝트 디렉터리 밖의 정상적으로 존재하는 디렉터리에서 실행합니다. 기존 프로젝트가 교체될 때 현재 셸 경로가 사라지는 문제를 방지하기 위해 `/tmp`로 이동하는 방식을 권장합니다.
 
 ```bash
-cd /tmp && milestone-release taildrop 2.3.3 "Keep artwork Wi-Fi after update checks"
+cd /tmp && milestone-release taildrop 2.3.4 "Stabilize MEDIA streaming transport"
 ```
 
 Taildrop 모드는 ZIP을 라이브 프로젝트에 바로 덮어쓰지 않습니다. 별도 staging 디렉터리에서 구조·버전·Git 상태를 검사하고 테스트와 ESP32 릴리즈 빌드까지 성공한 뒤에만 프로젝트를 교체합니다. GitHub 게시 전 실패하면 기존 프로젝트를 자동 복구합니다. `--dry-run`은 테스트/빌드까지만 수행하고 로컬 프로젝트·Git·GitHub를 변경하지 않습니다. `--yes`를 사용하지 않는 기본 동작은 최종 게시 직전에 한 번 확인합니다.
@@ -321,10 +322,10 @@ Taildrop 모드는 ZIP을 라이브 프로젝트에 바로 덮어쓰지 않습�
 
 ```bash
 chmod +x tools/make-release.sh
-./tools/make-release.sh 2.3.3 "Keep artwork Wi-Fi after update checks"
+./tools/make-release.sh 2.3.4 "Stabilize MEDIA streaming transport"
 ```
 
-기본 설명을 사용하려면 `./tools/make-release.sh 2.3.3`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
+기본 설명을 사용하려면 `./tools/make-release.sh 2.3.4`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
 
 다음 여섯 파일이 `release/`에 생성됩니다.
 
@@ -348,8 +349,8 @@ release/MILESTONE_Now.json
 일반적인 게시에는 위의 `milestone-release`를 사용합니다. 아래 수동 절차는 자동화 도구를 복구하거나 디버깅해야 할 때만 참고합니다.
 
 1. 저장소의 `Releases`에서 `Draft a new release`를 선택합니다.
-2. 버전과 동일한 태그를 만듭니다. 예: `v2.3.3`
-3. Release 제목을 `MILESTONE Core v2.3.3`로 지정합니다.
+2. 버전과 동일한 태그를 만듭니다. 예: `v2.3.4`
+3. Release 제목을 `MILESTONE Core v2.3.4`로 지정합니다.
 4. CORE/MEDIA/NOW의 BIN과 JSON 여섯 파일을 모두 첨부합니다.
 5. Pre-release가 아닌 최신 정식 Release로 게시합니다.
 6. NOW 실기기에서 `orion / 요네즈 켄시 / BOOTLEG`와 표지가 없는 곡을 재생해 중계 HTTP 200/204가 각각 빠르게 끝나고 AMS 연결·텍스트·진행률이 유지되는지 검증합니다.
@@ -403,8 +404,22 @@ Taildrop ZIP의 `milestone-release`가 현재 설치본보다 새로우면, 게�
 - LittleFS 160KiB 한도, 최대 64개, CRC 검증, 임시 업로드와 A/B 인덱스를 사용하는 커스텀 미디어 저장·재생
 - 저장형 미디어와 분리된 `/stream` 전용 페이지, 브라우저 전체 선변환, RAW/XOR-RLE frame-record 전송을 사용하는 실시간 스트리밍
 - STREAM_MODE에서 일반 백그라운드 기능을 격리하고 PSRAM 240프레임 링버퍼·X/Y dirty-tile OLED 갱신·적응형 출력 주기·프레임 드롭·80°C 스트림 상한으로 영상 수신/표시에 집중
-- 라이브 송신은 96프레임 초기 충전 후 큐 64프레임 이하에서 최대 8프레임씩 144프레임 이상으로 보충하며 ESP32가 소스 시간축과 OLED 출력 클록을 분리해 관리
+- 라이브 송신은 96프레임 초기 충전 후 큐 64프레임 이하에서 최대 24프레임씩 144프레임 이상으로 보충하며 ESP32가 소스 시간축과 OLED 출력 클록을 분리해 관리
 - 비차단 3초 부팅 로고와 우상단 NTP `T`·업데이트 `U` 상태 아이콘
+
+## v2.3.4 업데이트 안내
+
+v2.3.4는 MEDIA에서 시간 동기화 뒤 업데이트 확인과 스트리밍 시작이 멈추거나, 초기 버퍼 송신이 1~2fps까지 떨어지던 경로를 수정합니다.
+
+- 저장 미디어 화면에서도 업데이트 확인 `U`를 실제 렌더링해 확인 작업이 표시 대기 상태에 갇히지 않도록 수정
+- STREAM_MODE 진입 즉시 전용 `BUFFERING` 화면으로 교체해 이전 포털의 `T`·상태 문구가 남지 않도록 수정
+- 완료된 Wi-Fi 시험의 `SUCCESS`·`FAILED` 상태는 스트리밍 시작을 막지 않고 실제 연결·시간 동기화 중에만 차단
+- 프레임 POST를 최대 8개에서 24개로 늘려 매 응답 후 닫히는 HTTP 연결의 설정 비용을 줄이고, 5초 전송 중단 제한 추가
+- 큰 raw body 수신 중에는 stale-sender 판정을 보류하고, 브라우저 큐 추정은 목표 FPS가 아니라 장치의 실측 출력 FPS 사용
+- 누적 평균 대신 최근 송신 FPS를 표시해 현재 공급 속도와 OLED 출력 병목을 구분
+- 설정 스키마 10, 240프레임 PSRAM 링버퍼, CORE/MEDIA/NOW 프로필 경계 유지
+
+정식 버전: `2.3.4`
 
 ## v2.3.3 업데이트 안내
 

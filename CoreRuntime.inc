@@ -1029,6 +1029,7 @@ void enterMediaStreamPerformanceMode() {
   // One fixed LED write on entry; normal LED animation is suspended until exit.
   writeStatusLed(0, 170, 255, 72);
   wakeDisplay();
+  drawMediaStreamStartingScreen();
 }
 
 void leaveMediaStreamPerformanceMode() {
