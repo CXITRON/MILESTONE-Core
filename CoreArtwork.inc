@@ -1,8 +1,9 @@
-// NOW-only, best-effort album-art lookup. MusicBrainz supplies the release
-// group and Cover Art Archive supplies a thumbnail. JPEG decode and 1-bit
-// conversion happen on the ESP32; failures never block AMS text/progress.
+// NOW-only, best-effort album-art lookup. The configured gateway resolves and
+// caches a small JPEG; legacy direct providers remain available only for
+// staging builds without a gateway. Decode and 1-bit conversion happen on the
+// ESP32, and failures never block AMS text/progress.
 
-const char NOW_ARTWORK_RUNTIME_MARKER[] __attribute__((used)) = "MILESTONE_NOW_ARTWORK_RUNTIME_V1";
+const char NOW_ARTWORK_RUNTIME_MARKER[] __attribute__((used)) = "MILESTONE_NOW_ARTWORK_RUNTIME_V2";
 constexpr uint16_t NOW_ART_SMALL_W = 60;
 constexpr uint16_t NOW_ART_SMALL_H = 60;
 constexpr uint16_t NOW_ART_LARGE_W = 88;
@@ -15,6 +16,7 @@ constexpr uint32_t NOW_ART_RETRY_MS = 5UL * 60UL * 1000UL;
 constexpr uint32_t NOW_ART_REQUEST_SPACING_MS = 1200UL;
 constexpr uint8_t NOW_ART_LOOKUP_ATTEMPTS = 5;
 constexpr uint8_t NOW_ART_APPLE_ATTEMPTS = 1;
+constexpr uint8_t NOW_ART_GATEWAY_ATTEMPTS = 2;
 constexpr uint8_t NOW_ART_MAX_CANDIDATES = 3;
 constexpr uint32_t NOW_ART_LOOKUP_RETRY_MS = 1200UL;
 constexpr uint32_t NOW_ART_TRANSPORT_BACKOFF_MS = 250UL;
@@ -66,6 +68,7 @@ volatile bool nowArtworkWorkerRunning = false;
 volatile NowArtworkWorkerResult nowArtworkWorkerResult = NowArtworkWorkerResult::NONE;
 volatile uint32_t nowArtworkWorkerStackFreeBytes = 0;
 volatile int16_t nowArtworkWorkerAppleHttpCode = 0;
+volatile int16_t nowArtworkWorkerGatewayHttpCode = 0;
 volatile int16_t nowArtworkWorkerHttpCode = 0;
 volatile int16_t nowArtworkWorkerDownloadCode = 0;
 volatile uint8_t nowArtworkWorkerAttempts = 0;
@@ -215,28 +218,16 @@ uint8_t nowArtworkReadReleaseGroups(HTTPClient &http, String *mbids, uint8_t cap
 
 enum class NowArtworkDownloadResult : uint8_t { READY, NOT_FOUND, FAILED, CANCELLED };
 
-NowArtworkDownloadResult nowArtworkReadJpeg(const String &url, uint8_t *&jpeg, size_t &jpegSize,
-                                            int16_t &httpCode, uint32_t generation) {
+NowArtworkDownloadResult nowArtworkConsumeJpegResponse(
+    HTTPClient &http, int response, uint8_t *&jpeg, size_t &jpegSize,
+    int16_t &httpCode, uint32_t generation) {
   jpeg = nullptr;
   jpegSize = 0;
-  httpCode = 0;
-  NetworkClientSecure client;
-  client.setCACert(MILESTONE_UPDATE_ROOT_CA);
-  client.setHandshakeTimeout(NOW_ART_TLS_HANDSHAKE_TIMEOUT_SEC);
-  HTTPClient http;
-  http.setConnectTimeout(5000);
-  http.setTimeout(6000);
-  http.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
-  http.setRedirectLimit(4);
-  if (!http.begin(client, url)) return NowArtworkDownloadResult::FAILED;
-  http.addHeader("User-Agent", String("MILESTONE-Now/") + FIRMWARE_VERSION +
-                               " (https://github.com/CXITRON/MILESTONE-Core)");
-  const int response = http.GET();
   httpCode = static_cast<int16_t>(response);
   if (response != HTTP_CODE_OK) {
     http.end();
-    return response == HTTP_CODE_NOT_FOUND ? NowArtworkDownloadResult::NOT_FOUND
-                                           : NowArtworkDownloadResult::FAILED;
+    return response == HTTP_CODE_NOT_FOUND || response == HTTP_CODE_NO_CONTENT
+        ? NowArtworkDownloadResult::NOT_FOUND : NowArtworkDownloadResult::FAILED;
   }
   const int announced = http.getSize();
   if (announced > static_cast<int>(NOW_ART_MAX_JPEG_BYTES)) {
@@ -278,6 +269,49 @@ NowArtworkDownloadResult nowArtworkReadJpeg(const String &url, uint8_t *&jpeg, s
   return cancelled ? NowArtworkDownloadResult::CANCELLED
                    : complete ? NowArtworkDownloadResult::READY
                               : NowArtworkDownloadResult::FAILED;
+}
+
+NowArtworkDownloadResult nowArtworkReadJpeg(const String &url, uint8_t *&jpeg, size_t &jpegSize,
+                                            int16_t &httpCode, uint32_t generation) {
+  jpeg = nullptr;
+  jpegSize = 0;
+  httpCode = 0;
+  NetworkClientSecure client;
+  client.setCACert(MILESTONE_UPDATE_ROOT_CA);
+  client.setHandshakeTimeout(NOW_ART_TLS_HANDSHAKE_TIMEOUT_SEC);
+  HTTPClient http;
+  http.setConnectTimeout(5000);
+  http.setTimeout(6000);
+  http.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
+  http.setRedirectLimit(4);
+  if (!http.begin(client, url)) return NowArtworkDownloadResult::FAILED;
+  http.addHeader("User-Agent", String("MILESTONE-Now/") + FIRMWARE_VERSION +
+                               " (https://github.com/CXITRON/MILESTONE-Core)");
+  return nowArtworkConsumeJpegResponse(
+      http, http.GET(), jpeg, jpegSize, httpCode, generation);
+}
+
+NowArtworkDownloadResult nowArtworkReadGatewayJpeg(
+    uint8_t *&jpeg, size_t &jpegSize, int16_t &httpCode, uint32_t generation) {
+  jpeg = nullptr;
+  jpegSize = 0;
+  httpCode = 0;
+  if (!NOW_ARTWORK_SERVICE_URL[0]) return NowArtworkDownloadResult::FAILED;
+  NetworkClientSecure client;
+  client.setCACert(MILESTONE_UPDATE_ROOT_CA);
+  client.setHandshakeTimeout(NOW_ART_TLS_HANDSHAKE_TIMEOUT_SEC);
+  HTTPClient http;
+  http.setConnectTimeout(5000);
+  http.setTimeout(7000);
+  http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
+  if (!http.begin(client, NOW_ARTWORK_SERVICE_URL)) return NowArtworkDownloadResult::FAILED;
+  http.addHeader("User-Agent", String("MILESTONE-Now/") + FIRMWARE_VERSION);
+  http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+  String body = "title=" + nowArtworkUrlEncode(nowArtworkWorkerTitle);
+  body += "&artist=" + nowArtworkUrlEncode(nowArtworkWorkerArtist);
+  body += "&album=" + nowArtworkUrlEncode(nowArtworkWorkerAlbum);
+  return nowArtworkConsumeJpegResponse(
+      http, http.POST(body), jpeg, jpegSize, httpCode, generation);
 }
 
 NowArtworkDownloadResult nowArtworkReadJpegWithRetries(
@@ -413,6 +447,7 @@ void nowArtworkWorker(void *) {
   }
   bool success = false;
   NowArtworkWorkerResult result = NowArtworkWorkerResult::NETWORK;
+  int16_t finalGatewayHttpCode = 0;
   int16_t finalAppleHttpCode = 0;
   int16_t finalHttpCode = 0;
   int16_t finalDownloadCode = 0;
@@ -420,9 +455,44 @@ void nowArtworkWorker(void *) {
   String candidates[NOW_ART_MAX_CANDIDATES];
   uint8_t candidateCount = 0;
   uint32_t lastLookupRequestMs = 0;
+  const bool useGateway = NOW_ARTWORK_SERVICE_URL[0] != '\0';
   nowArtworkRtcMagic = NOW_ART_RTC_MAGIC;
   nowArtworkRtcStage = 1;
-  {
+  if (useGateway) {
+    NowArtworkDownloadResult gatewayResult = NowArtworkDownloadResult::FAILED;
+    for (uint8_t attempt = 1; attempt <= NOW_ART_GATEWAY_ATTEMPTS; ++attempt) {
+      ++attemptsUsed;
+      nowArtworkRtcStage = 2;
+      uint8_t *jpeg = nullptr;
+      size_t jpegSize = 0;
+      gatewayResult = nowArtworkReadGatewayJpeg(
+          jpeg, jpegSize, finalGatewayHttpCode, generation);
+      if (gatewayResult == NowArtworkDownloadResult::READY) {
+        nowArtworkRtcStage = 3;
+        success = !nowArtworkWorkerCancelled(generation) &&
+                  nowArtworkDecodeJpeg(jpeg, jpegSize);
+        heap_caps_free(jpeg);
+        result = success ? NowArtworkWorkerResult::READY : NowArtworkWorkerResult::DECODE;
+        break;
+      }
+      if (jpeg) heap_caps_free(jpeg);
+      if (gatewayResult == NowArtworkDownloadResult::NOT_FOUND) {
+        result = NowArtworkWorkerResult::NO_ARTWORK;
+        break;
+      }
+      if (gatewayResult == NowArtworkDownloadResult::CANCELLED) {
+        result = NowArtworkWorkerResult::CANCELLED;
+        break;
+      }
+      result = finalGatewayHttpCode > 0 ? NowArtworkWorkerResult::DOWNLOAD
+                                        : NowArtworkWorkerResult::NETWORK;
+      if (!MilestoneCoreLogic::shouldRetryTransientHttpFailure(
+              finalGatewayHttpCode, false, attempt, NOW_ART_GATEWAY_ATTEMPTS) ||
+          !nowArtworkWaitForTransportRetry(generation, attempt)) break;
+      logLine(String("NOW artwork gateway retry after code=") + finalGatewayHttpCode +
+              " attempt=" + attempt);
+    }
+  } else {
     String appleArtworkUrl;
     String appleTerm = String(nowArtworkWorkerTitle) + " " + nowArtworkWorkerArtist;
     if (nowArtworkWorkerAlbum[0]) appleTerm += String(" ") + nowArtworkWorkerAlbum;
@@ -485,7 +555,7 @@ void nowArtworkWorker(void *) {
   }
 
   nowArtworkRtcStage = 1;
-  if (!success) {
+  if (!useGateway && !success) {
     const String title = nowArtworkLuceneEscape(nowArtworkWorkerTitle);
     const String album = nowArtworkLuceneEscape(nowArtworkWorkerAlbum);
     const String artist = nowArtworkLuceneEscape(nowArtworkWorkerArtist);
@@ -616,6 +686,7 @@ void nowArtworkWorker(void *) {
   nowArtworkWorkerSuccess = success;
   nowArtworkWorkerResult = result;
   nowArtworkWorkerStackFreeBytes = stackFreeBytes;
+  nowArtworkWorkerGatewayHttpCode = finalGatewayHttpCode;
   nowArtworkWorkerAppleHttpCode = finalAppleHttpCode;
   nowArtworkWorkerHttpCode = finalHttpCode;
   nowArtworkWorkerDownloadCode = finalDownloadCode;
@@ -646,6 +717,7 @@ void nowArtworkAcceptWorkerResult() {
   bool success;
   NowArtworkWorkerResult result;
   uint32_t stackFreeBytes;
+  int16_t gatewayHttpCode;
   int16_t appleHttpCode;
   int16_t httpCode;
   int16_t downloadCode;
@@ -657,6 +729,7 @@ void nowArtworkAcceptWorkerResult() {
   success = nowArtworkWorkerSuccess;
   result = nowArtworkWorkerResult;
   stackFreeBytes = nowArtworkWorkerStackFreeBytes;
+  gatewayHttpCode = nowArtworkWorkerGatewayHttpCode;
   appleHttpCode = nowArtworkWorkerAppleHttpCode;
   httpCode = nowArtworkWorkerHttpCode;
   downloadCode = nowArtworkWorkerDownloadCode;
@@ -685,6 +758,7 @@ void nowArtworkAcceptWorkerResult() {
       default: nowArtworkState = "network-failed"; break;
     }
     logLine(String("NOW artwork failed: ") + nowArtworkState +
+            " gateway_http=" + gatewayHttpCode +
             " apple_http=" + appleHttpCode + " http=" + httpCode +
             " attempts=" + attempts +
             " candidates=" + candidates + " download_http=" + downloadCode +
@@ -710,6 +784,7 @@ void nowArtworkAcceptWorkerResult() {
   nowArtworkState = "ready";
   logLine(String("NOW artwork loaded elapsed_ms=") + workerElapsedMs +
           " total_elapsed_ms=" + String(millis() - nowArtworkTrackChangedMs) +
+          " gateway_http=" + gatewayHttpCode +
           " apple_http=" + appleHttpCode + " http=" + httpCode +
           " attempts=" + attempts + " candidates=" + candidates +
           " download_http=" + downloadCode);
@@ -844,6 +919,7 @@ const uint8_t *nowArtworkLargeBitmap() {
 }
 
 const char *nowArtworkStatus() { return nowArtworkState.c_str(); }
+int nowArtworkLastGatewayHttpCode() { return nowArtworkWorkerGatewayHttpCode; }
 int nowArtworkLastAppleHttpCode() { return nowArtworkWorkerAppleHttpCode; }
 int nowArtworkLastHttpCode() { return nowArtworkWorkerHttpCode; }
 int nowArtworkLastDownloadCode() { return nowArtworkWorkerDownloadCode; }

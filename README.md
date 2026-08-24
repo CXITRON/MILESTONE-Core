@@ -141,7 +141,7 @@ NOW 프로필은 iPhone/iPad의 **Apple Media Service(AMS)** 를 이용해 Bluet
 
 연결과 AMS 구독이 준비되면 곡 제목, 아티스트, 재생/일시정지 상태와 재생 진행률을 표시하고, 앨범명 메타데이터는 표지 검색에만 사용합니다. NOW에서 BOOT 버튼을 1초 미만으로 누르거나 설정 포털의 **NOW 표시**에서 `곡명만`, `곡명 + 아티스트`, `곡명 + 앨범 표지`, `앨범 표지 중심`을 선택합니다. 모든 구성에 진행 막대와 재생/전체 시간이 남고, 텍스트 구성에서는 곡 제목을 아티스트보다 크게 표시합니다. 긴 한글·일본어·영문 텍스트는 UTF-8 스크롤 렌더러를 사용합니다. NOW는 기존 8비트 CORE 순환 마스크와 저장된 화면 순서를 변경하지 않습니다.
 
-표지 구성은 중계 서버나 별도 API 키 없이 ESP32가 먼저 Apple의 공개 iTunes Search API에 AMS 곡명·아티스트·앨범명을 그대로 조회하고, 결과가 없거나 전송에 실패하면 MusicBrainz와 Cover Art Archive를 사용합니다. Apple 응답의 첫 `artworkUrl100`은 48KiB 상한의 스트림에서 추출하므로 전체 JSON을 내부 RAM에 할당하지 않습니다. Apple Music의 현지화 표기가 MusicBrainz 별칭과 달라도 Apple 검색 결과를 그대로 사용할 수 있습니다. Apple 검색 TLS는 표지 이미지 TLS를 열기 전에 완전히 파괴하고, Apple URL도 MusicBrainz fallback 전에 해제해 여러 mbedTLS 버퍼가 내부 RAM에서 겹치지 않게 합니다. MusicBrainz fallback은 앨범명 + 아티스트 0건이면 곡명 + 아티스트로 다시 검색하고 최대 3개의 중복 없는 release-group 후보를 확인합니다. 모든 연속 MusicBrainz 요청은 시작 시각 기준 최소 1.2초 간격을 지키며, 일시적 전송·429·5xx 실패는 한 번만 재시도합니다. 설정 포털에는 Apple 검색 코드, MusicBrainz 코드·시도 횟수와 표지 HTTP 코드·후보 수가 따로 표시됩니다. JPEG는 ESP32 내부에서 RGB565로 축소 디코딩한 뒤 1비트 OLED 이미지로 변환하며 최근 6곡을 PSRAM에 보관합니다. 곡을 연속으로 넘길 때는 마지막 메타데이터 변경 후 1.4초가 지난 최신 곡만 조회하고, 늦게 끝난 이전 결과는 폐기합니다. 조회 실패·표지 없음·오프라인·메모리 부족이어도 AMS 텍스트와 진행률은 계속 표시됩니다.
+표지 구성은 ESP32가 Apple·MusicBrainz·Cover Art Archive를 직접 순회하지 않고 무료 `milestone-artwork` Cloudflare Worker에 AMS 곡명·아티스트·앨범명을 한 번만 전송합니다. Worker는 미국 동부 근처에서 Deezer 공개 카탈로그를 `곡명 + 앨범명`, 필요하면 `곡명 + 아티스트` 순서로 제한 조회하고, 96×96 baseline JPEG 또는 빠른 표지 없음 응답을 반환합니다. 정규화된 메타데이터의 SHA-256 키로 성공 결과는 30일, 표지 없음은 6시간 동안 edge cache에 보관하며 원문 메타데이터를 캐시 URL이나 로그에 넣지 않습니다. Images·R2·KV·유료 데이터베이스를 사용하지 않아 Workers Free 한도를 넘으면 과금되지 않고 요청이 실패합니다. 실제 배포 검증에서 `orion / 요네즈 켄시 / BOOTLEG`는 약 1초에 3.3KiB JPEG로 반환됐고 확정적인 표지 없음도 1초 이내에 끝났습니다. ESP32는 받은 JPEG만 RGB565로 축소 디코딩해 1비트 OLED 이미지로 변환하고 최근 6곡을 PSRAM에 보관합니다. 곡을 연속으로 넘길 때는 마지막 메타데이터 변경 후 0.8초가 지난 최신 곡만 조회하며, 늦게 끝난 이전 결과는 폐기합니다. 중계 실패·표지 없음·오프라인·메모리 부족이어도 다른 공급자로 확산 요청하지 않고 AMS 텍스트와 진행률을 계속 표시합니다.
 
 NOW의 업데이트 확인·설치는 먼저 광고를 중단하고, 애플리케이션 플래그뿐 아니라 NimBLE 서버의 실제 peer와 GAP connection handle을 함께 확인해 살아 있는 iPhone 연결을 종료합니다. 연결 종료가 확인되면 NimBLE 객체는 삭제하지 않은 채 유지하고 오래된 AMS/GAP 이벤트를 비운 뒤 HTTPS를 시작합니다. 2.5초 안에 실제 연결이 사라지지 않거나 TLS용 내부 RAM이 부족하면 재부팅을 감수하지 않고 업데이트 작업을 미룹니다. 일반 표지 조회는 AMS 연결을 유지해야 하므로 BLE 연결 간격을 40~80ms·latency 0·12초 supervision timeout으로 요청하고, 내부 RAM이 80KiB 또는 최대 연속 블록 32KiB 미만이면 선택 기능인 표지만 `LOW-MEMORY`로 건너뜁니다.
 
@@ -296,13 +296,13 @@ PC의 현재 프로젝트를 직접 수정한 경우에는 **MILESTONE_Core 프�
 
 ```bash
 cd /run/media/citron/T7/Documents/Dev/MILESTONE_Core
-milestone-release local 2.2.20 "Recover NOW OTA from low internal RAM"
+milestone-release local 2.2.21 "Route NOW artwork through the free cache gateway"
 ```
 
 Tailscale Taildrop으로 `MILESTONE_Core_1.10.6.zip`을 받은 경우에는 교체 대상 프로젝트 디렉터리 밖의 정상적으로 존재하는 디렉터리에서 실행합니다. 기존 프로젝트가 교체될 때 현재 셸 경로가 사라지는 문제를 방지하기 위해 `/tmp`로 이동하는 방식을 권장합니다.
 
 ```bash
-cd /tmp && milestone-release taildrop 2.2.20 "Recover NOW OTA from low internal RAM"
+cd /tmp && milestone-release taildrop 2.2.21 "Route NOW artwork through the free cache gateway"
 ```
 
 Taildrop 모드는 ZIP을 라이브 프로젝트에 바로 덮어쓰지 않습니다. 별도 staging 디렉터리에서 구조·버전·Git 상태를 검사하고 테스트와 ESP32 릴리즈 빌드까지 성공한 뒤에만 프로젝트를 교체합니다. GitHub 게시 전 실패하면 기존 프로젝트를 자동 복구합니다. `--dry-run`은 테스트/빌드까지만 수행하고 로컬 프로젝트·Git·GitHub를 변경하지 않습니다. `--yes`를 사용하지 않는 기본 동작은 최종 게시 직전에 한 번 확인합니다.
@@ -319,10 +319,10 @@ Taildrop 모드는 ZIP을 라이브 프로젝트에 바로 덮어쓰지 않습�
 
 ```bash
 chmod +x tools/make-release.sh
-./tools/make-release.sh 2.2.20 "Recover NOW OTA from low internal RAM"
+./tools/make-release.sh 2.2.21 "Route NOW artwork through the free cache gateway"
 ```
 
-기본 설명을 사용하려면 `./tools/make-release.sh 2.2.20`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
+기본 설명을 사용하려면 `./tools/make-release.sh 2.2.21`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
 
 다음 여섯 파일이 `release/`에 생성됩니다.
 
@@ -346,11 +346,12 @@ release/MILESTONE_Now.json
 일반적인 게시에는 위의 `milestone-release`를 사용합니다. 아래 수동 절차는 자동화 도구를 복구하거나 디버깅해야 할 때만 참고합니다.
 
 1. 저장소의 `Releases`에서 `Draft a new release`를 선택합니다.
-2. 버전과 동일한 태그를 만듭니다. 예: `v2.2.20`
-3. Release 제목을 `MILESTONE Core v2.2.20`로 지정합니다.
+2. 버전과 동일한 태그를 만듭니다. 예: `v2.2.21`
+3. Release 제목을 `MILESTONE Core v2.2.21`로 지정합니다.
 4. CORE/MEDIA/NOW의 BIN과 JSON 여섯 파일을 모두 첨부합니다.
 5. Pre-release가 아닌 최신 정식 Release로 게시합니다.
-6. 2.2.19 NOW 기기에서 내부 RAM 기준 미달 설치를 확정한 뒤, 2.2.20이 BLE 없는 복구 부팅으로 자동 전환되어 재확정 없이 설치되거나 90초 내 정상 NOW로 복귀하는지 검증합니다.
+6. NOW 실기기에서 `orion / 요네즈 켄시 / BOOTLEG`와 표지가 없는 곡을 재생해 중계 HTTP 200/204가 각각 빠르게 끝나고 AMS 연결·텍스트·진행률이 유지되는지 검증합니다.
+7. 2.2.19 NOW 기기에서 내부 RAM 기준 미달 설치를 확정한 뒤, 2.2.20 이상이 BLE 없는 복구 부팅으로 자동 전환되어 재확정 없이 설치되거나 90초 내 정상 NOW로 복귀하는지 검증합니다.
 
 여섯 파일의 이름은 모든 Release에서 정확히 같아야 합니다. 초안이나 Pre-release는 `latest` 업데이트 대상으로 사용하지 않습니다.
 
@@ -402,6 +403,21 @@ Taildrop ZIP의 `milestone-release`가 현재 설치본보다 새로우면, 게�
 - STREAM_MODE에서 일반 백그라운드 기능을 격리하고 PSRAM 240프레임 링버퍼·X/Y dirty-tile OLED 갱신·적응형 출력 주기·프레임 드롭·80°C 스트림 상한으로 영상 수신/표시에 집중
 - 라이브 송신은 96프레임 초기 충전 후 큐 64프레임 이하에서 최대 8프레임씩 144프레임 이상으로 보충하며 ESP32가 소스 시간축과 OLED 출력 클록을 분리해 관리
 - 비차단 3초 부팅 로고와 우상단 NTP `T`·업데이트 `U` 상태 아이콘
+
+## v2.2.21 업데이트 안내
+
+v2.2.21은 NOW의 선택형 앨범 표지가 ESP32에서 여러 외부 HTTPS 공급자를 직접 순회하며 BLE와 내부 RAM을 압박하고, 정상 네트워크에서도 전송 실패·긴 대기가 반복되던 구조를 무료 캐시 중계 경로로 교체합니다.
+
+- 귀속된 Cloudflare Workers Free의 `milestone-artwork`에 곡명·아티스트·앨범명을 bounded form POST로 한 번만 전송
+- 미국 동부 근처 실행 위치에서 Deezer `곡명 + 앨범`, `곡명 + 아티스트`를 고정 상한으로 조회
+- 공급자 96×96 baseline JPEG를 그대로 반환해 Images 변환·R2·KV·유료 데이터베이스 제거
+- 정규화 메타데이터 SHA-256 캐시 키, 성공 30일·표지 없음 6시간 edge cache 적용
+- 중계 HTTP 실패 시 ESP32가 Apple·MusicBrainz·CAA 직접 요청으로 확산하지 않고 텍스트 화면 유지
+- 설정 포털에 중계 HTTP 결과를 별도 표시하고 기존 직접 공급자 진단은 staging fallback에서만 유지
+- 실배포에서 `orion / 요네즈 켄시 / BOOTLEG` 3.3KiB JPEG 약 1초, 확정 miss 1초 미만 확인
+- NOW 전용 런타임 표식 V2, 기존 6곡 PSRAM 캐시·thermal/OTA 직렬화·설정 스키마 10 유지
+
+정식 버전: `2.2.21`
 
 ## v2.2.20 업데이트 안내
 

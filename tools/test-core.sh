@@ -87,6 +87,7 @@ for portal_html in "$media_portal_html" "$now_portal_html"; do
   fi
 done
 if command -v node >/dev/null 2>&1; then
+  node --test "$project_dir/services/artwork-worker/test/"*.test.js
   for portal_html in "$core_portal_html" "$media_portal_html" "$now_portal_html"; do
     sed -n '/<script>/,/<\/script>/p' "$portal_html" | sed '1s/^.*<script>//; $s/<\/script>.*$//' | node --check -
   done

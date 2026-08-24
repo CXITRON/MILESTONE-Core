@@ -1,6 +1,6 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v2.2.20
+> Current baseline: MILESTONE Core v2.2.21
 > Hardware: Waveshare ESP32-S3-Zero + SH1107 128×128 OLED
 > Repository: `CXITRON/MILESTONE-Core`
 
@@ -89,7 +89,7 @@ The `*.inc` runtime files are intentionally included into the sketch as one tran
 Firmware and persistent schema versions are separate concepts.
 
 ```cpp
-FIRMWARE_VERSION = "2.2.20"
+FIRMWARE_VERSION = "2.2.21"
 CONFIG_VERSION = 10
 ```
 
@@ -202,6 +202,8 @@ v2.2.18 corrects the v2.2.17 hardware result where repeated Apple TLS transport 
 v2.2.19 addresses the next hardware result: Apple and MusicBrainz both returned transport `-1` on the ESP32 while the same hosts returned HTTP 200 from the same LAN, and the embedded DigiCert Global Root G2 still matched both live certificate chains. The artwork worker now temporarily selects ESP-IDF's Wi-Fi-preferred coexistence policy for its bounded TLS work and always restores balanced coexistence before exit. The bonded AMS connection remains alive; the firmware does not disconnect Bluetooth merely to fetch a cover.
 
 v2.2.20 removes the NOW OTA low-RAM retry trap. If a confirmed install still lacks the guarded internal heap or contiguous block after bounded BLE disconnection, the exact validated target metadata is committed to NVS and the device reboots into a bounded RAM-recovery install. That boot does not initialize BLE, reconnects Wi-Fi/NTP, and resumes the already confirmed install automatically. The marker is cleared after verified success, on any install failure, or after a 90-second network preparation timeout; failure therefore restores ordinary NOW/BLE operation instead of returning to an endlessly actionable AVAILABLE state.
+
+v2.2.21 moves the optional NOW cover hot path to the free `milestone-artwork` Cloudflare Worker. The device sends bounded title, artist, and album form fields over one HTTPS connection and receives either one cached baseline JPEG thumbnail or a quick no-art response; gateway failure never fans out into Apple/MusicBrainz/CAA requests on the ESP32. The Worker runs near `aws:us-east-1`, where its bounded Deezer title+album/title+artist catalog queries return usable results, hashes normalized metadata for cache keys, keeps positive and negative responses in the edge cache, and uses no paid storage or image product. Live tests returned `orion / 요네즈 켄시 / BOOTLEG` as a 3.3KiB 96×96 baseline JPEG in about one second and a definite miss in under one second. AMS text/progress, six-entry PSRAM caching, thermal cancellation, OTA serialization, and schema 10 remain unchanged.
 
 Do not split the OTA transaction merely because the function is long. Its sequential structure encodes safety assumptions.
 

@@ -9,3 +9,8 @@ release/
 .vscode/
 .idea/
 *~
+
+# Cloudflare Worker local products and credentials
+node_modules/
+.wrangler/
+.dev.vars
