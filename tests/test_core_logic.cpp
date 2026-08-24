@@ -190,6 +190,33 @@ void testAppleArtworkUrlParser() {
       parser, reinterpret_cast<const uint8_t *>(empty), std::strlen(empty)));
 }
 
+void testArtworkBitmapPacket() {
+  uint8_t packet[MilestoneCoreLogic::ARTWORK_BITMAP_PACKET_BYTES] = {};
+  std::memcpy(packet, "MAB1", 4);
+  packet[4] = 60;
+  packet[5] = 60;
+  packet[6] = 88;
+  packet[7] = 88;
+  packet[8] = 0x01;
+  packet[9] = 0xE0;
+  packet[10] = 0x03;
+  packet[11] = 0xC8;
+  for (size_t i = MilestoneCoreLogic::ARTWORK_BITMAP_HEADER_BYTES;
+       i < sizeof(packet); ++i) packet[i] = static_cast<uint8_t>(i * 17U);
+  const uint32_t crc = MilestoneCoreLogic::artworkBitmapCrc32(
+      packet + MilestoneCoreLogic::ARTWORK_BITMAP_HEADER_BYTES,
+      MilestoneCoreLogic::ARTWORK_BITMAP_SMALL_BYTES +
+          MilestoneCoreLogic::ARTWORK_BITMAP_LARGE_BYTES);
+  packet[12] = static_cast<uint8_t>(crc >> 24U);
+  packet[13] = static_cast<uint8_t>(crc >> 16U);
+  packet[14] = static_cast<uint8_t>(crc >> 8U);
+  packet[15] = static_cast<uint8_t>(crc);
+  EXPECT_TRUE(MilestoneCoreLogic::validArtworkBitmapPacket(packet, sizeof(packet)));
+  packet[100] ^= 0x01;
+  EXPECT_FALSE(MilestoneCoreLogic::validArtworkBitmapPacket(packet, sizeof(packet)));
+  EXPECT_FALSE(MilestoneCoreLogic::validArtworkBitmapPacket(packet, sizeof(packet) - 1U));
+}
+
 }  // namespace
 
 int main() {
@@ -203,6 +230,7 @@ int main() {
   testTransientHttpRetry();
   testMusicBrainzReleaseGroupParser();
   testAppleArtworkUrlParser();
+  testArtworkBitmapPacket();
 
   if (failures != 0) {
     std::cerr << failures << " core logic test(s) failed\n";

@@ -7,6 +7,10 @@
     "deploy": "wrangler deploy"
   },
   "devDependencies": {
+    "jpeg-js": "0.4.4",
     "wrangler": "^4.0.0"
+  },
+  "dependencies": {
+    "@jsquash/jpeg": "1.6.0"
   }
 }

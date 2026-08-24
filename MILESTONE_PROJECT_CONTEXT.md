@@ -1,6 +1,6 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v2.2.21
+> Current baseline: MILESTONE Core v2.2.22
 > Hardware: Waveshare ESP32-S3-Zero + SH1107 128×128 OLED
 > Repository: `CXITRON/MILESTONE-Core`
 
@@ -89,7 +89,7 @@ The `*.inc` runtime files are intentionally included into the sketch as one tran
 Firmware and persistent schema versions are separate concepts.
 
 ```cpp
-FIRMWARE_VERSION = "2.2.21"
+FIRMWARE_VERSION = "2.2.22"
 CONFIG_VERSION = 10
 ```
 
@@ -204,6 +204,8 @@ v2.2.19 addresses the next hardware result: Apple and MusicBrainz both returned 
 v2.2.20 removes the NOW OTA low-RAM retry trap. If a confirmed install still lacks the guarded internal heap or contiguous block after bounded BLE disconnection, the exact validated target metadata is committed to NVS and the device reboots into a bounded RAM-recovery install. That boot does not initialize BLE, reconnects Wi-Fi/NTP, and resumes the already confirmed install automatically. The marker is cleared after verified success, on any install failure, or after a 90-second network preparation timeout; failure therefore restores ordinary NOW/BLE operation instead of returning to an endlessly actionable AVAILABLE state.
 
 v2.2.21 moves the optional NOW cover hot path to the free `milestone-artwork` Cloudflare Worker. The device sends bounded title, artist, and album form fields over one HTTPS connection and receives either one cached baseline JPEG thumbnail or a quick no-art response; gateway failure never fans out into Apple/MusicBrainz/CAA requests on the ESP32. The Worker runs near `aws:us-east-1`, where its bounded Deezer title+album/title+artist catalog queries return usable results, hashes normalized metadata for cache keys, keeps positive and negative responses in the edge cache, and uses no paid storage or image product. Live tests returned `orion / 요네즈 켄시 / BOOTLEG` as a 3.3KiB 96×96 baseline JPEG in about one second and a definite miss in under one second. AMS text/progress, six-entry PSRAM caching, thermal cancellation, OTA serialization, and schema 10 remain unchanged.
+
+v2.2.22 moves JPEG decode, resizing, luminance conversion, and ordered dithering from the NOW device to the same free Worker. The backward-compatible `/v1/artwork` path continues to serve JPEGs to v2.2.21, while `/v2/artwork` uses a Wasm MozJPEG decoder and returns a fixed 1,464-byte `MAB1` packet containing 60×60 and 88×88 LSB-first one-bit bitmaps plus a CRC-32. NOW validates the exact length, magic, dimensions, component lengths, and payload CRC before copying either bitmap. Live cache-miss traces measured 6–9ms CPU after CRC/pixel-loop optimization, within the Workers Free 10ms request budget; no Images, R2, KV, or paid database is used. AMS text/progress, the six-entry PSRAM cache, thermal cancellation, OTA serialization, and schema 10 remain unchanged.
 
 Do not split the OTA transaction merely because the function is long. Its sequential structure encodes safety assumptions.
 

@@ -30,9 +30,6 @@
 #include "esp_app_desc.h"
 #include "esp_sntp.h"
 #include "esp_system.h"
-#if MILESTONE_HAS_NOW_VIEW
-#include <jpeg_decoder.h>
-#endif
 #if MILESTONE_HAS_BLUETOOTH
 #include <BLEDevice.h>
 #include <BLEServer.h>
@@ -77,7 +74,7 @@ SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 
 namespace Milestone {
 
-constexpr char FIRMWARE_VERSION[] = "2.2.21";
+constexpr char FIRMWARE_VERSION[] = "2.2.22";
 constexpr char FIRMWARE_PROFILE[] = MILESTONE_FIRMWARE_PROFILE;
 constexpr char FIRMWARE_PROFILE_LABEL[] = MILESTONE_FIRMWARE_PROFILE_LABEL;
 constexpr char FIRMWARE_PROFILE_MARKER[] = MILESTONE_PROFILE_MARKER;
@@ -92,7 +89,7 @@ constexpr char UPDATE_MANIFEST_ASSET[] = MILESTONE_MANIFEST_ASSET;
 // The configured gateway is exclusive: a gateway failure leaves the optional
 // cover unavailable instead of fanning out into multiple on-device providers.
 constexpr char NOW_ARTWORK_SERVICE_URL[] =
-    "https://milestone-artwork.typhoon-individual.workers.dev/v1/artwork";
+    "https://milestone-artwork.typhoon-individual.workers.dev/v2/artwork";
 constexpr uint16_t CONFIG_VERSION = 10;
 constexpr uint8_t VIEW_COUNT = 8;
 constexpr uint8_t MAX_SAVED_NETWORKS = 8;

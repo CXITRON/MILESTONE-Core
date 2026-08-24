@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import jpeg from "jpeg-js";
 import worker, {
   chooseAppleArtwork,
   chooseDeezerArtwork,
   extractReleaseGroups,
+  crc32,
+  makeBitmapPacket,
+  makeMonochromeBitmap,
   normalizeText,
 } from "../src/worker.js";
 
@@ -20,6 +24,16 @@ class MemoryCache {
   async put(request, response) {
     this.values.set(request.url, response.clone());
   }
+}
+
+function decodeForTest(bytes) {
+  return jpeg.decode(bytes, {
+    useTArray: true,
+    formatAsRGBA: true,
+    tolerantDecoding: true,
+    maxResolutionInMP: 0.05,
+    maxMemoryUsageInMB: 4,
+  });
 }
 
 test("metadata normalization is stable and bounded", () => {
@@ -57,10 +71,42 @@ test("MusicBrainz parser accepts attribute order and removes duplicates", () => 
   assert.deepEqual(extractReleaseGroups(xml), [first, second]);
 });
 
-test("worker returns and reuses a provider JPEG cache entry", async () => {
+test("bitmap conversion uses the firmware LSB-first monochrome layout", () => {
+  const rgb = new Uint8Array([
+    255, 255, 255, 255, 0, 0, 0, 255,
+    255, 255, 255, 255, 0, 0, 0, 255,
+  ]);
+  assert.deepEqual(
+    makeMonochromeBitmap(rgb, 2, 2, 2, 2),
+    new Uint8Array([0x01, 0x01]),
+  );
+});
+
+test("bitmap packet contains both fixed sizes and a payload CRC", async () => {
+  const rgba = new Uint8Array(16 * 16 * 4);
+  for (let offset = 0; offset < rgba.length; offset += 4) {
+    rgba[offset] = 255;
+    rgba[offset + 1] = 255;
+    rgba[offset + 2] = 255;
+    rgba[offset + 3] = 255;
+  }
+  const encoded = jpeg.encode({ data: rgba, width: 16, height: 16 }, 90).data;
+  const packet = await makeBitmapPacket(encoded, decodeForTest);
+  const view = new DataView(packet.buffer, packet.byteOffset, packet.byteLength);
+  assert.equal(new TextDecoder().decode(packet.subarray(0, 4)), "MAB1");
+  assert.deepEqual([...packet.subarray(4, 8)], [60, 60, 88, 88]);
+  assert.equal(view.getUint16(8, false), 480);
+  assert.equal(view.getUint16(10, false), 968);
+  assert.equal(packet.byteLength, 1464);
+  assert.equal(view.getUint32(12, false), crc32(packet.subarray(16)));
+});
+
+test("worker returns and reuses a converted bitmap cache entry", async () => {
   const cache = new MemoryCache();
   let deezerCalls = 0;
   let imageCalls = 0;
+  const rgba = new Uint8Array(16 * 16 * 4).fill(255);
+  const jpegBytes = jpeg.encode({ data: rgba, width: 16, height: 16 }, 90).data;
   const upstream = async (url) => {
     const value = String(url);
     if (value.startsWith("https://api.deezer.com/search")) {
@@ -76,16 +122,16 @@ test("worker returns and reuses a provider JPEG cache entry", async () => {
     }
     if (value === "https://img.example/cover.jpg") {
       imageCalls += 1;
-      return new Response(new Uint8Array([0xff, 0xd8, 0xff, 0xd9]), {
-        headers: { "Content-Type": "image/jpeg", "Content-Length": "4" },
+      return new Response(jpegBytes, {
+        headers: { "Content-Type": "image/jpeg", "Content-Length": String(jpegBytes.byteLength) },
       });
     }
     throw new Error(`unexpected URL: ${value}`);
   };
-  const env = { __cache: cache, __fetch: upstream };
+  const env = { __cache: cache, __fetch: upstream, __decode: decodeForTest };
   const pending = [];
   const context = { waitUntil(promise) { pending.push(promise); } };
-  const makeRequest = () => new Request("https://worker.example/v1/artwork", {
+  const makeRequest = () => new Request("https://worker.example/v2/artwork", {
     method: "POST",
     body: new URLSearchParams({ title: "Song", artist: "Artist", album: "Album" }),
   });
@@ -93,12 +139,32 @@ test("worker returns and reuses a provider JPEG cache entry", async () => {
   const first = await worker.fetch(makeRequest(), env, context);
   await Promise.all(pending.splice(0));
   assert.equal(first.status, 200);
-  assert.equal(first.headers.get("x-milestone-artwork"), "1");
+  assert.equal(first.headers.get("content-type"), "application/vnd.milestone.artwork-bitmap");
+  assert.equal(first.headers.get("x-milestone-artwork"), "2");
+  assert.equal((await first.arrayBuffer()).byteLength, 1464);
 
   const second = await worker.fetch(makeRequest(), env, context);
   assert.equal(second.status, 200);
   assert.equal(deezerCalls, 1);
   assert.equal(imageCalls, 1);
+});
+
+test("v1 endpoint remains JPEG-compatible during firmware rollout", async () => {
+  const rgba = new Uint8Array(8 * 8 * 4).fill(255);
+  const jpegBytes = jpeg.encode({ data: rgba, width: 8, height: 8 }, 90).data;
+  const upstream = async (url) => String(url).startsWith("https://api.deezer.com/search")
+    ? Response.json({ data: [{
+      title: "Song", title_short: "Song", artist: { name: "Artist" },
+      album: { title: "Album", cover_medium: "https://img.example/cover.jpg" },
+    }] })
+    : new Response(jpegBytes, { headers: { "Content-Type": "image/jpeg" } });
+  const response = await worker.fetch(new Request("https://worker.example/v1/artwork", {
+    method: "POST",
+    body: new URLSearchParams({ title: "Song", artist: "Artist", album: "Album" }),
+  }), { __cache: new MemoryCache(), __fetch: upstream }, { waitUntil() {} });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("content-type"), "image/jpeg");
+  assert.equal(response.headers.get("x-milestone-artwork"), "1");
 });
 
 test("invalid metadata is rejected without an upstream call", async () => {

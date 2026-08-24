@@ -1,31 +1,30 @@
-// NOW-only, best-effort album-art lookup. The configured gateway resolves and
-// caches a small JPEG; legacy direct providers remain available only for
-// staging builds without a gateway. Decode and 1-bit conversion happen on the
-// ESP32, and failures never block AMS text/progress.
+// NOW-only, best-effort album-art lookup. The gateway resolves, converts, and
+// caches fixed MAB1 one-bit bitmaps. The ESP32 validates the header, dimensions,
+// length, and CRC before displaying them; failures never block AMS text/progress.
 
-const char NOW_ARTWORK_RUNTIME_MARKER[] __attribute__((used)) = "MILESTONE_NOW_ARTWORK_RUNTIME_V2";
+const char NOW_ARTWORK_RUNTIME_MARKER[] __attribute__((used)) = "MILESTONE_NOW_ARTWORK_RUNTIME_V3";
 constexpr uint16_t NOW_ART_SMALL_W = 60;
 constexpr uint16_t NOW_ART_SMALL_H = 60;
 constexpr uint16_t NOW_ART_LARGE_W = 88;
 constexpr uint16_t NOW_ART_LARGE_H = 88;
 constexpr size_t NOW_ART_SMALL_BYTES = ((NOW_ART_SMALL_W + 7U) / 8U) * NOW_ART_SMALL_H;
 constexpr size_t NOW_ART_LARGE_BYTES = ((NOW_ART_LARGE_W + 7U) / 8U) * NOW_ART_LARGE_H;
+constexpr size_t NOW_ART_BITMAP_HEADER_BYTES = 16;
+constexpr size_t NOW_ART_BITMAP_PACKET_BYTES =
+    NOW_ART_BITMAP_HEADER_BYTES + NOW_ART_SMALL_BYTES + NOW_ART_LARGE_BYTES;
+static_assert(NOW_ART_BITMAP_HEADER_BYTES == MilestoneCoreLogic::ARTWORK_BITMAP_HEADER_BYTES);
+static_assert(NOW_ART_SMALL_BYTES == MilestoneCoreLogic::ARTWORK_BITMAP_SMALL_BYTES);
+static_assert(NOW_ART_LARGE_BYTES == MilestoneCoreLogic::ARTWORK_BITMAP_LARGE_BYTES);
+static_assert(NOW_ART_BITMAP_PACKET_BYTES == MilestoneCoreLogic::ARTWORK_BITMAP_PACKET_BYTES);
 constexpr uint8_t NOW_ART_CACHE_SLOTS = 6;
 constexpr uint32_t NOW_ART_TRACK_SETTLE_MS = 800UL;
 constexpr uint32_t NOW_ART_RETRY_MS = 5UL * 60UL * 1000UL;
 constexpr uint32_t NOW_ART_REQUEST_SPACING_MS = 1200UL;
-constexpr uint8_t NOW_ART_LOOKUP_ATTEMPTS = 5;
-constexpr uint8_t NOW_ART_APPLE_ATTEMPTS = 1;
 constexpr uint8_t NOW_ART_GATEWAY_ATTEMPTS = 2;
-constexpr uint8_t NOW_ART_MAX_CANDIDATES = 3;
-constexpr uint32_t NOW_ART_LOOKUP_RETRY_MS = 1200UL;
 constexpr uint32_t NOW_ART_TRANSPORT_BACKOFF_MS = 250UL;
 constexpr uint32_t NOW_ART_WORKER_BUDGET_MS = 15000UL;
-constexpr uint32_t NOW_ART_LOOKUP_CONNECT_TIMEOUT_MS = 3500UL;
 constexpr uint32_t NOW_ART_LOOKUP_TIMEOUT_MS = 7000UL;
 constexpr uint32_t NOW_ART_TLS_HANDSHAKE_TIMEOUT_SEC = 3UL;
-constexpr size_t NOW_ART_MAX_JPEG_BYTES = 220UL * 1024UL;
-constexpr size_t NOW_ART_MAX_LOOKUP_BYTES = 48UL * 1024UL;
 constexpr size_t NOW_ART_BLE_MIN_FREE_HEAP = 80UL * 1024UL;
 constexpr size_t NOW_ART_BLE_MIN_LARGEST_BLOCK = 32UL * 1024UL;
 constexpr uint32_t NOW_ART_WORKER_STACK_BYTES = 14UL * 1024UL;
@@ -121,22 +120,6 @@ String nowArtworkUrlEncode(const char *text) {
   return encoded;
 }
 
-String nowArtworkLuceneEscape(const char *text) {
-  String escaped;
-  if (!text) return escaped;
-  escaped.reserve(strlen(text) * 2U);
-  for (const char *cursor = text; *cursor; ++cursor) {
-    const char c = *cursor;
-    if (c == '+' || c == '-' || c == '!' || c == '(' || c == ')' || c == '{' || c == '}' ||
-        c == '[' || c == ']' || c == '^' || c == '"' || c == '~' || c == '*' || c == '?' ||
-        c == ':' || c == '\\' || c == '/') {
-      escaped += '\\';
-    }
-    escaped += c;
-  }
-  return escaped;
-}
-
 bool nowArtworkWorkerCancelled(uint32_t generation) {
   return generation != nowArtworkGeneration || thermalWarning || thermalThrottled ||
          thermalSafeMode || temperatureSensorFault ||
@@ -159,65 +142,53 @@ bool nowArtworkWaitForTransportRetry(uint32_t generation, uint8_t completedAttem
   return true;
 }
 
-uint8_t nowArtworkReadReleaseGroups(HTTPClient &http, String *mbids, uint8_t capacity,
-                                    bool &complete, bool &timedOut, uint32_t generation) {
-  WiFiClient *stream = http.getStreamPtr();
+enum class NowArtworkDownloadResult : uint8_t { READY, NOT_FOUND, FAILED, INVALID, CANCELLED };
+
+NowArtworkDownloadResult nowArtworkConsumeBitmapResponse(
+    HTTPClient &http, int response, int16_t &httpCode, uint32_t generation) {
+  httpCode = static_cast<int16_t>(response);
+  if (response != HTTP_CODE_OK) {
+    http.end();
+    return response == HTTP_CODE_NOT_FOUND || response == HTTP_CODE_NO_CONTENT
+        ? NowArtworkDownloadResult::NOT_FOUND : NowArtworkDownloadResult::FAILED;
+  }
   const int announced = http.getSize();
-  complete = false;
-  timedOut = false;
-  if (!stream || !mbids || !capacity) return 0;
-  size_t total = 0;
-  uint8_t found = 0;
-  MilestoneCoreLogic::MusicBrainzReleaseGroupParser parser;
-  MilestoneCoreLogic::resetMusicBrainzReleaseGroupParser(parser);
-  char uuid[37] = {};
-  uint8_t chunk[256];
+  if (announced != static_cast<int>(NOW_ART_BITMAP_PACKET_BYTES)) {
+    http.end();
+    return NowArtworkDownloadResult::INVALID;
+  }
+  uint8_t packet[NOW_ART_BITMAP_PACKET_BYTES];
+  size_t receivedTotal = 0;
+  WiFiClient *stream = http.getStreamPtr();
   uint32_t lastDataMs = millis();
-  while (total < NOW_ART_MAX_LOOKUP_BYTES &&
-         (announced < 0 || total < static_cast<size_t>(announced))) {
-    if (nowArtworkWorkerCancelled(generation)) return 0;
+  while (stream && http.connected() && receivedTotal < sizeof(packet)) {
+    if (nowArtworkWorkerCancelled(generation)) break;
     const size_t available = stream->available();
-    if (!available) {
-      if (!http.connected()) break;
-      if (elapsed(millis(), lastDataMs, NOW_ART_LOOKUP_TIMEOUT_MS)) {
-        timedOut = true;
-        return found;
-      }
+    if (available) {
+      const size_t take = min(available, sizeof(packet) - receivedTotal);
+      const int received = stream->readBytes(packet + receivedTotal, take);
+      if (received <= 0) break;
+      receivedTotal += static_cast<size_t>(received);
+      lastDataMs = millis();
+    } else {
+      if (elapsed(millis(), lastDataMs, 6000UL)) break;
       delay(1);
-      continue;
-    }
-    const size_t take = min(available, min(sizeof(chunk), NOW_ART_MAX_LOOKUP_BYTES - total));
-    const int received = stream->readBytes(chunk, take);
-    if (received <= 0) {
-      timedOut = http.connected();
-      return found;
-    }
-    lastDataMs = millis();
-    total += static_cast<size_t>(received);
-    for (int i = 0; i < received; ++i) {
-      if (!MilestoneCoreLogic::feedMusicBrainzReleaseGroupParser(parser, chunk + i, 1, uuid)) {
-        continue;
-      }
-      bool duplicate = false;
-      for (uint8_t candidate = 0; candidate < found; ++candidate) {
-        if (mbids[candidate] == uuid) {
-          duplicate = true;
-          break;
-        }
-      }
-      if (!duplicate) mbids[found++] = uuid;
-      if (found == capacity) {
-        complete = true;
-        return found;
-      }
     }
   }
-  complete = announced >= 0 ? total == static_cast<size_t>(announced) : !http.connected();
-  return found;
+  http.end();
+  if (nowArtworkWorkerCancelled(generation)) return NowArtworkDownloadResult::CANCELLED;
+  if (receivedTotal != sizeof(packet)) return NowArtworkDownloadResult::FAILED;
+  nowArtworkRtcStage = 3;
+  const bool packetValid = MilestoneCoreLogic::validArtworkBitmapPacket(
+      packet, sizeof(packet));
+  const uint8_t *payload = packet + NOW_ART_BITMAP_HEADER_BYTES;
+  if (!packetValid) return NowArtworkDownloadResult::INVALID;
+  memcpy(nowArtworkWorkerSmall, payload, NOW_ART_SMALL_BYTES);
+  memcpy(nowArtworkWorkerLarge, payload + NOW_ART_SMALL_BYTES, NOW_ART_LARGE_BYTES);
+  return NowArtworkDownloadResult::READY;
 }
 
-enum class NowArtworkDownloadResult : uint8_t { READY, NOT_FOUND, FAILED, CANCELLED };
-
+#if 0  // Removed from the production image: pre-v2 gateway JPEG compatibility.
 NowArtworkDownloadResult nowArtworkConsumeJpegResponse(
     HTTPClient &http, int response, uint8_t *&jpeg, size_t &jpegSize,
     int16_t &httpCode, uint32_t generation) {
@@ -290,11 +261,10 @@ NowArtworkDownloadResult nowArtworkReadJpeg(const String &url, uint8_t *&jpeg, s
   return nowArtworkConsumeJpegResponse(
       http, http.GET(), jpeg, jpegSize, httpCode, generation);
 }
+#endif
 
-NowArtworkDownloadResult nowArtworkReadGatewayJpeg(
-    uint8_t *&jpeg, size_t &jpegSize, int16_t &httpCode, uint32_t generation) {
-  jpeg = nullptr;
-  jpegSize = 0;
+NowArtworkDownloadResult nowArtworkReadGatewayBitmap(
+    int16_t &httpCode, uint32_t generation) {
   httpCode = 0;
   if (!NOW_ARTWORK_SERVICE_URL[0]) return NowArtworkDownloadResult::FAILED;
   NetworkClientSecure client;
@@ -310,10 +280,11 @@ NowArtworkDownloadResult nowArtworkReadGatewayJpeg(
   String body = "title=" + nowArtworkUrlEncode(nowArtworkWorkerTitle);
   body += "&artist=" + nowArtworkUrlEncode(nowArtworkWorkerArtist);
   body += "&album=" + nowArtworkUrlEncode(nowArtworkWorkerAlbum);
-  return nowArtworkConsumeJpegResponse(
-      http, http.POST(body), jpeg, jpegSize, httpCode, generation);
+  return nowArtworkConsumeBitmapResponse(
+      http, http.POST(body), httpCode, generation);
 }
 
+#if 0  // Removed from the production image: direct provider and JPEG conversion path.
 NowArtworkDownloadResult nowArtworkReadJpegWithRetries(
     const String &url, uint8_t *&jpeg, size_t &jpegSize,
     int16_t &httpCode, uint32_t generation) {
@@ -436,6 +407,7 @@ bool nowArtworkReadAppleUrl(HTTPClient &http, String &url, bool &complete, bool 
   complete = announced >= 0 ? total == static_cast<size_t>(announced) : !http.connected();
   return false;
 }
+#endif
 
 void nowArtworkWorker(void *) {
   const uint32_t generation = nowArtworkWorkerGeneration;
@@ -452,32 +424,27 @@ void nowArtworkWorker(void *) {
   int16_t finalHttpCode = 0;
   int16_t finalDownloadCode = 0;
   uint8_t attemptsUsed = 0;
-  String candidates[NOW_ART_MAX_CANDIDATES];
   uint8_t candidateCount = 0;
-  uint32_t lastLookupRequestMs = 0;
-  const bool useGateway = NOW_ARTWORK_SERVICE_URL[0] != '\0';
   nowArtworkRtcMagic = NOW_ART_RTC_MAGIC;
   nowArtworkRtcStage = 1;
-  if (useGateway) {
+  {
     NowArtworkDownloadResult gatewayResult = NowArtworkDownloadResult::FAILED;
     for (uint8_t attempt = 1; attempt <= NOW_ART_GATEWAY_ATTEMPTS; ++attempt) {
       ++attemptsUsed;
       nowArtworkRtcStage = 2;
-      uint8_t *jpeg = nullptr;
-      size_t jpegSize = 0;
-      gatewayResult = nowArtworkReadGatewayJpeg(
-          jpeg, jpegSize, finalGatewayHttpCode, generation);
+      gatewayResult = nowArtworkReadGatewayBitmap(
+          finalGatewayHttpCode, generation);
       if (gatewayResult == NowArtworkDownloadResult::READY) {
-        nowArtworkRtcStage = 3;
-        success = !nowArtworkWorkerCancelled(generation) &&
-                  nowArtworkDecodeJpeg(jpeg, jpegSize);
-        heap_caps_free(jpeg);
-        result = success ? NowArtworkWorkerResult::READY : NowArtworkWorkerResult::DECODE;
+        success = !nowArtworkWorkerCancelled(generation);
+        result = success ? NowArtworkWorkerResult::READY : NowArtworkWorkerResult::CANCELLED;
         break;
       }
-      if (jpeg) heap_caps_free(jpeg);
       if (gatewayResult == NowArtworkDownloadResult::NOT_FOUND) {
         result = NowArtworkWorkerResult::NO_ARTWORK;
+        break;
+      }
+      if (gatewayResult == NowArtworkDownloadResult::INVALID) {
+        result = NowArtworkWorkerResult::DECODE;
         break;
       }
       if (gatewayResult == NowArtworkDownloadResult::CANCELLED) {
@@ -492,7 +459,9 @@ void nowArtworkWorker(void *) {
       logLine(String("NOW artwork gateway retry after code=") + finalGatewayHttpCode +
               " attempt=" + attempt);
     }
-  } else {
+  }
+#if 0  // Removed from the production image: gateway-exclusive since v2.2.21.
+  else {
     String appleArtworkUrl;
     String appleTerm = String(nowArtworkWorkerTitle) + " " + nowArtworkWorkerArtist;
     if (nowArtworkWorkerAlbum[0]) appleTerm += String(" ") + nowArtworkWorkerAlbum;
@@ -668,6 +637,7 @@ void nowArtworkWorker(void *) {
                              : NowArtworkWorkerResult::DOWNLOAD;
     }
   }
+#endif
   if (nowArtworkWorkerBudgetExpired()) {
     success = false;
     result = NowArtworkWorkerResult::LOOKUP_TIMEOUT;
@@ -751,7 +721,7 @@ void nowArtworkAcceptWorkerResult() {
       case NowArtworkWorkerResult::LOOKUP_TOO_LARGE: nowArtworkState = "lookup-large"; break;
       case NowArtworkWorkerResult::DOWNLOAD: nowArtworkState = "download-failed"; break;
       case NowArtworkWorkerResult::NO_ARTWORK: nowArtworkState = "art-not-found"; break;
-      case NowArtworkWorkerResult::DECODE: nowArtworkState = "decode-failed"; break;
+      case NowArtworkWorkerResult::DECODE: nowArtworkState = "bitmap-invalid"; break;
       case NowArtworkWorkerResult::CANCELLED:
         nowArtworkState = thermalWarning || thermalThrottled ? "temperature-paused" : "settling";
         return;
@@ -934,7 +904,7 @@ void consumeNowArtworkResetBreadcrumb() {
   if (!interruptedStage || esp_reset_reason() == ESP_RST_POWERON) return;
   nowArtworkInterruptedStage = interruptedStage == 1 ? "lookup"
       : interruptedStage == 2 ? "download"
-      : interruptedStage == 3 ? "decode" : "unknown";
+      : interruptedStage == 3 ? "verify" : "unknown";
   logLine(String("previous reset interrupted NOW artwork stage=") +
           nowArtworkInterruptedStage + " reset=" + resetReasonName(esp_reset_reason()));
 }

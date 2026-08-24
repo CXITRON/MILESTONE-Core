@@ -64,7 +64,7 @@ R"HTML(
 <div class="full"><label>BOOT 짧게 누르기 / 기본 표시 구성</label><select id="now_layout"><option value="0">곡명만</option><option value="1">곡명 + 아티스트</option><option value="3">곡명 + 앨범 표지</option><option value="4">앨범 표지 중심</option></select></div>
 <div class="full"><button class="primary" onclick="saveNowLayout()">NOW 표시 저장</button></div>
 <div id="now_layout_status" class="status full">NOW 표시 설정을 불러오는 중…</div>
-<div class="full"><small>모든 구성에 재생 상태, 진행 막대와 재생/전체 시간이 표시됩니다. BOOT 버튼을 1초 미만으로 누르면 네 구성이 차례로 바뀝니다. 표지는 무료 캐시 중계 서비스에서 작은 JPEG 하나로 받아오며, 찾지 못하거나 서비스가 응답하지 않아도 제목·진행률 표시는 계속 동작합니다.</small></div>
+<div class="full"><small>모든 구성에 재생 상태, 진행 막대와 재생/전체 시간이 표시됩니다. BOOT 버튼을 1초 미만으로 누르면 네 구성이 차례로 바뀝니다. 표지는 무료 캐시 중계 서비스가 OLED용 1비트 데이터로 변환하며, 기기는 길이와 CRC를 검증해 바로 표시합니다. 찾지 못하거나 서비스가 응답하지 않아도 제목·진행률 표시는 계속 동작합니다.</small></div>
 </div></section>
 )HTML"
 #endif

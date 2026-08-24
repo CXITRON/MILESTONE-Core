@@ -54,9 +54,9 @@ Options:
 
 Examples:
   cd /run/media/citron/T7/Documents/Dev/MILESTONE_Core
-  milestone-release local 2.2.21 "Route NOW artwork through the free cache gateway"
+  milestone-release local 2.2.22 "Move NOW artwork conversion to the free gateway"
 
-  cd /tmp && milestone-release taildrop 2.2.21 "Route NOW artwork through the free cache gateway"
+  cd /tmp && milestone-release taildrop 2.2.22 "Move NOW artwork conversion to the free gateway"
 USAGE
 }
 

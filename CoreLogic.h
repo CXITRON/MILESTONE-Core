@@ -29,6 +29,14 @@ bool shouldIgnoreLateBluetoothEncryptionFailure(bool linkAlreadySecured,
 bool shouldRetryTransientHttpFailure(int responseCode, bool responseComplete,
                                      uint8_t attempt, uint8_t maximumAttempts);
 
+constexpr size_t ARTWORK_BITMAP_HEADER_BYTES = 16;
+constexpr size_t ARTWORK_BITMAP_SMALL_BYTES = 480;
+constexpr size_t ARTWORK_BITMAP_LARGE_BYTES = 968;
+constexpr size_t ARTWORK_BITMAP_PACKET_BYTES = ARTWORK_BITMAP_HEADER_BYTES +
+    ARTWORK_BITMAP_SMALL_BYTES + ARTWORK_BITMAP_LARGE_BYTES;
+uint32_t artworkBitmapCrc32(const uint8_t *data, size_t size);
+bool validArtworkBitmapPacket(const uint8_t *data, size_t size);
+
 struct MusicBrainzReleaseGroupParser {
   char tag[256];
   uint16_t length;

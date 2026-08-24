@@ -5,6 +5,23 @@ const MAX_SOURCE_IMAGE_BYTES = 220 * 1024;
 const POSITIVE_CACHE_SECONDS = 30 * 24 * 60 * 60;
 const NEGATIVE_CACHE_SECONDS = 6 * 60 * 60;
 const ERROR_CACHE_SECONDS = 60;
+const SMALL_WIDTH = 60;
+const SMALL_HEIGHT = 60;
+const LARGE_WIDTH = 88;
+const LARGE_HEIGHT = 88;
+const SMALL_BYTES = Math.ceil(SMALL_WIDTH / 8) * SMALL_HEIGHT;
+const LARGE_BYTES = Math.ceil(LARGE_WIDTH / 8) * LARGE_HEIGHT;
+const BITMAP_HEADER_BYTES = 16;
+const BITMAP_PACKET_BYTES = BITMAP_HEADER_BYTES + SMALL_BYTES + LARGE_BYTES;
+const BITMAP_CONTENT_TYPE = "application/vnd.milestone.artwork-bitmap";
+const CRC32_TABLE = new Uint32Array(256);
+for (let value = 0; value < CRC32_TABLE.length; value += 1) {
+  let crc = value;
+  for (let bit = 0; bit < 8; bit += 1) {
+    crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0);
+  }
+  CRC32_TABLE[value] = crc >>> 0;
+}
 const USER_AGENT =
   "MILESTONE-Artwork/1 (https://github.com/CXITRON/MILESTONE-Core)";
 
@@ -206,6 +223,73 @@ async function sourceArtwork(fetcher, metadata) {
   return { response: null, trace };
 }
 
+function makeMonochromeBitmap(rgb, sourceWidth, sourceHeight, targetWidth, targetHeight,
+                              channels = 4) {
+  const stride = Math.ceil(targetWidth / 8);
+  const output = new Uint8Array(stride * targetHeight);
+  const bayer = [-8, 0, -6, 2, 4, -4, 6, -2, -5, 3, -7, 1, 7, -1, 5, -3];
+  const sourceXs = new Uint16Array(targetWidth);
+  const sourceYs = new Uint16Array(targetHeight);
+  for (let x = 0; x < targetWidth; x += 1) {
+    sourceXs[x] = Math.floor(x * sourceWidth / targetWidth);
+  }
+  for (let y = 0; y < targetHeight; y += 1) {
+    sourceYs[y] = Math.floor(y * sourceHeight / targetHeight);
+  }
+  for (let y = 0; y < targetHeight; y += 1) {
+    const sourceRow = sourceYs[y] * sourceWidth;
+    const targetRow = y * stride;
+    const bayerRow = (y & 3) * 4;
+    for (let x = 0; x < targetWidth; x += 1) {
+      const offset = (sourceRow + sourceXs[x]) * channels;
+      const luminance = (rgb[offset] * 54 + rgb[offset + 1] * 183 + rgb[offset + 2] * 19) >> 8;
+      if (luminance >= 128 + bayer[bayerRow + (x & 3)] * 5) {
+        output[targetRow + (x >> 3)] |= 1 << (x & 7);
+      }
+    }
+  }
+  return output;
+}
+
+function crc32(bytes) {
+  let crc = 0xffffffff;
+  for (const byte of bytes) {
+    crc = CRC32_TABLE[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  }
+  return (~crc) >>> 0;
+}
+
+async function makeBitmapPacket(jpeg, decoder) {
+  if (typeof decoder !== "function") throw new Error("missing-image-decoder");
+  const decoded = await decoder(jpeg);
+  if (!decoded.width || !decoded.height ||
+      decoded.data.byteLength !== decoded.width * decoded.height * 4) {
+    throw new Error("invalid-decoded-image");
+  }
+  const small = makeMonochromeBitmap(
+    decoded.data, decoded.width, decoded.height, SMALL_WIDTH, SMALL_HEIGHT,
+  );
+  const large = makeMonochromeBitmap(
+    decoded.data, decoded.width, decoded.height, LARGE_WIDTH, LARGE_HEIGHT,
+  );
+  const packet = new Uint8Array(BITMAP_PACKET_BYTES);
+  packet.set([0x4d, 0x41, 0x42, 0x31], 0); // "MAB1"
+  packet.set([SMALL_WIDTH, SMALL_HEIGHT, LARGE_WIDTH, LARGE_HEIGHT], 4);
+  const view = new DataView(packet.buffer);
+  view.setUint16(8, SMALL_BYTES, false);
+  view.setUint16(10, LARGE_BYTES, false);
+  packet.set(small, BITMAP_HEADER_BYTES);
+  packet.set(large, BITMAP_HEADER_BYTES + SMALL_BYTES);
+  view.setUint32(12, crc32(packet.subarray(BITMAP_HEADER_BYTES)), false);
+  return packet;
+}
+
+async function makeDeviceBitmap(source, decoder) {
+  if (!source.body) throw new Error("empty-image");
+  const jpeg = await readLimited(source, MAX_SOURCE_IMAGE_BYTES);
+  return makeBitmapPacket(jpeg, decoder);
+}
+
 async function makeDeviceJpeg(source) {
   if (!source.body) throw new Error("empty-image");
   return readLimited(source, MAX_SOURCE_IMAGE_BYTES);
@@ -222,7 +306,7 @@ function cachedResponse(status, body, seconds, extraHeaders = {}) {
   });
 }
 
-async function cacheKey(requestUrl, metadata) {
+async function cacheKey(requestUrl, metadata, format) {
   const canonical = [metadata.title, metadata.artist, metadata.album]
     .map(comparableText)
     .join("\u001f");
@@ -231,10 +315,10 @@ async function cacheKey(requestUrl, metadata) {
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
   const origin = new URL(requestUrl).origin;
-  return new Request(`${origin}/__artwork_cache/${hash}`, { method: "GET" });
+  return new Request(`${origin}/__artwork_cache/${format}/${hash}`, { method: "GET" });
 }
 
-async function handleArtwork(request, env, context) {
+async function handleArtwork(request, env, context, format = "mab1") {
   const declared = Number(request.headers.get("content-length") || 0);
   if (declared > MAX_BODY_BYTES) return cachedResponse(413, "", ERROR_CACHE_SECONDS);
   const body = await readLimited(new Response(request.body), MAX_BODY_BYTES);
@@ -248,7 +332,7 @@ async function handleArtwork(request, env, context) {
     return cachedResponse(400, "", ERROR_CACHE_SECONDS);
   }
 
-  const key = await cacheKey(request.url, metadata);
+  const key = await cacheKey(request.url, metadata, format);
   const edgeCache = env.__cache || caches.default;
   const cached = await edgeCache.match(key);
   if (cached) return cached;
@@ -263,13 +347,23 @@ async function handleArtwork(request, env, context) {
     });
   } else {
     try {
-      const jpeg = await makeDeviceJpeg(source.response);
-      response = cachedResponse(200, jpeg, POSITIVE_CACHE_SECONDS, {
-        "Content-Type": "image/jpeg",
-        "Content-Length": String(jpeg.byteLength),
-        "X-Milestone-Artwork": "1",
-        "X-Milestone-Upstream": trace,
-      });
+      if (format === "mab1") {
+        const bitmap = await makeDeviceBitmap(source.response, env.__decode);
+        response = cachedResponse(200, bitmap, POSITIVE_CACHE_SECONDS, {
+          "Content-Type": BITMAP_CONTENT_TYPE,
+          "Content-Length": String(bitmap.byteLength),
+          "X-Milestone-Artwork": "2",
+          "X-Milestone-Upstream": trace,
+        });
+      } else {
+        const jpeg = await makeDeviceJpeg(source.response);
+        response = cachedResponse(200, jpeg, POSITIVE_CACHE_SECONDS, {
+          "Content-Type": "image/jpeg",
+          "Content-Length": String(jpeg.byteLength),
+          "X-Milestone-Artwork": "1",
+          "X-Milestone-Upstream": trace,
+        });
+      }
     } catch {
       response = cachedResponse(502, "", ERROR_CACHE_SECONDS, {
         "X-Milestone-Upstream": `${trace},transform-error`.slice(0, 240),
@@ -286,11 +380,13 @@ export default {
     if (request.method === "GET" && url.pathname === "/health") {
       return new Response("ok", { headers: { "Cache-Control": "no-store" } });
     }
-    if (request.method !== "POST" || url.pathname !== "/v1/artwork") {
+    const format = url.pathname === "/v2/artwork" ? "mab1"
+      : url.pathname === "/v1/artwork" ? "jpeg" : "";
+    if (request.method !== "POST" || !format) {
       return new Response("Not found", { status: 404 });
     }
     try {
-      return await handleArtwork(request, env, context);
+      return await handleArtwork(request, env, context, format);
     } catch {
       return cachedResponse(502, "", ERROR_CACHE_SECONDS);
     }
@@ -301,7 +397,10 @@ export {
   chooseAppleArtwork,
   chooseDeezerArtwork,
   comparableText,
+  crc32,
   extractReleaseGroups,
   handleArtwork,
+  makeBitmapPacket,
+  makeMonochromeBitmap,
   normalizeText,
 };
