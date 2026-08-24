@@ -52,7 +52,9 @@ test("Apple result selection prefers an exact localized track and artist", () =>
 });
 
 test("Apple Music page selection validates the top result title and artist", () => {
-  const html = '<div class="top" data-testid="top-search-result" ' +
+  const html = '<div data-testid="top-search-result" aria-label="Apple Music OST · 카테고리">' +
+    '<source srcset="https://is1-ssl.mzstatic.com/image/thumb/wrong/110x110bb-60.jpg 110w">' +
+    '<div class="top" data-testid="top-search-result" ' +
     'aria-label="マーシャル・マキシマイザー (feat. 可不) · 노래 · 柊マグネタイト">' +
     '<source srcset="https://is1-ssl.mzstatic.com/image/thumb/id/110x110bb-60.jpg 110w">';
   assert.equal(
@@ -62,6 +64,16 @@ test("Apple Music page selection validates the top result title and artist", () 
     "https://is1-ssl.mzstatic.com/image/thumb/id/110x110bb-60.jpg",
   );
   assert.equal(extractAppleMusicPageArtwork(html, "Other", "柊マグネタイト"), "");
+});
+
+test("Apple Music page selection accepts equivalent joint-artist separators", () => {
+  const html = '<div data-testid="top-search-result" ' +
+    'aria-label="JANE DOE · 노래 · 요네즈 켄시 &amp; 우타다 히카루">' +
+    '<source srcset="https://is1-ssl.mzstatic.com/image/thumb/jane/110x110bb-60.jpg 110w">';
+  assert.equal(
+    extractAppleMusicPageArtwork(html, "JANE DOE", "요네즈 켄시, 우타다 히카루"),
+    "https://is1-ssl.mzstatic.com/image/thumb/jane/110x110bb-60.jpg",
+  );
 });
 
 test("Deezer selection can match album when the artist name is localized", () => {

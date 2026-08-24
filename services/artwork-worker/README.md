@@ -2,9 +2,10 @@
 
 This Cloudflare Worker is the optional artwork gateway for the NOW firmware.
 It races two bounded Deezer catalog searches against the first 48 KiB of Apple
-Music's public search page. The Apple result is accepted only when its top
-result contains both the normalized title and artist, and only its bounded JPEG
-thumbnail is fetched. Positive and negative responses are stored in the
+Music's public search page. Apple candidates in that prefix are accepted only
+when they contain the normalized title and every joint-artist component; `&`
+and comma separators are equivalent. Only the matched bounded JPEG thumbnail
+is fetched. Positive and negative responses are stored in the
 Cloudflare edge cache. `/v1/artwork` preserves the JPEG response for v2.2.21
 devices.
 `/v2/artwork` decodes with Wasm MozJPEG, applies bounded adaptive exposure and

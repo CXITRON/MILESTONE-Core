@@ -14,7 +14,7 @@ const LARGE_BYTES = Math.ceil(LARGE_WIDTH / 8) * LARGE_HEIGHT;
 const BITMAP_HEADER_BYTES = 16;
 const BITMAP_PACKET_BYTES = BITMAP_HEADER_BYTES + SMALL_BYTES + LARGE_BYTES;
 const BITMAP_CONTENT_TYPE = "application/vnd.milestone.artwork-bitmap";
-const BITMAP_CACHE_VERSION = "mab1-adaptive-tone-apple-page-v1";
+const BITMAP_CACHE_VERSION = "mab1-adaptive-tone-apple-page-v2";
 const MAX_APPLE_PAGE_BYTES = 48 * 1024;
 const GAMMA_LUT = new Uint8Array(256);
 for (let value = 0; value < GAMMA_LUT.length; value += 1) {
@@ -211,16 +211,20 @@ function decodeHtmlAttribute(value) {
 }
 
 function extractAppleMusicPageArtwork(html, title, artist) {
-  const block = /<div\b[^>]*data-testid="top-search-result"[^>]*aria-label="([^"]*)"[^>]*>([\s\S]{0,16000})/iu.exec(
-    html,
+  const wantedTitle = comparableText(title);
+  const wantedArtists = comparableText(artist)
+    .split(/\s*(?:&|,|、|\/|／)\s*/u)
+    .filter(Boolean);
+  const candidates = html.matchAll(
+    /<div\b[^>]*data-testid="top-search-result"[^>]*aria-label="([^"]*)"[^>]*>[\s\S]{0,5000}?(https:\/\/[^"'\s,]+\/110x110bb-60\.jpg)/giu,
   );
-  if (!block) return "";
-  const label = comparableText(decodeHtmlAttribute(block[1]));
-  if (!label.includes(comparableText(title)) || !label.includes(comparableText(artist))) {
-    return "";
+  for (const candidate of candidates) {
+    const label = comparableText(decodeHtmlAttribute(candidate[1]));
+    if (!label.includes(wantedTitle) ||
+        !wantedArtists.every((part) => label.includes(part))) continue;
+    return decodeHtmlAttribute(candidate[2]);
   }
-  const artwork = /https:\/\/[^"'\s,]+\/110x110bb-60\.jpg/iu.exec(block[2])?.[0] || "";
-  return decodeHtmlAttribute(artwork);
+  return "";
 }
 
 async function appleMusicPageArtwork(fetcher, metadata, trace) {
