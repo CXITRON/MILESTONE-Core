@@ -14,6 +14,11 @@ const LARGE_BYTES = Math.ceil(LARGE_WIDTH / 8) * LARGE_HEIGHT;
 const BITMAP_HEADER_BYTES = 16;
 const BITMAP_PACKET_BYTES = BITMAP_HEADER_BYTES + SMALL_BYTES + LARGE_BYTES;
 const BITMAP_CONTENT_TYPE = "application/vnd.milestone.artwork-bitmap";
+const BITMAP_CACHE_VERSION = "mab1-adaptive-tone-v1";
+const GAMMA_LUT = new Uint8Array(256);
+for (let value = 0; value < GAMMA_LUT.length; value += 1) {
+  GAMMA_LUT[value] = Math.round(255 * Math.pow(value / 255, 0.8));
+}
 const CRC32_TABLE = new Uint32Array(256);
 for (let value = 0; value < CRC32_TABLE.length; value += 1) {
   let crc = value;
@@ -223,11 +228,42 @@ async function sourceArtwork(fetcher, metadata) {
   return { response: null, trace };
 }
 
+function makeAdaptiveToneLut(rgb, sourceWidth, sourceHeight, channels = 4) {
+  const pixels = sourceWidth * sourceHeight;
+  if (!pixels) return null;
+  let luminanceTotal = 0;
+  for (let pixel = 0, offset = 0; pixel < pixels; pixel += 1, offset += channels) {
+    luminanceTotal +=
+      (rgb[offset] * 54 + rgb[offset + 1] * 183 + rgb[offset + 2] * 19) >> 8;
+  }
+  const mean = luminanceTotal / pixels;
+  // Covers whose average is already in the middle range keep their original
+  // tone. Darker covers receive a bounded blend toward gamma 0.8 plus at most
+  // 32 levels of exposure lift. Exact near-black remains black, preserving
+  // deliberate backgrounds and silhouettes instead of turning them gray.
+  const strength = Math.max(0, Math.min(1, (110 - mean) / 70));
+  if (strength <= 0) return null;
+  const exposureLift = 32 * strength;
+  const tone = new Uint8Array(256);
+  for (let value = 0; value < tone.length; value += 1) {
+    if (value <= 6) {
+      tone[value] = value;
+      continue;
+    }
+    const gammaLift = (GAMMA_LUT[value] - value) * strength;
+    tone[value] = Math.min(255, Math.round(value + gammaLift + exposureLift));
+  }
+  return tone;
+}
+
 function makeMonochromeBitmap(rgb, sourceWidth, sourceHeight, targetWidth, targetHeight,
-                              channels = 4) {
+                              channels = 4, suppliedToneLut = undefined) {
   const stride = Math.ceil(targetWidth / 8);
   const output = new Uint8Array(stride * targetHeight);
   const bayer = [-8, 0, -6, 2, 4, -4, 6, -2, -5, 3, -7, 1, 7, -1, 5, -3];
+  const tone = suppliedToneLut === undefined
+    ? makeAdaptiveToneLut(rgb, sourceWidth, sourceHeight, channels)
+    : suppliedToneLut;
   const sourceXs = new Uint16Array(targetWidth);
   const sourceYs = new Uint16Array(targetHeight);
   for (let x = 0; x < targetWidth; x += 1) {
@@ -242,7 +278,9 @@ function makeMonochromeBitmap(rgb, sourceWidth, sourceHeight, targetWidth, targe
     const bayerRow = (y & 3) * 4;
     for (let x = 0; x < targetWidth; x += 1) {
       const offset = (sourceRow + sourceXs[x]) * channels;
-      const luminance = (rgb[offset] * 54 + rgb[offset + 1] * 183 + rgb[offset + 2] * 19) >> 8;
+      const rawLuminance =
+        (rgb[offset] * 54 + rgb[offset + 1] * 183 + rgb[offset + 2] * 19) >> 8;
+      const luminance = tone ? tone[rawLuminance] : rawLuminance;
       if (luminance >= 128 + bayer[bayerRow + (x & 3)] * 5) {
         output[targetRow + (x >> 3)] |= 1 << (x & 7);
       }
@@ -266,11 +304,12 @@ async function makeBitmapPacket(jpeg, decoder) {
       decoded.data.byteLength !== decoded.width * decoded.height * 4) {
     throw new Error("invalid-decoded-image");
   }
+  const tone = makeAdaptiveToneLut(decoded.data, decoded.width, decoded.height);
   const small = makeMonochromeBitmap(
-    decoded.data, decoded.width, decoded.height, SMALL_WIDTH, SMALL_HEIGHT,
+    decoded.data, decoded.width, decoded.height, SMALL_WIDTH, SMALL_HEIGHT, 4, tone,
   );
   const large = makeMonochromeBitmap(
-    decoded.data, decoded.width, decoded.height, LARGE_WIDTH, LARGE_HEIGHT,
+    decoded.data, decoded.width, decoded.height, LARGE_WIDTH, LARGE_HEIGHT, 4, tone,
   );
   const packet = new Uint8Array(BITMAP_PACKET_BYTES);
   packet.set([0x4d, 0x41, 0x42, 0x31], 0); // "MAB1"
@@ -332,7 +371,8 @@ async function handleArtwork(request, env, context, format = "mab1") {
     return cachedResponse(400, "", ERROR_CACHE_SECONDS);
   }
 
-  const key = await cacheKey(request.url, metadata, format);
+  const cacheFormat = format === "mab1" ? BITMAP_CACHE_VERSION : format;
+  const key = await cacheKey(request.url, metadata, cacheFormat);
   const edgeCache = env.__cache || caches.default;
   const cached = await edgeCache.match(key);
   if (cached) return cached;
@@ -353,6 +393,7 @@ async function handleArtwork(request, env, context, format = "mab1") {
           "Content-Type": BITMAP_CONTENT_TYPE,
           "Content-Length": String(bitmap.byteLength),
           "X-Milestone-Artwork": "2",
+          "X-Milestone-Tone": "adaptive-v1",
           "X-Milestone-Upstream": trace,
         });
       } else {
@@ -400,6 +441,7 @@ export {
   crc32,
   extractReleaseGroups,
   handleArtwork,
+  makeAdaptiveToneLut,
   makeBitmapPacket,
   makeMonochromeBitmap,
   normalizeText,

@@ -6,6 +6,7 @@ import worker, {
   chooseDeezerArtwork,
   extractReleaseGroups,
   crc32,
+  makeAdaptiveToneLut,
   makeBitmapPacket,
   makeMonochromeBitmap,
   normalizeText,
@@ -82,6 +83,40 @@ test("bitmap conversion uses the firmware LSB-first monochrome layout", () => {
   );
 });
 
+test("adaptive tone correction lifts dark covers without changing normal exposure", () => {
+  const dark = new Uint8Array(16 * 16 * 4);
+  for (let offset = 0; offset < dark.length; offset += 4) {
+    dark[offset] = 64;
+    dark[offset + 1] = 64;
+    dark[offset + 2] = 64;
+    dark[offset + 3] = 255;
+  }
+  const uncorrected = makeMonochromeBitmap(dark, 16, 16, 16, 16, 4, null);
+  const corrected = makeMonochromeBitmap(dark, 16, 16, 16, 16);
+  const whiteBits = (bitmap) => [...bitmap]
+    .reduce((total, byte) => total + byte.toString(2).replaceAll("0", "").length, 0);
+  assert.equal(whiteBits(uncorrected), 0);
+  assert.ok(whiteBits(corrected) >= 32, "dark cover should recover visible ordered detail");
+
+  const normal = new Uint8Array(16 * 16 * 4);
+  for (let offset = 0; offset < normal.length; offset += 4) {
+    normal[offset] = 128;
+    normal[offset + 1] = 128;
+    normal[offset + 2] = 128;
+    normal[offset + 3] = 255;
+  }
+  assert.equal(makeAdaptiveToneLut(normal, 16, 16), null);
+});
+
+test("adaptive tone correction preserves deliberate true black", () => {
+  const black = new Uint8Array(16 * 16 * 4);
+  for (let offset = 3; offset < black.length; offset += 4) black[offset] = 255;
+  assert.deepEqual(
+    makeMonochromeBitmap(black, 16, 16, 16, 16),
+    new Uint8Array(32),
+  );
+});
+
 test("bitmap packet contains both fixed sizes and a payload CRC", async () => {
   const rgba = new Uint8Array(16 * 16 * 4);
   for (let offset = 0; offset < rgba.length; offset += 4) {
@@ -141,6 +176,7 @@ test("worker returns and reuses a converted bitmap cache entry", async () => {
   assert.equal(first.status, 200);
   assert.equal(first.headers.get("content-type"), "application/vnd.milestone.artwork-bitmap");
   assert.equal(first.headers.get("x-milestone-artwork"), "2");
+  assert.equal(first.headers.get("x-milestone-tone"), "adaptive-v1");
   assert.equal((await first.arrayBuffer()).byteLength, 1464);
 
   const second = await worker.fetch(makeRequest(), env, context);

@@ -217,6 +217,8 @@ v2.3.0 closes the remaining common-runtime path after the v2.2.25 artwork-specif
 
 v2.3.1 responds to the confirmed post-validation `INT WDT` and persistent `network-failed` during the artwork transport. Live deployment testing proved that the owned Workers endpoint accepts port-80 POST directly and returns the same fixed 1,464-byte `MAB1` response. The NOW device therefore uses bounded plain HTTP for this one non-credential metadata/bitmap exchange, removing its TLS client and every runtime `esp_coex_preference_set` call; Cloudflare's upstream catalog/image work remains HTTPS. Track metadata is not encrypted on the device-to-Worker hop, which is disclosed in the portal and README. Exact length, magic, dimensions, component sizes, and CRC still protect parser/memory integrity but are not authentication. OTA and all other sensitive firmware traffic remain HTTPS; schema 10 is unchanged.
 
+The post-v2.3.1 Worker tone update retains the 4×4 Bayer packet contract but adds bounded adaptive correction for covers that rendered almost entirely black. One source-luminance pass derives strength only below mean 110, blends toward a precomputed gamma-0.8 LUT, caps exposure lift at 32, and preserves luminance 0–6 as true black. The curve is shared by both output sizes. Existing positive bitmap cache entries are bypassed with `mab1-adaptive-tone-v1`; packet format and firmware version do not change. Local conversion-pair overhead measured about 0.03ms.
+
 Do not split the OTA transaction merely because the function is long. Its sequential structure encodes safety assumptions.
 
 ### Rollback
