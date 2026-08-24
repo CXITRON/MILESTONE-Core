@@ -83,6 +83,8 @@ void handleStatus() {
   json += "\"update_install_ready\":" + String(updateInstallReady ? "true" : "false") + ",";
   json += "\"update_install_pending\":" +
           String((updateInstallRequested || updateInstallAfterNetworkReady) ? "true" : "false") + ",";
+  json += "\"update_ram_recovery\":" +
+          String(stagedFirmwareInstallPending ? "true" : "false") + ",";
   const uint32_t updateProgress = latestFirmwareSize > 0
                                     ? static_cast<uint32_t>((updateDownloadedBytes * 100ULL) / latestFirmwareSize) : 0;
   json += "\"update_progress\":" + String(updateProgress) + ",";

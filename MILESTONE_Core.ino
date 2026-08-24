@@ -77,7 +77,7 @@ SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 
 namespace Milestone {
 
-constexpr char FIRMWARE_VERSION[] = "2.2.19";
+constexpr char FIRMWARE_VERSION[] = "2.2.20";
 constexpr char FIRMWARE_PROFILE[] = MILESTONE_FIRMWARE_PROFILE;
 constexpr char FIRMWARE_PROFILE_LABEL[] = MILESTONE_FIRMWARE_PROFILE_LABEL;
 constexpr char FIRMWARE_PROFILE_MARKER[] = MILESTONE_PROFILE_MARKER;
@@ -165,6 +165,7 @@ constexpr uint32_t UPDATE_DOWNLOAD_STALL_MS = 20UL * 1000UL;
 // loopTask and temporarily pauses portal polling.
 constexpr uint32_t UPDATE_INSTALL_RESPONSE_HOLD_MS = 1500UL;
 constexpr uint32_t UPDATE_INSTALL_NETWORK_TIMEOUT_MS = 90UL * 1000UL;
+constexpr uint32_t UPDATE_RAM_RECOVERY_BOOT_TIMEOUT_MS = 90UL * 1000UL;
 constexpr uint32_t OTA_BOOT_CONFIRM_MS = 10UL * 1000UL;
 constexpr size_t UPDATE_MANIFEST_MAX_BYTES = 16UL * 1024UL;
 constexpr size_t UPDATE_DOWNLOAD_BUFFER_BYTES = 2048;
@@ -420,6 +421,7 @@ bool updateCheckIndicatorRendered = false;
 bool wifiSleepDeferredForUpdate = false;
 bool bluetoothFirmwareOperationIsolated = false;
 bool bluetoothInitialNetworkGate = false;
+bool stagedFirmwareInstallPending = false;
 String requestedUpdateProfile = FIRMWARE_PROFILE;
 bool otaBootConfirmationPending = false;
 uint32_t otaBootConfirmationStartedMs = 0;

@@ -730,6 +730,7 @@ void applyAmsNotification(const AmsNotificationPacket &packet) {
 }
 
 void processBluetoothNowPlaying() {
+  if (stagedFirmwareInstallPending) return;
   if (bluetoothFirmwareOperationIsolated) return;
   if (!bluetoothNowPlayingConfigured()) {
     if (bluetoothNowPlaying.initialized) shutdownBluetoothNowPlaying();

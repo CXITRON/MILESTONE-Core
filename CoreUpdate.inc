@@ -115,6 +115,92 @@ bool validSha256(const String &value) {
   return MilestoneCoreLogic::validSha256(value.c_str());
 }
 
+bool clearStagedFirmwareInstallRecord() {
+  if (!prefsReady) return false;
+  bool success = true;
+  const char *const keys[] = {
+      "ota_pend", "ota_pver", "ota_pprof", "ota_passet",
+      "ota_purl", "ota_psha", "ota_psize"};
+  for (const char *key : keys) {
+    if (!removePreferenceVerified(key)) success = false;
+  }
+  stagedFirmwareInstallPending = false;
+  return success;
+}
+
+bool stageFirmwareInstallForRamRecovery() {
+  if (!prefsReady || latestFirmwareVersion.length() == 0 ||
+      !validFirmwareProfile(latestFirmwareProfile) ||
+      latestFirmwareAsset != firmwareAssetForProfile(latestFirmwareProfile) ||
+      !latestFirmwareDownloadUrl.startsWith(UPDATE_RELEASE_ASSET_API_BASE) ||
+      latestFirmwareSize == 0 || !validSha256(latestFirmwareSha256)) return false;
+
+  // The commit marker is written last. A power loss during the preceding
+  // fields cannot create a partially trusted recovery install.
+  if (!clearStagedFirmwareInstallRecord()) return false;
+  bool success = putStringVerified("ota_pver", latestFirmwareVersion) &&
+      putStringVerified("ota_pprof", latestFirmwareProfile) &&
+      putStringVerified("ota_passet", latestFirmwareAsset) &&
+      putStringVerified("ota_purl", latestFirmwareDownloadUrl) &&
+      putStringVerified("ota_psha", latestFirmwareSha256) &&
+      prefs.putUInt("ota_psize", latestFirmwareSize) == sizeof(uint32_t) &&
+      prefs.getUInt("ota_psize", 0) == latestFirmwareSize;
+  if (success) {
+    success = prefs.putBool("ota_pend", true) == sizeof(bool) &&
+              prefs.getBool("ota_pend", false);
+  }
+  if (!success) {
+    clearStagedFirmwareInstallRecord();
+    return false;
+  }
+  stagedFirmwareInstallPending = true;
+  lastOtaResult = "ram-recovery";
+  putStringVerified("ota_result", lastOtaResult);
+  logLine(String("firmware install staged for RAM recovery reboot: heap=") +
+          ESP.getFreeHeap() + " max=" + ESP.getMaxAllocHeap() +
+          " target=" + firmwareIdentity(latestFirmwareVersion, latestFirmwareProfile));
+  delay(250);
+  ESP.restart();
+  return true;
+}
+
+bool loadStagedFirmwareInstallRecord() {
+  if (!prefsReady || !prefs.getBool("ota_pend", false)) return false;
+  const String version = prefs.getString("ota_pver", "");
+  const String profile = prefs.getString("ota_pprof", "");
+  const String asset = prefs.getString("ota_passet", "");
+  const String url = prefs.getString("ota_purl", "");
+  const String sha256 = prefs.getString("ota_psha", "");
+  const uint32_t size = prefs.getUInt("ota_psize", 0);
+  uint16_t versionParts[3];
+  const bool targetNeeded = profile != FIRMWARE_PROFILE ||
+                            compareSemanticVersions(FIRMWARE_VERSION, version) < 0;
+  if (!parseSemanticVersion(version, versionParts) || !validFirmwareProfile(profile) ||
+      asset != firmwareAssetForProfile(profile) ||
+      !url.startsWith(UPDATE_RELEASE_ASSET_API_BASE) || size == 0 ||
+      !validSha256(sha256) || !targetNeeded) {
+    logLine("invalid or already satisfied RAM recovery install record cleared");
+    clearStagedFirmwareInstallRecord();
+    return false;
+  }
+  latestFirmwareVersion = version;
+  latestFirmwareProfile = profile;
+  latestFirmwareAsset = asset;
+  latestFirmwareDownloadUrl = url;
+  latestFirmwareSize = size;
+  latestFirmwareSha256 = sha256;
+  latestFirmwareNotes = "";
+  stagedFirmwareInstallPending = true;
+  bootUpdateCheckPending = false;
+  updatePromptVisible = false;
+  updateInstallAfterNetworkReady = true;
+  updateInstallNetworkDeadlineMs = millis() + UPDATE_RAM_RECOVERY_BOOT_TIMEOUT_MS;
+  updateState = UpdateState::AVAILABLE;
+  logLine(String("RAM recovery install loaded; BLE will remain off: target=") +
+          firmwareIdentity(version, profile));
+  return true;
+}
+
 String sha256Hex(const uint8_t digest[32]) {
   static const char hex[] = "0123456789abcdef";
   char result[65];
@@ -198,6 +284,9 @@ void failFirmwareCheck(const String &reason, bool transient) {
 
 void failFirmwareUpdate(const String &reason) {
   clearFirmwareOperationStage();
+  if (stagedFirmwareInstallPending && !clearStagedFirmwareInstallRecord()) {
+    logLine("RAM recovery install record clear failed after OTA failure");
+  }
   updateError = reason;
   updateInstallRequested = false;
   updateInstallAfterNetworkReady = false;
@@ -219,6 +308,9 @@ void failFirmwareUpdate(const String &reason) {
 
 void deferFirmwareInstall(const String &reason) {
   clearFirmwareOperationStage();
+  if (stagedFirmwareInstallPending && !clearStagedFirmwareInstallRecord()) {
+    logLine("RAM recovery install record clear failed after deferral");
+  }
   updateError = reason;
   updateInstallRequested = false;
   updateInstallAfterNetworkReady = false;
@@ -569,6 +661,7 @@ bool installFirmwareUpdate() {
     return false;
   }
   if (ESP.getFreeHeap() < UPDATE_MIN_FREE_HEAP || ESP.getMaxAllocHeap() < UPDATE_MIN_LARGEST_BLOCK) {
+    if (!stagedFirmwareInstallPending && stageFirmwareInstallForRamRecovery()) return false;
     deferFirmwareInstall("not enough internal RAM");
     return false;
   }
@@ -755,7 +848,8 @@ bool installFirmwareUpdate() {
   }
 
   lastOtaResult = "installed";
-  if (!putStringVerified("ota_result", lastOtaResult) ||
+  if (!clearStagedFirmwareInstallRecord() ||
+      !putStringVerified("ota_result", lastOtaResult) ||
       !recordOtaStage("rebooting") || !armRollbackRecord()) {
     const esp_err_t rollbackResult = esp_ota_set_boot_partition(esp_ota_get_running_partition());
     clearRollbackActiveRecord();

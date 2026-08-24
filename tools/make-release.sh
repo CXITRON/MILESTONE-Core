@@ -3,7 +3,7 @@ set -euo pipefail
 
 if (( $# < 1 || $# > 2 )); then
   echo "사용법: $0 VERSION [NOTES]" >&2
-  echo "예: $0 2.2.19 'Prioritize Wi-Fi during NOW artwork TLS'" >&2
+  echo "예: $0 2.2.20 'Recover NOW OTA from low internal RAM'" >&2
   exit 2
 fi
 

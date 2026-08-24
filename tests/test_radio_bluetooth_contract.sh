@@ -18,7 +18,7 @@ reject() {
   fi
 }
 
-require 'FIRMWARE_VERSION\[\] = "2\.2\.19"' MILESTONE_Core.ino 'firmware version is not 2.2.19'
+require 'FIRMWARE_VERSION\[\] = "2\.2\.20"' MILESTONE_Core.ino 'firmware version is not 2.2.20'
 require 'CONFIG_VERSION = 10' MILESTONE_Core.ino 'configuration schema is not 10'
 require 'bool fixedApSecurity = false;' MILESTONE_Core.ino 'fixed AP security must default off'
 require 'String fixedApPassword;' MILESTONE_Core.ino 'fixed AP password setting missing'
@@ -159,6 +159,10 @@ require 'NOW_ART_APPLE_ATTEMPTS = 1' CoreArtwork.inc 'Apple transport failure mu
 require 'NOW_ART_TLS_HANDSHAKE_TIMEOUT_SEC = 3UL' CoreArtwork.inc 'artwork TLS handshake can overrun a short-track budget'
 require 'esp_coex_preference_set\(ESP_COEX_PREFER_WIFI\)' CoreArtwork.inc 'artwork TLS needs temporary Wi-Fi coexistence priority'
 require 'esp_coex_preference_set\(ESP_COEX_PREFER_BALANCE\)' CoreArtwork.inc 'artwork worker must restore balanced radio coexistence'
+require 'stageFirmwareInstallForRamRecovery\(\)' CoreUpdate.inc 'low-RAM NOW install needs a reboot recovery path'
+require 'loadStagedFirmwareInstallRecord\(\)' CoreRuntime.inc 'RAM recovery install must load before Bluetooth initialization'
+require 'stagedFirmwareInstallPending\) return' CoreBluetooth.inc 'BLE must stay off during RAM recovery install'
+require 'UPDATE_RAM_RECOVERY_BOOT_TIMEOUT_MS = 90UL \* 1000UL' MILESTONE_Core.ino 'RAM recovery install needs a bounded escape path'
 require 'NOW_ART_LOOKUP_TIMEOUT_MS = 7000UL' CoreArtwork.inc 'NOW artwork read timeout must remain bounded for short tracks'
 require 'NOW_ART_LOOKUP_RETRY_MS = 1200UL' CoreArtwork.inc 'MusicBrainz retry must respect per-client request spacing'
 require 'NOW_ART_TRANSPORT_BACKOFF_MS = 250UL' CoreArtwork.inc 'artwork transport recovery starts too slowly for normal track lengths'

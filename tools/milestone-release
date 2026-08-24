@@ -54,9 +54,9 @@ Options:
 
 Examples:
   cd /run/media/citron/T7/Documents/Dev/MILESTONE_Core
-  milestone-release local 2.2.19 "Prioritize Wi-Fi during NOW artwork TLS"
+  milestone-release local 2.2.20 "Recover NOW OTA from low internal RAM"
 
-  cd /tmp && milestone-release taildrop 2.2.19 "Prioritize Wi-Fi during NOW artwork TLS"
+  cd /tmp && milestone-release taildrop 2.2.20 "Recover NOW OTA from low internal RAM"
 USAGE
 }
 

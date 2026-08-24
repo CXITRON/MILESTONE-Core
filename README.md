@@ -296,13 +296,13 @@ PC의 현재 프로젝트를 직접 수정한 경우에는 **MILESTONE_Core 프�
 
 ```bash
 cd /run/media/citron/T7/Documents/Dev/MILESTONE_Core
-milestone-release local 2.2.19 "Prioritize Wi-Fi during NOW artwork TLS"
+milestone-release local 2.2.20 "Recover NOW OTA from low internal RAM"
 ```
 
 Tailscale Taildrop으로 `MILESTONE_Core_1.10.6.zip`을 받은 경우에는 교체 대상 프로젝트 디렉터리 밖의 정상적으로 존재하는 디렉터리에서 실행합니다. 기존 프로젝트가 교체될 때 현재 셸 경로가 사라지는 문제를 방지하기 위해 `/tmp`로 이동하는 방식을 권장합니다.
 
 ```bash
-cd /tmp && milestone-release taildrop 2.2.19 "Prioritize Wi-Fi during NOW artwork TLS"
+cd /tmp && milestone-release taildrop 2.2.20 "Recover NOW OTA from low internal RAM"
 ```
 
 Taildrop 모드는 ZIP을 라이브 프로젝트에 바로 덮어쓰지 않습니다. 별도 staging 디렉터리에서 구조·버전·Git 상태를 검사하고 테스트와 ESP32 릴리즈 빌드까지 성공한 뒤에만 프로젝트를 교체합니다. GitHub 게시 전 실패하면 기존 프로젝트를 자동 복구합니다. `--dry-run`은 테스트/빌드까지만 수행하고 로컬 프로젝트·Git·GitHub를 변경하지 않습니다. `--yes`를 사용하지 않는 기본 동작은 최종 게시 직전에 한 번 확인합니다.
@@ -319,10 +319,10 @@ Taildrop 모드는 ZIP을 라이브 프로젝트에 바로 덮어쓰지 않습�
 
 ```bash
 chmod +x tools/make-release.sh
-./tools/make-release.sh 2.2.19 "Prioritize Wi-Fi during NOW artwork TLS"
+./tools/make-release.sh 2.2.20 "Recover NOW OTA from low internal RAM"
 ```
 
-기본 설명을 사용하려면 `./tools/make-release.sh 2.2.19`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
+기본 설명을 사용하려면 `./tools/make-release.sh 2.2.20`만 실행할 수 있습니다. 다른 CLI를 사용해야 할 때는 `ARDUINO_CLI=/경로/arduino-cli`로 지정합니다. 임의로 내보낸 BIN을 받지 않으므로 잘못된 PSRAM·파티션 설정이 릴리스에 섞이지 않습니다.
 
 다음 여섯 파일이 `release/`에 생성됩니다.
 
@@ -346,11 +346,11 @@ release/MILESTONE_Now.json
 일반적인 게시에는 위의 `milestone-release`를 사용합니다. 아래 수동 절차는 자동화 도구를 복구하거나 디버깅해야 할 때만 참고합니다.
 
 1. 저장소의 `Releases`에서 `Draft a new release`를 선택합니다.
-2. 버전과 동일한 태그를 만듭니다. 예: `v2.2.19`
-3. Release 제목을 `MILESTONE Core v2.2.19`로 지정합니다.
+2. 버전과 동일한 태그를 만듭니다. 예: `v2.2.20`
+3. Release 제목을 `MILESTONE Core v2.2.20`로 지정합니다.
 4. CORE/MEDIA/NOW의 BIN과 JSON 여섯 파일을 모두 첨부합니다.
 5. Pre-release가 아닌 최신 정식 Release로 게시합니다.
-6. 2.2.18 NOW 기기에 2.2.19를 설치한 뒤, BLE 연결을 유지한 상태에서 표지 TLS가 HTTP 응답 또는 명확한 결과를 내고 작업 뒤 균형 coexistence 모드가 복원되는지 검증합니다.
+6. 2.2.19 NOW 기기에서 내부 RAM 기준 미달 설치를 확정한 뒤, 2.2.20이 BLE 없는 복구 부팅으로 자동 전환되어 재확정 없이 설치되거나 90초 내 정상 NOW로 복귀하는지 검증합니다.
 
 여섯 파일의 이름은 모든 Release에서 정확히 같아야 합니다. 초안이나 Pre-release는 `latest` 업데이트 대상으로 사용하지 않습니다.
 
@@ -402,6 +402,20 @@ Taildrop ZIP의 `milestone-release`가 현재 설치본보다 새로우면, 게�
 - STREAM_MODE에서 일반 백그라운드 기능을 격리하고 PSRAM 240프레임 링버퍼·X/Y dirty-tile OLED 갱신·적응형 출력 주기·프레임 드롭·80°C 스트림 상한으로 영상 수신/표시에 집중
 - 라이브 송신은 96프레임 초기 충전 후 큐 64프레임 이하에서 최대 8프레임씩 144프레임 이상으로 보충하며 ESP32가 소스 시간축과 OLED 출력 클록을 분리해 관리
 - 비차단 3초 부팅 로고와 우상단 NTP `T`·업데이트 `U` 상태 아이콘
+
+## v2.2.20 업데이트 안내
+
+v2.2.20은 NOW에서 업데이트 설치를 확정한 뒤 `not enough internal RAM`이 발생하면 후보가 다시 설치 가능 상태로 돌아가 같은 실패를 반복하던 문제를 수정합니다.
+
+- BLE 연결 종료 후에도 안전한 TLS 내부 RAM 기준을 충족하지 못하면 검증된 버전·프로필·자산 URL·크기·SHA-256을 NVS에 원자적으로 저장
+- 재부팅 후 BLE를 초기화하지 않는 RAM 복구 설치 모드로 진입해 내부 RAM과 연속 블록 확보
+- 저장 Wi-Fi와 NTP가 준비되면 사용자의 재확정 없이 동일 후보 설치 자동 재개
+- OTA 성공·실패·보류 시 복구 기록을 제거해 다음 부팅의 반복 설치 방지
+- Wi-Fi/NTP 준비가 90초를 넘으면 복구 설치를 취소하고 일반 NOW·BLE 화면으로 자동 복귀
+- 포털 상태에 RAM 복구 설치 진행 여부 표시
+- 설정 스키마 10과 기존 OTA SHA-256·롤백 검증 유지
+
+정식 버전: `2.2.20`
 
 ## v2.2.19 업데이트 안내
 

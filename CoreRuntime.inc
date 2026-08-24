@@ -18,6 +18,16 @@ void finishNormalNtpSuccess() {
   if (!promoteSavedNetwork(activeWifiIndex)) logLine("preferred Wi-Fi order could not be persisted");
   setRuntimeState(portalActive ? RuntimeState::SETUP_AP : RuntimeState::RUNNING_ONLINE);
   startMdns();
+  if (stagedFirmwareInstallPending) {
+    updateInstallAfterNetworkReady = false;
+    updateInstallNetworkDeadlineMs = 0;
+    updateInstallRequested = true;
+    updateInstallNotBeforeMs = millis() + 250UL;
+    WiFi.setSleep(false);
+    logLine(String("RAM recovery install network ready: target=") +
+            firmwareIdentity(latestFirmwareVersion, latestFirmwareProfile));
+    return;
+  }
   if (portalActive) {
     if (updateInstallAfterNetworkReady) {
       updateInstallAfterNetworkReady = false;
@@ -321,9 +331,15 @@ void processFirmwareUpdate() {
       deadlineReached(now, updateInstallNetworkDeadlineMs)) {
     updateInstallAfterNetworkReady = false;
     updateInstallNetworkDeadlineMs = 0;
-    updateError = "설치 확인 후 Wi-Fi/NTP 연결 시간이 초과되었습니다.";
+    updateError = stagedFirmwareInstallPending
+                    ? "RAM 복구 설치의 Wi-Fi/NTP 준비 시간이 초과되었습니다."
+                    : "설치 확인 후 Wi-Fi/NTP 연결 시간이 초과되었습니다.";
+    if (stagedFirmwareInstallPending && !clearStagedFirmwareInstallRecord()) {
+      logLine("expired RAM recovery install record clear failed");
+    }
+    setUpdateState(UpdateState::ERROR_STATE);
     wakeDisplay();
-    logLine("confirmed portal install expired before network/NTP became ready");
+    logLine("firmware install expired before network/NTP became ready; normal runtime restored");
   }
 
   // LittleFS upload and OTA both perform long flash writes. Never start a new
@@ -1179,6 +1195,7 @@ void setupFirmware() {
   bool provisioned = configLoaded && config.savedNetworkCount > 0;
   lastUpdateCheckEpoch = prefsReady ? prefs.getULong64("ota_last_ok", 0) : 0;
   latestFirmwareVersion = prefsReady ? prefs.getString("ota_latest", "") : "";
+  loadStagedFirmwareInstallRecord();
   oledReady = initDisplay();
   if (oledReady) bootSplashStartedMs = millis();
   if (!oledReady) setRuntimeState(RuntimeState::ERROR_DISPLAY);
@@ -1186,11 +1203,15 @@ void setupFirmware() {
   initializeView();
   if (MILESTONE_HAS_BLUETOOTH) {
     if (bluetoothNowPlayingConfigured()) {
-      // A bonded iPhone can connect immediately after advertising starts. Do
-      // not overlap that security transition with the first STA WPA handshake.
-      bluetoothInitialNetworkGate = provisioned;
-      if (!bluetoothInitialNetworkGate && !initializeBluetoothNowPlaying()) {
-        logLine("Bluetooth Now Playing initialization failed; continuing without BLE");
+      if (stagedFirmwareInstallPending) {
+        logLine("BLE initialization skipped for RAM recovery install");
+      } else {
+        // A bonded iPhone can connect immediately after advertising starts. Do
+        // not overlap that security transition with the first STA WPA handshake.
+        bluetoothInitialNetworkGate = provisioned;
+        if (!bluetoothInitialNetworkGate && !initializeBluetoothNowPlaying()) {
+          logLine("Bluetooth Now Playing initialization failed; continuing without BLE");
+        }
       }
     }
   }
