@@ -14,7 +14,7 @@ const LARGE_BYTES = Math.ceil(LARGE_WIDTH / 8) * LARGE_HEIGHT;
 const BITMAP_HEADER_BYTES = 16;
 const BITMAP_PACKET_BYTES = BITMAP_HEADER_BYTES + SMALL_BYTES + LARGE_BYTES;
 const BITMAP_CONTENT_TYPE = "application/vnd.milestone.artwork-bitmap";
-const BITMAP_CACHE_VERSION = "mab1-adaptive-tone-known-v1";
+const BITMAP_CACHE_VERSION = "mab1-adaptive-tone-catalog-v1";
 const MAX_APPLE_PAGE_BYTES = 48 * 1024;
 const GAMMA_LUT = new Uint8Array(256);
 for (let value = 0; value < GAMMA_LUT.length; value += 1) {
@@ -41,6 +41,18 @@ function normalizeText(value) {
 
 function comparableText(value) {
   return normalizeText(value).toLocaleLowerCase("und");
+}
+
+function catalogText(value) {
+  return comparableText(value).normalize("NFKD").replace(/\p{M}+/gu, "");
+}
+
+function catalogAlbum(value) {
+  return catalogText(value).replace(/\s*-\s*(?:single|ep|album)\s*$/u, "").trim();
+}
+
+function catalogArtists(value) {
+  return catalogText(value).split(/\s*(?:&|,|、|\/|／)\s*/u).filter(Boolean);
 }
 
 function validUuid(value) {
@@ -126,19 +138,26 @@ function chooseAppleArtwork(results, title, artist) {
 
 function chooseDeezerArtwork(results, title, artist, album) {
   if (!Array.isArray(results)) return "";
-  const wantedTitle = comparableText(title);
-  const wantedArtist = comparableText(artist);
-  const wantedAlbum = comparableText(album);
-  const usable = results.filter((item) => {
+  const wantedTitle = catalogText(title);
+  const wantedArtists = catalogArtists(artist);
+  const wantedAlbum = catalogAlbum(album);
+  const covered = results.filter((item) => {
     const url = item?.album?.cover_medium;
-    return typeof url === "string" && url.startsWith("https://") &&
-      comparableText(item.title_short || item.title) === wantedTitle;
+    return typeof url === "string" && url.startsWith("https://");
   });
-  const albumMatch = wantedAlbum && usable.find(
-    (item) => comparableText(item.album?.title) === wantedAlbum,
+  const exactTitle = covered.filter((item) => catalogText(item.title) === wantedTitle);
+  const shortTitle = covered.filter(
+    (item) => catalogText(item.title_short || item.title) === wantedTitle,
   );
-  const artistMatch = wantedArtist && usable.find(
-    (item) => comparableText(item.artist?.name) === wantedArtist,
+  // Exact full titles keep Original, Slowed, Super Slowed, and similar
+  // variants isolated. title_short is only a fallback for providers that put
+  // featuring credits outside the short title.
+  const usable = exactTitle.length ? exactTitle : shortTitle;
+  const albumMatch = wantedAlbum && usable.find(
+    (item) => catalogAlbum(item.album?.title) === wantedAlbum,
+  );
+  const artistMatch = wantedArtists.length && usable.find(
+    (item) => wantedArtists.includes(catalogText(item.artist?.name)),
   );
   const selected = (albumMatch || artistMatch)?.album?.cover_medium || "";
   return selected.replace("/250x250-", "/96x96-");

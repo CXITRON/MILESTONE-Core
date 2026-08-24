@@ -102,6 +102,48 @@ test("Deezer selection can match album when the artist name is localized", () =>
   );
 });
 
+test("Deezer selection tolerates joint artists and release-type album suffixes", () => {
+  const results = [
+    {
+      title: "CLIMA LINDO (SLOWED)",
+      title_short: "CLIMA LINDO",
+      artist: { name: "GXMZ" },
+      album: { title: "CLIMA LINDO", cover_medium: "https://img/slowed.jpg" },
+    },
+    {
+      title: "CLIMA LINDO",
+      title_short: "CLIMA LINDO",
+      artist: { name: "GXMZ" },
+      album: { title: "CLIMA LINDO", cover_medium: "https://img/original.jpg" },
+    },
+  ];
+  assert.equal(
+    chooseDeezerArtwork(results, "CLIMA LINDO", "GXMZ & Repsaj", "CLIMA LINDO - EP"),
+    "https://img/original.jpg",
+  );
+});
+
+test("Deezer selection folds accents without mixing slowed variants", () => {
+  const results = [
+    {
+      title: "ACIDO III (Slowed)",
+      title_short: "ACIDO III",
+      artist: { name: "UdieNnx" },
+      album: { title: "ACIDO III", cover_medium: "https://img/slowed.jpg" },
+    },
+    {
+      title: "ACIDO III (Super Slowed)",
+      title_short: "ACIDO III",
+      artist: { name: "UdieNnx" },
+      album: { title: "ACIDO III", cover_medium: "https://img/super.jpg" },
+    },
+  ];
+  assert.equal(
+    chooseDeezerArtwork(results, "ÁCIDO III (Slowed)", "UdieNnx", "ÁCIDO III - EP"),
+    "https://img/slowed.jpg",
+  );
+});
+
 test("MusicBrainz parser accepts attribute order and removes duplicates", () => {
   const first = "12345678-1234-1234-9234-1234567890ab";
   const second = "abcdefab-cdef-4abc-8def-abcdefabcdef";

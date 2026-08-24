@@ -2,7 +2,10 @@
 
 This Cloudflare Worker is the optional artwork gateway for the NOW firmware.
 It races two bounded Deezer catalog searches against the first 48 KiB of Apple
-Music's public search page. Apple candidates in that prefix are accepted only
+Music's public search page. Deezer matching folds accents, ignores only release
+type album suffixes, accepts one component of a joint artist credit, and still
+requires the exact full track title before considering `title_short`. This
+keeps Original, Slowed, and Super Slowed variants isolated. Apple candidates are accepted only
 when they contain the normalized title and every joint-artist component; `&`
 and comma separators are equivalent. Only the matched bounded JPEG thumbnail
 is fetched. A small reviewed override table covers catalog items whose public
