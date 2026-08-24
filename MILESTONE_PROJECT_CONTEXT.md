@@ -1,6 +1,6 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v2.3.2
+> Current baseline: MILESTONE Core v2.3.3
 > Hardware: Waveshare ESP32-S3-Zero + SH1107 128×128 OLED
 > Repository: `CXITRON/MILESTONE-Core`
 
@@ -89,7 +89,7 @@ The `*.inc` runtime files are intentionally included into the sketch as one tran
 Firmware and persistent schema versions are separate concepts.
 
 ```cpp
-FIRMWARE_VERSION = "2.3.2"
+FIRMWARE_VERSION = "2.3.3"
 CONFIG_VERSION = 10
 ```
 
@@ -218,6 +218,8 @@ v2.3.0 closes the remaining common-runtime path after the v2.2.25 artwork-specif
 v2.3.1 responds to the confirmed post-validation `INT WDT` and persistent `network-failed` during the artwork transport. Live deployment testing proved that the owned Workers endpoint accepts port-80 POST directly and returns the same fixed 1,464-byte `MAB1` response. The NOW device therefore uses bounded plain HTTP for this one non-credential metadata/bitmap exchange, removing its TLS client and every runtime `esp_coex_preference_set` call; Cloudflare's upstream catalog/image work remains HTTPS. Track metadata is not encrypted on the device-to-Worker hop, which is disclosed in the portal and README. Exact length, magic, dimensions, component sizes, and CRC still protect parser/memory integrity but are not authentication. OTA and all other sensitive firmware traffic remain HTTPS; schema 10 is unchanged.
 
 v2.3.2 folds common unsupported Latin diacritics to their ASCII equivalents only in the NOW OLED display copy, so metadata such as `ÁCIDO` renders as `ACIDO` without adding another font blob. Japanese, Korean, and other UTF-8 sequences remain byte-for-byte unchanged, while the original AMS title, artist, and album remain untouched for artwork lookup, cache identity, and diagnostics. The Worker also adds an exact title-and-artist override for the verified `ヤラララ - Yararara` Apple thumbnail because both bounded public catalog searches currently return no match despite the direct release page existing. Schema 10 and the `MAB1` packet remain unchanged.
+
+v2.3.3 fixes the boot-update completion path bypassing the NOW artwork network requirement. Every update success, terminal failure, error hold, and postponed prompt now clears its deferred-sleep marker through one helper that enters `WIFI_OFF` only when `nowArtworkNeedsNetwork()` is false. Artwork layouts therefore retain the STA association established before BLE advertising, while text-only layouts preserve their configured Wi-Fi-off behavior. Live AMS sessions still prohibit starting a new association, avoiding the earlier radio-contention disconnect; schema 10 is unchanged.
 
 The post-v2.3.1 Worker tone update retains the 4×4 Bayer packet contract but adds bounded adaptive correction at both luminance extremes. Mean luminance below 110 blends toward a gamma-0.8 lift capped at 32 while preserving 0–6 as true black; mean luminance above 160 blends toward gamma 3.5 highlight compression while preserving exact black and white. The curve is shared by both output sizes. Exact catalog exceptions use normalized title-and-artist equality, and cache generation `mab1-adaptive-tone-catalog-v2` bypasses prior positive and negative entries; packet format does not change.
 

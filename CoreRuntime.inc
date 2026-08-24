@@ -6,6 +6,15 @@ void enterWifiSleep() {
   setRuntimeState(RuntimeState::WIFI_SLEEP);
 }
 
+void finishDeferredWifiSleepAfterUpdate() {
+  if (!wifiSleepDeferredForUpdate) return;
+  wifiSleepDeferredForUpdate = false;
+  // Artwork layouts deliberately keep the boot-established STA association.
+  // Re-associating only after a live AMS link exists is prohibited because it
+  // previously disconnected the iPhone during metadata settling.
+  if (!portalActive && !nowArtworkNeedsNetwork()) enterWifiSleep();
+}
+
 bool firmwareUpdateCheckDue() {
   if (!timeIsValid()) return false;
   const uint64_t now = static_cast<uint64_t>(time(nullptr));
@@ -360,20 +369,14 @@ void processFirmwareUpdate() {
   }
   if (updateState == UpdateState::ERROR_STATE && elapsed(now, updateStateStartedMs, 10000UL)) {
     setUpdateState(UpdateState::IDLE);
-    if (wifiSleepDeferredForUpdate && !portalActive) {
-      wifiSleepDeferredForUpdate = false;
-      enterWifiSleep();
-    }
+    finishDeferredWifiSleepAfterUpdate();
   }
   if (updateState == UpdateState::AVAILABLE && updatePromptVisible &&
       elapsed(now, updatePromptStartedMs, UPDATE_PROMPT_MS)) {
     updatePromptVisible = false;
     wakeDisplay();
     logLine("firmware update postponed");
-    if (wifiSleepDeferredForUpdate && !portalActive) {
-      wifiSleepDeferredForUpdate = false;
-      enterWifiSleep();
-    }
+    finishDeferredWifiSleepAfterUpdate();
   }
   if (updateInstallRequested && deadlineReached(now, updateInstallNotBeforeMs)) {
     updateInstallRequested = false;
@@ -506,10 +509,7 @@ void processFirmwareUpdate() {
       if (runtimeState != RuntimeState::SETUP_AP) setRuntimeState(RuntimeState::RUNNING_ONLINE);
       restoreNetworkAfterFirmwareOperation();
       restoreBluetoothAfterFirmwareOperation();
-      if (wifiSleepDeferredForUpdate && !updatePromptVisible && !portalActive) {
-        wifiSleepDeferredForUpdate = false;
-        enterWifiSleep();
-      }
+      if (!updatePromptVisible) finishDeferredWifiSleepAfterUpdate();
       return;
     }
 
@@ -535,10 +535,7 @@ void processFirmwareUpdate() {
     failFirmwareCheck(failure.length() ? failure : "manifest check failed", transient);
     updateCheckAttempt = 0;
     restoreNetworkAfterFirmwareOperation();
-    if (wifiSleepDeferredForUpdate && !updatePromptVisible && !portalActive) {
-      wifiSleepDeferredForUpdate = false;
-      enterWifiSleep();
-    }
+    if (!updatePromptVisible) finishDeferredWifiSleepAfterUpdate();
     return;
   }
 

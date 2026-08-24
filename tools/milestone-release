@@ -54,9 +54,9 @@ Options:
 
 Examples:
   cd /run/media/citron/T7/Documents/Dev/MILESTONE_Core
-  milestone-release local 2.3.2 "Restore indexed artwork and fold Latin metadata"
+  milestone-release local 2.3.3 "Keep artwork Wi-Fi after update checks"
 
-  cd /tmp && milestone-release taildrop 2.3.2 "Restore indexed artwork and fold Latin metadata"
+  cd /tmp && milestone-release taildrop 2.3.3 "Keep artwork Wi-Fi after update checks"
 USAGE
 }
 

@@ -18,7 +18,7 @@ reject() {
   fi
 }
 
-require 'FIRMWARE_VERSION\[\] = "2\.3\.2"' MILESTONE_Core.ino 'firmware version is not 2.3.2'
+require 'FIRMWARE_VERSION\[\] = "2\.3\.3"' MILESTONE_Core.ino 'firmware version is not 2.3.3'
 require 'if \(oledReady && !portalActive && !updateCheckIndicatorRendered\) return;' CoreRuntime.inc 'portal manifest checks can deadlock waiting for the non-portal U icon'
 require 'UPDATE_PORTAL_HTTP_CONNECT_TIMEOUT_MS' CoreUpdate.inc 'portal manifest checks need a bounded connect timeout'
 require 'UPDATE_PORTAL_TLS_HANDSHAKE_TIMEOUT_SEC' CoreUpdate.inc 'portal manifest checks need a bounded TLS timeout'
@@ -84,6 +84,20 @@ require 'portalFirmwareWait' CoreRuntime.inc 'portal update/profile checks can r
 require 'failPortalFirmwareNetworkWait' CoreRuntime.inc 'portal firmware actions can remain queued after Wi-Fi connection failure'
 require 'updateInstallAfterNetworkReady' CoreRuntime.inc 'confirmed install is not resumed after automatic Wi-Fi/NTP recovery'
 require 'update_check_pending' CorePortal.inc 'portal cannot poll automatic Wi-Fi/NTP/update progress'
+require 'finishDeferredWifiSleepAfterUpdate\(\)' CoreRuntime.inc 'update completion paths need one artwork-aware Wi-Fi sleep decision'
+python3 - <<'PY_UPDATE_WIFI_SLEEP'
+from pathlib import Path
+s = Path('CoreRuntime.inc').read_text()
+helper_start = s.index('void finishDeferredWifiSleepAfterUpdate()')
+helper_end = s.index('\n}\n', helper_start) + 2
+helper = s[helper_start:helper_end]
+assert '!nowArtworkNeedsNetwork()' in helper, 'artwork layouts must retain the boot-established STA after update checks'
+runtime_start = s.index('void processFirmwareUpdate()')
+runtime_end = s.index('\n\nvoid enterThermalSafeMode', runtime_start)
+body = s[runtime_start:runtime_end]
+assert body.count('finishDeferredWifiSleepAfterUpdate();') == 4, 'every update success/failure/postpone sleep path must use the artwork-aware helper'
+assert 'wifiSleepDeferredForUpdate = false;\n      enterWifiSleep();' not in body, 'update completion must not bypass the artwork network requirement'
+PY_UPDATE_WIFI_SLEEP
 python3 - <<'PY_PORTAL_PROFILE_RECONNECT_ORDER'
 from pathlib import Path
 s = Path('CorePortal.inc').read_text()

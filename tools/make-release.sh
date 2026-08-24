@@ -3,7 +3,7 @@ set -euo pipefail
 
 if (( $# < 1 || $# > 2 )); then
   echo "사용법: $0 VERSION [NOTES]" >&2
-  echo "예: $0 2.3.2 'Restore indexed artwork and fold Latin metadata'" >&2
+  echo "예: $0 2.3.3 'Keep artwork Wi-Fi after update checks'" >&2
   exit 2
 fi
 
