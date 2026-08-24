@@ -776,6 +776,10 @@ bool nowArtworkNeedsNetwork() {
          (!nowArtworkRetryAtMs || deadlineReached(millis(), nowArtworkRetryAtMs));
 }
 
+bool nowArtworkDefersStationRecovery() {
+  return nowArtworkLayoutUsesImage() && bluetoothNowPlayingHasLiveConnection();
+}
+
 bool nowArtworkTransferBusy() { return nowArtworkWorkerRunning; }
 
 void processNowArtwork() {

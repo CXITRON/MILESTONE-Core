@@ -54,9 +54,9 @@ Options:
 
 Examples:
   cd /run/media/citron/T7/Documents/Dev/MILESTONE_Core
-  milestone-release local 2.2.25 "Keep Wi-Fi associated before NOW Bluetooth"
+  milestone-release local 2.3.0 "Serialize NOW Bluetooth and background network recovery"
 
-  cd /tmp && milestone-release taildrop 2.2.25 "Keep Wi-Fi associated before NOW Bluetooth"
+  cd /tmp && milestone-release taildrop 2.3.0 "Serialize NOW Bluetooth and background network recovery"
 USAGE
 }
 

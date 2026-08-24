@@ -299,7 +299,12 @@ void processNetwork() {
                          static_cast<uint64_t>(time(nullptr)) >= config.lastSync + config.ntpPeriodSec;
   bool retryDue = runtimeState == RuntimeState::RUNNING_OFFLINE && deadlineReached(now, nextRetryMs);
 
-  if (!portalActive && config.savedNetworkCount > 0) {
+  // Boot establishes STA/NTP before NOW begins advertising. Once an iPhone is
+  // live, do not let periodic NTP or the general offline retry path start new
+  // radio work underneath AMS. A pending due time remains due and is consumed
+  // naturally after Bluetooth disconnects.
+  const bool stationRecoveryDeferredForArtwork = nowArtworkDefersStationRecovery();
+  if (!portalActive && config.savedNetworkCount > 0 && !stationRecoveryDeferredForArtwork) {
     if (periodicNtpDue && stationNetworkReady()) {
       if (beginNtpRequest()) setRuntimeState(RuntimeState::TIME_SYNCING);
     } else if (retryDue && stationNetworkReady()) {
@@ -548,7 +553,8 @@ void processFirmwareUpdate() {
     wifiSleepDeferredForUpdate = config.wifiSleep;
     updateCheckNotBeforeMs = millis() + UPDATE_NETWORK_SETTLE_MS;
     requestFirmwareUpdateCheck(bootUpdateCheckPending ? UpdateCheckReason::BOOT : UpdateCheckReason::WEEKLY);
-  } else if (runtimeState == RuntimeState::WIFI_SLEEP && config.savedNetworkCount > 0) {
+  } else if (runtimeState == RuntimeState::WIFI_SLEEP && config.savedNetworkCount > 0 &&
+             !nowArtworkDefersStationRecovery()) {
     updateCheckAfterNetworkReady = true;
     startSavedWifiSequence(false);
   }

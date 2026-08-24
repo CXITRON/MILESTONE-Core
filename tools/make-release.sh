@@ -3,7 +3,7 @@ set -euo pipefail
 
 if (( $# < 1 || $# > 2 )); then
   echo "사용법: $0 VERSION [NOTES]" >&2
-  echo "예: $0 2.2.25 'Keep Wi-Fi associated before NOW Bluetooth'" >&2
+  echo "예: $0 2.3.0 'Serialize NOW Bluetooth and background network recovery'" >&2
   exit 2
 fi
 

@@ -1,6 +1,6 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v2.2.25
+> Current baseline: MILESTONE Core v2.3.0
 > Hardware: Waveshare ESP32-S3-Zero + SH1107 128×128 OLED
 > Repository: `CXITRON/MILESTONE-Core`
 
@@ -89,7 +89,7 @@ The `*.inc` runtime files are intentionally included into the sketch as one tran
 Firmware and persistent schema versions are separate concepts.
 
 ```cpp
-FIRMWARE_VERSION = "2.2.25"
+FIRMWARE_VERSION = "2.3.0"
 CONFIG_VERSION = 10
 ```
 
@@ -212,6 +212,8 @@ v2.2.23 fixes a physical-device radio regression exposed after the smaller bitma
 v2.2.24 addresses the remaining physical NOW failure where a gateway transport error was still followed by AMS re-securing or advertising. Balanced coexistence alone did not guarantee enough BLE airtime while the fully awake Wi-Fi modem performed TLS. The bounded artwork worker now temporarily selects Bluetooth-priority coexistence and enables Wi-Fi minimum-modem power save only for the transfer, restoring balanced coexistence and fully awake STA immediately afterward. The requested iPhone connection interval narrows from 40–80ms to 30–40ms with zero latency and the existing 12-second supervision timeout. NTP, OTA, Wi-Fi association ordering, schema 10, and the Worker API remain unchanged.
 
 v2.2.25 fixes the actual `SETTLING` to `SECURING` transition seen on hardware: the disconnect occurred before artwork TLS, when Wi-Fi-off mode had shut down STA after boot NTP and the first AMS metadata then started a fresh association. Artwork layouts now keep the boot-established station associated even before an iPhone connects, and a live AMS session never starts a new STA association. Text layouts retain the configured Wi-Fi-off behavior. The v2.2.24 runtime modem-power/coexistence transitions and shortened connection interval are removed after one candidate boot produced an interrupt watchdog reset; artwork TLS remains on the normal balanced policy. Schema 10 and the Worker API remain unchanged.
+
+v2.3.0 closes the remaining common-runtime path after the v2.2.25 artwork-specific fix. While an iPhone is live in an artwork layout, the general network state machine now defers periodic NTP, offline retry, and saved-STA recovery instead of starting them independently of `CoreArtwork.inc`; automatic update reconnection observes the same deferral. The due work remains pending and resumes naturally after Bluetooth disconnects. Boot still establishes STA and completes its bounded NTP attempt before BLE advertising, artwork TLS stays on balanced coexistence, text-only layouts retain Wi-Fi-off behavior, and schema 10 is unchanged.
 
 Do not split the OTA transaction merely because the function is long. Its sequential structure encodes safety assumptions.
 

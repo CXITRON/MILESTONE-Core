@@ -1,6 +1,7 @@
 // Compile-time stubs keep CORE and MEDIA free of artwork networking/JPEG code.
 void processNowArtwork() {}
 bool nowArtworkNeedsNetwork() { return false; }
+bool nowArtworkDefersStationRecovery() { return false; }
 bool nowArtworkTransferBusy() { return false; }
 bool nowArtworkAvailable() { return false; }
 const uint8_t *nowArtworkSmallBitmap() { return nullptr; }

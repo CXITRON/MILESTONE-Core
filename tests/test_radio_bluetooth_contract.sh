@@ -18,7 +18,7 @@ reject() {
   fi
 }
 
-require 'FIRMWARE_VERSION\[\] = "2\.2\.25"' MILESTONE_Core.ino 'firmware version is not 2.2.25'
+require 'FIRMWARE_VERSION\[\] = "2\.3\.0"' MILESTONE_Core.ino 'firmware version is not 2.3.0'
 require 'CONFIG_VERSION = 10' MILESTONE_Core.ino 'configuration schema is not 10'
 require 'bool fixedApSecurity = false;' MILESTONE_Core.ino 'fixed AP security must default off'
 require 'String fixedApPassword;' MILESTONE_Core.ino 'fixed AP password setting missing'
@@ -163,6 +163,9 @@ require 'esp_coex_preference_set\(ESP_COEX_PREFER_BALANCE\)' CoreArtwork.inc 'ar
 reject 'nowArtworkWorkerWifiPowerSave|WiFi\.setSleep\(true\)' CoreArtwork.inc 'artwork TLS must not toggle modem power state at runtime'
 require 'if \(nowArtworkLayoutUsesImage\(\)\) return true' CoreArtwork.inc 'artwork layout must keep Wi-Fi associated before BLE advertising'
 require '!stationNetworkReady\(\) && !bluetoothNowPlayingHasLiveConnection\(\)' CoreArtwork.inc 'artwork must not start STA association during a live AMS session'
+require 'nowArtworkDefersStationRecovery\(\)' CoreArtwork.inc 'artwork runtime must expose its live-AMS network deferral'
+require 'stationRecoveryDeferredForArtwork = nowArtworkDefersStationRecovery\(\)' CoreRuntime.inc 'general network retries must observe live artwork AMS deferral'
+require '!stationRecoveryDeferredForArtwork' CoreRuntime.inc 'periodic NTP and STA recovery must stay deferred during live artwork AMS'
 require 'time-sync-paused' CoreArtwork.inc 'artwork TLS must not overlap an active NTP exchange'
 require 'stageFirmwareInstallForRamRecovery\(\)' CoreUpdate.inc 'low-RAM NOW install needs a reboot recovery path'
 require 'loadStagedFirmwareInstallRecord\(\)' CoreRuntime.inc 'RAM recovery install must load before Bluetooth initialization'
