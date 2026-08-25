@@ -327,7 +327,8 @@ void requestFirmwareUpdateCheck(UpdateCheckReason reason, const String &profile 
 void processFirmwareUpdate();
 bool stationNetworkReady();
 
-void prepareStablePortalRadio() {
+bool prepareStablePortalRadio() {
+  const bool preserveStation = stationNetworkReady();
   cancelPortalWifiScan();
   if (savedWifiScanActive) {
     // Entering setup while the background saved-network scan is running used
@@ -348,6 +349,36 @@ void prepareStablePortalRadio() {
   wifiNetworkReadySinceMs = 0;
   wifiDeadlineMs = 0;
   activeWifiIndex = NO_WIFI_INDEX;
+  return preserveStation;
+}
+
+bool configurePortalRadio(bool preserveStation, bool fullReset) {
+  if (fullReset) {
+    // A cancelled STA connection/scan can leave the IDF radio reporting a
+    // valid SoftAP interface and IP while no beacon is actually transmitted.
+    // When there is no live station worth preserving, rebuild the radio from
+    // WIFI_OFF and start AP-only. WiFi scans enable STA again on demand.
+    stopMdns();
+    stopWifiScanBestEffort();
+    WiFi.disconnect(false, false);
+    delay(30);
+    resetEnterpriseStationAuth();
+    if (!WiFi.mode(WIFI_OFF)) {
+      logLine("setup AP radio reset could not stop Wi-Fi");
+      return false;
+    }
+    delay(WIFI_DRIVER_RESET_MS);
+    preserveStation = false;
+  }
+  const wifi_mode_t targetMode = preserveStation ? WIFI_AP_STA : WIFI_AP;
+  if (!WiFi.mode(targetMode)) {
+    logLine("setup AP radio mode transition failed");
+    return false;
+  }
+  WiFi.setAutoReconnect(false);
+  WiFi.setSleep(false);
+  delay(WIFI_DRIVER_SETTLE_MS);
+  return true;
 }
 
 bool startConfiguredSoftAp() {
@@ -359,7 +390,13 @@ bool startConfiguredSoftAp() {
 bool setupApRadioReady() {
   const wifi_mode_t mode = WiFi.getMode();
   if (mode != WIFI_MODE_AP && mode != WIFI_MODE_APSTA) return false;
-  return WiFi.softAPIP() != IPAddress(0, 0, 0, 0);
+  if (WiFi.softAPIP() == IPAddress(0, 0, 0, 0)) return false;
+  wifi_config_t apConfig = {};
+  if (esp_wifi_get_config(WIFI_IF_AP, &apConfig) != ESP_OK) return false;
+  return apConfig.ap.ssid_hidden == 0 &&
+         apConfig.ap.ssid_len == strlen(AP_SSID) &&
+         strncmp(reinterpret_cast<const char *>(apConfig.ap.ssid), AP_SSID,
+                 sizeof(apConfig.ap.ssid)) == 0;
 }
 
 void recoverSetupApRadioIfNeeded(uint32_t now) {
@@ -369,14 +406,13 @@ void recoverSetupApRadioIfNeeded(uint32_t now) {
   }
   lastPortalRadioRecoveryMs = now;
   logLine("setup AP radio disappeared; attempting in-place recovery");
-  WiFi.mode(WIFI_AP_STA);
-  WiFi.setAutoReconnect(false);
-  WiFi.setSleep(false);
-  delay(WIFI_DRIVER_SETTLE_MS);
-  if (!startConfiguredSoftAp()) {
+  const bool preserveStation = stationNetworkReady();
+  if (!configurePortalRadio(preserveStation, !preserveStation) ||
+      !startConfiguredSoftAp()) {
     logLine("setup AP in-place recovery failed");
     return;
   }
+  delay(PORTAL_AP_SETTLE_MS);
   dnsServer.stop();
   dnsServer.start(53, "*", WiFi.softAPIP());
   portalStartedMs = now;
@@ -389,28 +425,23 @@ void startPortal() {
     portalStartedMs = millis();
     return;
   }
-  prepareStablePortalRadio();
+  const bool preserveStation = prepareStablePortalRadio();
   if (config.fixedApSecurity) apPassword = config.fixedApPassword;
   else apPassword = randomHex(8);
   sessionToken = randomHex(20);
-  WiFi.mode(WIFI_AP_STA);
-  WiFi.setAutoReconnect(false);
-  WiFi.setSleep(false);
-  delay(WIFI_DRIVER_SETTLE_MS);
-  bool apStarted = startConfiguredSoftAp();
+  bool apStarted = configurePortalRadio(preserveStation, !preserveStation) &&
+                   startConfiguredSoftAp();
   if (!apStarted) {
-    // Driver transitions after a cancelled STA scan/connection can rarely make
-    // the first softAP() call fail. Reset only the AP side and retry once.
+    // If retaining a live station or the first clean AP-only start failed,
+    // sacrifice STA and rebuild the whole radio once before giving up.
     WiFi.softAPdisconnect(true);
-    delay(80);
-    WiFi.mode(WIFI_AP_STA);
-    WiFi.setSleep(false);
-    apStarted = startConfiguredSoftAp();
+    apStarted = configurePortalRadio(false, true) && startConfiguredSoftAp();
   }
   if (!apStarted) {
     logLine("SoftAP start failed after retry");
     return;
   }
+  delay(PORTAL_AP_SETTLE_MS);
   dnsServer.start(53, "*", WiFi.softAPIP());
   registerPortalRoutes();
   server.begin();

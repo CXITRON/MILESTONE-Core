@@ -73,7 +73,7 @@ SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 
 namespace Milestone {
 
-constexpr char FIRMWARE_VERSION[] = "2.3.6";
+constexpr char FIRMWARE_VERSION[] = "2.3.7";
 constexpr char FIRMWARE_PROFILE[] = MILESTONE_FIRMWARE_PROFILE;
 constexpr char FIRMWARE_PROFILE_LABEL[] = MILESTONE_FIRMWARE_PROFILE_LABEL;
 constexpr char FIRMWARE_PROFILE_MARKER[] = MILESTONE_PROFILE_MARKER;
@@ -107,6 +107,8 @@ constexpr uint32_t WIFI_PRIMARY_CONNECT_TIMEOUT_MS = 12UL * 1000UL;
 constexpr uint32_t WIFI_FALLBACK_CONNECT_TIMEOUT_MS = 15UL * 1000UL;
 constexpr uint32_t WIFI_PORTAL_TEST_CONNECT_TIMEOUT_MS = 15UL * 1000UL;
 constexpr uint32_t WIFI_DRIVER_SETTLE_MS = 100UL;
+constexpr uint32_t WIFI_DRIVER_RESET_MS = 150UL;
+constexpr uint32_t PORTAL_AP_SETTLE_MS = 120UL;
 constexpr uint32_t WIFI_IP_STABLE_MS = 750UL;
 constexpr uint32_t WIFI_QUICK_RETRY_MS = 15UL * 1000UL;
 // Arduino-ESP32's bundled lwIP waits 15 seconds for each unresponsive SNTP

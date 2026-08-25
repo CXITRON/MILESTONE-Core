@@ -1,6 +1,6 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v2.3.6
+> Current baseline: MILESTONE Core v2.3.7
 > Hardware: Waveshare ESP32-S3-Zero + SH1107 128×128 OLED
 > Repository: `CXITRON/MILESTONE-Core`
 
@@ -89,7 +89,7 @@ The `*.inc` runtime files are intentionally included into the sketch as one tran
 Firmware and persistent schema versions are separate concepts.
 
 ```cpp
-FIRMWARE_VERSION = "2.3.6"
+FIRMWARE_VERSION = "2.3.7"
 CONFIG_VERSION = 10
 ```
 
@@ -226,6 +226,8 @@ v2.3.4 fixes three MEDIA runtime stalls and the low-rate live sender path. Store
 v2.3.5 corrects the remaining MEDIA live-stream starvation introduced by treating displayed FPS as queue-consumption FPS. The source timeline can discard stale frames while HTTP work temporarily suppresses OLED updates, so a low displayed measurement caused the browser to overestimate the queue, delay refill, hit the five-second stale limit, and receive `stream-inactive`. Queue estimation now follows the requested source clock, the browser POST timeout is 10 seconds, and device stale detection is a distinct 15 seconds. RAW body chunks service due OLED frames while WebServer remains inside one request, and render deadlines advance from their previous schedule instead of accumulating loop delay. Stream-stop counters and reason are emitted to serial; schema 10 is unchanged.
 
 v2.3.6 lets a MEDIA live stream preempt an active NTP transaction without losing its higher-level intent. Stream start records a deferred-sync marker, stops lwIP SNTP, and moves the portal runtime out of `TIME_SYNCING` before entering the isolated hot path. On every normal stream exit it starts a fresh bounded NTP request and restores the existing Wi-Fi-test, manual-sync, or update-wait state; an allocation failure resumes NTP immediately. If STA network data is no longer ready, the original pending operation receives an explicit failure instead of remaining stuck. Active Wi-Fi association and firmware transfer remain hard stream-start exclusions; schema 10 is unchanged.
+
+v2.3.7 fixes setup-AP startup after the saved 2.4GHz networks are unavailable. A cancelled STA connection or scan could leave the ESP-IDF radio reporting AP+STA mode and `192.168.4.1` even though no `MILESTONE-D1-SETUP` beacon was transmitted. Portal entry now preserves AP+STA only for a live station; otherwise it fully stops the radio, restarts in AP-only mode, verifies a visible configured SSID, and falls back to one more full-radio rebuild if startup fails. Portal scans still enable STA on demand, and schema 10 is unchanged.
 
 The post-v2.3.1 Worker tone update retains the 4×4 Bayer packet contract but adds bounded adaptive correction at both luminance extremes. Mean luminance below 110 blends toward a gamma-0.8 lift capped at 32 while preserving 0–6 as true black; mean luminance above 160 blends toward gamma 3.5 highlight compression while preserving exact black and white. The curve is shared by both output sizes. Exact catalog exceptions use normalized title-and-artist equality, and cache generation `mab1-adaptive-tone-catalog-v2` bypasses prior positive and negative entries; packet format does not change.
 

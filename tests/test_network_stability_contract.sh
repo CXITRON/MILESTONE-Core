@@ -18,7 +18,7 @@ reject() {
   fi
 }
 
-require 'FIRMWARE_VERSION\[\] = "2\.3\.6"' MILESTONE_Core.ino 'firmware version is not 2.3.6'
+require 'FIRMWARE_VERSION\[\] = "2\.3\.7"' MILESTONE_Core.ino 'firmware version is not 2.3.7'
 require 'if \(oledReady && !portalActive && !updateCheckIndicatorRendered\) return;' CoreRuntime.inc 'portal manifest checks can deadlock waiting for the non-portal U icon'
 require 'UPDATE_PORTAL_HTTP_CONNECT_TIMEOUT_MS' CoreUpdate.inc 'portal manifest checks need a bounded connect timeout'
 require 'UPDATE_PORTAL_TLS_HANDSHAKE_TIMEOUT_SEC' CoreUpdate.inc 'portal manifest checks need a bounded TLS timeout'
@@ -60,6 +60,12 @@ require 'PORTAL_WIFI_SCAN_DWELL_MS = 120UL' MILESTONE_Core.ino 'short portal sca
 require 'SAVED_WIFI_SCAN_DWELL_MS = 120UL' MILESTONE_Core.ino 'saved-network scan dwell missing'
 require 'esp_wifi_scan_stop\(\)' CoreNetwork.inc 'active scans are not explicitly stoppable'
 require 'prepareStablePortalRadio\(\)' CoreNetwork.inc 'setup AP does not cancel background station work'
+require 'configurePortalRadio\(preserveStation, !preserveStation\)' CoreNetwork.inc 'offline setup AP must fully rebuild the radio'
+require 'WiFi\.mode\(WIFI_OFF\)' CoreNetwork.inc 'offline setup AP recovery must stop the stale Wi-Fi driver'
+require 'preserveStation \? WIFI_AP_STA : WIFI_AP' CoreNetwork.inc 'setup AP must use AP-only mode when no live station exists'
+require 'apConfig\.ap\.ssid_hidden == 0' CoreNetwork.inc 'setup AP health check must reject a hidden AP configuration'
+require 'apConfig\.ap\.ssid_len == strlen\(AP_SSID\)' CoreNetwork.inc 'setup AP health check must verify the configured SSID'
+require 'configurePortalRadio\(false, true\)' CoreNetwork.inc 'failed setup AP start needs one full-radio fallback'
 require 'WiFi\.setSleep\(false\);' CoreNetwork.inc 'setup AP must keep Wi-Fi power save disabled'
 require 'scanNetworks\(true, false, false, dwellMs, 0\)' CoreNetwork.inc 'saved-network scan must use bounded dwell and skip hidden probe results'
 require 'Do not blindly direct-connect every saved SSID' CoreNetwork.inc 'absent saved networks must not be exhaustively retried'
