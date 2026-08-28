@@ -18,8 +18,8 @@ reject() {
   fi
 }
 
-require 'FIRMWARE_VERSION\[\] = "3\.1\.1"' MILESTONE_Core.ino 'firmware version is not 3.1.1'
-require 'CONFIG_VERSION = 11' MILESTONE_Core.ino 'configuration schema is not 11'
+require 'FIRMWARE_VERSION\[\] = "3\.1\.2"' MILESTONE_Core.ino 'firmware version is not 3.1.2'
+require 'CONFIG_VERSION = 12' MILESTONE_Core.ino 'configuration schema is not 12'
 require 'bool fixedApSecurity = false;' MILESTONE_Core.ino 'fixed AP security must default off'
 require 'String fixedApPassword;' MILESTONE_Core.ino 'fixed AP password setting missing'
 require 'bool bluetoothNowPlaying = false;' MILESTONE_Core.ino 'Bluetooth Now Playing must default off'
@@ -28,6 +28,7 @@ require 'putStringVerified\("ap_pass", config\.fixedApPassword\)' CoreConfig.inc
 require 'prefs\.putBool\("ble_media", config\.bluetoothNowPlaying\)' CoreConfig.inc 'Bluetooth setting is not persisted'
 require 'const bool migrateToV10 = version < 10;' CoreConfig.inc 'schema 10 migration gate missing'
 require 'const bool migrateToV11 = version < 11;' CoreConfig.inc 'schema 11 migration gate missing'
+require 'const bool migrateToV12 = version < 12;' CoreConfig.inc 'schema 12 migration gate missing'
 require 'prefs\.putUChar\("now_layout"' CoreConfig.inc 'NOW layout is not persisted'
 require 'config\.fixedApSecurity = false;' CoreConfig.inc 'older schemas must default fixed AP mode off'
 require 'config\.bluetoothNowPlaying = false;' CoreConfig.inc 'older schemas must default Bluetooth off'

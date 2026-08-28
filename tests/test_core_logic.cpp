@@ -146,6 +146,15 @@ void testBluetoothDisconnectSessionMatching() {
   EXPECT_FALSE(MilestoneCoreLogic::shouldApplyBluetoothDisconnect(none, 7, none));
 }
 
+void testDisplayTone() {
+  EXPECT_EQ(MilestoneCoreLogic::applyDisplayTone(0, 92, 8), 0);
+  EXPECT_EQ(MilestoneCoreLogic::applyDisplayTone(255, 92, 8), 234);
+  EXPECT_EQ(MilestoneCoreLogic::applyDisplayTone(128, 100, 0), 128);
+  EXPECT_EQ(MilestoneCoreLogic::applyDisplayTone(200, 100, 20), 214);
+  EXPECT_EQ(MilestoneCoreLogic::applyDisplayTone(200, 100, -20), 185);
+  EXPECT_EQ(MilestoneCoreLogic::applyDisplayTone(255, 1, 99), 127);
+}
+
 void testTransientHttpRetry() {
   EXPECT_TRUE(MilestoneCoreLogic::shouldRetryTransientHttpFailure(-1, false, 1, 5));
   EXPECT_TRUE(MilestoneCoreLogic::shouldRetryTransientHttpFailure(429, true, 2, 5));
@@ -287,6 +296,7 @@ int main() {
   testUtf8LatinFolding();
   testLateBluetoothEncryptionFailure();
   testBluetoothDisconnectSessionMatching();
+  testDisplayTone();
   testTransientHttpRetry();
   testMusicBrainzReleaseGroupParser();
   testAppleArtworkUrlParser();

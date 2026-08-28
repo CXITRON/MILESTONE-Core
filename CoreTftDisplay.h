@@ -17,6 +17,7 @@ class MilestoneTftDisplay : public U8G2 {
                          uint8_t tileWidth, uint8_t tileHeight);
   void setPowerSave(uint8_t enabled);
   void setProfileLabel(const char *label);
+  void setToneAdjustment(uint8_t luminancePercent, int8_t contrastPercent);
   void setInkColor(uint32_t rgb888);
   void clearBuffer();
   void setDrawColor(uint8_t color);
@@ -62,6 +63,8 @@ class MilestoneTftDisplay : public U8G2 {
   uint16_t *colorBuffer_ = nullptr;
   uint8_t previousMono_[FRAME_WIDTH * FRAME_HEIGHT / 8U] = {};
   uint16_t inkColor_ = 0xFFFF;
+  uint8_t toneLuminancePercent_ = 92;
+  int8_t toneContrastPercent_ = 8;
   uint8_t tone5_[32] = {};
   uint8_t tone6_[64] = {};
   SPISettings spiSettings_{SPI_HZ, MSBFIRST, SPI_MODE0};
@@ -78,8 +81,8 @@ class MilestoneTftDisplay : public U8G2 {
   static uint16_t glyph3x5(char value);
   static bool labelPixel(const char *text, int16_t originX,
                          uint16_t x, uint16_t y);
-  static uint8_t toneChannel8(uint8_t value);
-  static uint16_t rgb888To565(uint32_t rgb888);
+  uint8_t toneChannel8(uint8_t value) const;
+  uint16_t rgb888To565(uint32_t rgb888) const;
   void initializeToneTables();
   uint16_t toneRgb565(uint16_t color) const;
   void beginColorCapture();

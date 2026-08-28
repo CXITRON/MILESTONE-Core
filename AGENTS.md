@@ -7,7 +7,7 @@ The source code is always the final authority when documentation and implementat
 ## 1. Project baseline
 
 - Product: MILESTONE Core
-- Current firmware baseline: `3.1.1`
+- Current firmware baseline: `3.1.2`
 - Persistent config schema: `11`
 - Hardware: Waveshare ESP32-S3-Zero + ST7735-compatible 128×160 SPI TFT + three tactile switches
 - Main branch: `main`

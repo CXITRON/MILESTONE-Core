@@ -30,6 +30,8 @@ bool shouldIgnoreLateBluetoothEncryptionFailure(bool linkAlreadySecured,
 bool shouldApplyBluetoothDisconnect(uint16_t activeConnectionHandle,
                                     uint16_t disconnectedConnectionHandle,
                                     uint16_t noConnectionHandle);
+uint8_t applyDisplayTone(uint8_t value, uint8_t luminancePercent,
+                         int8_t contrastPercent);
 bool shouldRetryTransientHttpFailure(int responseCode, bool responseComplete,
                                      uint8_t attempt, uint8_t maximumAttempts);
 

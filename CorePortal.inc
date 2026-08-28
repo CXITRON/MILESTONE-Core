@@ -164,6 +164,7 @@ void handleDiagnosticsClear() {
 }
 
 bool parseUintArg(const char *name, uint32_t &value);
+bool parseIntArg(const char *name, int32_t &value);
 bool parseUintHeader(const char *name, uint32_t &value);
 bool parseBoolArg(const char *name, bool &value);
 
@@ -878,6 +879,8 @@ void handleGetConfig() {
   json += "\"night_end\":" + String(config.nightEndMin) + ",";
   json += "\"burnin\":" + String(config.burninShift ? "true" : "false") + ",";
   json += "\"screen_off\":" + String(config.screenOffMin) + ",";
+  json += "\"display_luminance\":" + String(config.displayLuminance) + ",";
+  json += "\"display_contrast\":" + String(config.displayContrast) + ",";
   json += "\"color_title\":\"" + colorHex(config.colorTitle) + "\",";
   json += "\"color_date\":\"" + colorHex(config.colorDate) + "\",";
   json += "\"color_time\":\"" + colorHex(config.colorTime) + "\",";
@@ -971,6 +974,29 @@ bool parseUintArg(const char *name, uint32_t &value) {
   return parseUintText(server.arg(name), value);
 }
 
+bool parseIntArg(const char *name, int32_t &value) {
+  if (!server.hasArg(name)) return false;
+  const String text = server.arg(name);
+  if (text.length() == 0) return false;
+  size_t index = 0;
+  bool negative = false;
+  if (text[0] == '-') {
+    negative = true;
+    index = 1;
+    if (text.length() == 1) return false;
+  }
+  uint64_t magnitude = 0;
+  for (; index < text.length(); ++index) {
+    if (!isDigit(text[index])) return false;
+    magnitude = magnitude * 10ULL + static_cast<uint8_t>(text[index] - '0');
+    if (magnitude > 2147483648UL) return false;
+  }
+  if (!negative && magnitude > INT32_MAX) return false;
+  value = negative ? static_cast<int32_t>(-static_cast<int64_t>(magnitude))
+                   : static_cast<int32_t>(magnitude);
+  return true;
+}
+
 bool parseUintHeader(const char *name, uint32_t &value) {
   if (!server.hasHeader(name)) return false;
   return parseUintText(server.header(name), value);
@@ -1027,6 +1053,8 @@ void handlePostConfig() {
   next.message = server.arg("message");
   uint32_t mode, cycleMask, cycleInterval, scrollSpeed;
   uint32_t ledBrightness, ledNightLevel, nightStart, nightEnd, screenOff;
+  uint32_t displayLuminance;
+  int32_t displayContrast;
   uint32_t ntpPeriod, ddayPeriod, retryPeriod;
   bool ddayTextStyle, afterComplete, messageLeft, messageScroll, hour24, showSeconds;
   bool showChipTemperature, bootSync, wifiSleep, ledEnabled, burninShift;
@@ -1039,6 +1067,8 @@ void handlePostConfig() {
       !parseUintArg("led_brightness", ledBrightness) || !parseUintArg("led_night_level", ledNightLevel) ||
       !parseUintArg("night_start", nightStart) || !parseUintArg("night_end", nightEnd) ||
       !parseUintArg("screen_off", screenOff) || !parseUintArg("ntp_period", ntpPeriod) ||
+      !parseUintArg("display_luminance", displayLuminance) ||
+      !parseIntArg("display_contrast", displayContrast) ||
       !parseUintArg("dday_period", ddayPeriod) || !parseUintArg("retry_period", retryPeriod) ||
       !parseBoolArg("dday_style", ddayTextStyle) || !parseBoolArg("after_mode", afterComplete) ||
       !parseBoolArg("msg_align", messageLeft) || !parseBoolArg("msg_scroll", messageScroll) ||
@@ -1066,7 +1096,8 @@ void handlePostConfig() {
   if (!(cycleInterval == 0 || (cycleInterval >= 3 && cycleInterval <= 60))) return sendJson(400, "{\"error\":\"자동 전환은 0초 또는 3~60초여야 합니다.\"}");
   if (scrollSpeed < 5 || scrollSpeed > 80 || ledBrightness < 1 || ledBrightness > 64 ||
       ledNightLevel < 1 || ledNightLevel > 32 || nightStart > 1439 || nightEnd > 1439 ||
-      screenOff > 1440) {
+      screenOff > 1440 || displayLuminance < 50 || displayLuminance > 100 ||
+      displayContrast < -20 || displayContrast > 20) {
     return sendJson(400, "{\"error\":\"밝기·시간·스크롤 설정 범위를 확인하세요.\"}");
   }
   uint8_t parsedOrder[VIEW_COUNT];
@@ -1097,6 +1128,8 @@ void handlePostConfig() {
   next.nightEndMin = static_cast<uint16_t>(nightEnd);
   next.burninShift = burninShift;
   next.screenOffMin = static_cast<uint16_t>(screenOff);
+  next.displayLuminance = static_cast<uint8_t>(displayLuminance);
+  next.displayContrast = static_cast<int8_t>(displayContrast);
   if (MILESTONE_HAS_GENERAL_VIEWS) {
     next.colorTitle = colorTitle;
     next.colorDate = colorDate;
@@ -1144,6 +1177,7 @@ void handlePostConfig() {
     if (!saveGeneralConfig()) logLine("configuration rollback could not be persisted");
     return sendJson(500, "{\"error\":\"설정을 저장하지 못했습니다. 저장공간 상태를 확인하세요.\"}");
   }
+  display.setToneAdjustment(config.displayLuminance, config.displayContrast);
   currentCycleIndex = config.cycleIndex;
 #if MILESTONE_HAS_NOW_VIEW
   currentView = View::DDAY_TIME;
@@ -1315,6 +1349,7 @@ void handleSettingsReset() {
     return sendJson(500, "{\"error\":\"기본 설정을 저장하지 못했습니다.\"}");
   }
 
+  display.setToneAdjustment(config.displayLuminance, config.displayContrast);
   if (previous.bluetoothNowPlaying && !config.bluetoothNowPlaying) shutdownBluetoothNowPlaying();
   currentView = View::DDAY_TIME;
   currentCycleIndex = 0;

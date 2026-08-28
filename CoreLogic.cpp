@@ -317,6 +317,20 @@ bool shouldApplyBluetoothDisconnect(uint16_t activeConnectionHandle,
          activeConnectionHandle == disconnectedConnectionHandle;
 }
 
+uint8_t applyDisplayTone(uint8_t value, uint8_t luminancePercent,
+                         int8_t contrastPercent) {
+  if (luminancePercent < 50U) luminancePercent = 50U;
+  if (luminancePercent > 100U) luminancePercent = 100U;
+  if (contrastPercent < -20) contrastPercent = -20;
+  if (contrastPercent > 20) contrastPercent = 20;
+  int16_t contrasted = static_cast<int16_t>(value) - 128;
+  contrasted = static_cast<int16_t>(
+      (contrasted * (100 + contrastPercent)) / 100 + 128);
+  if (contrasted < 0) contrasted = 0;
+  if (contrasted > 255) contrasted = 255;
+  return static_cast<uint8_t>((contrasted * luminancePercent) / 100U);
+}
+
 bool shouldRetryTransientHttpFailure(int responseCode, bool responseComplete,
                                      uint8_t attempt, uint8_t maximumAttempts) {
   if (attempt >= maximumAttempts) return false;

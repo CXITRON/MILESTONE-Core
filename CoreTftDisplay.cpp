@@ -1,4 +1,5 @@
 #include "CoreTftDisplay.h"
+#include "CoreLogic.h"
 
 #include <algorithm>
 #include <esp_heap_caps.h>
@@ -191,22 +192,25 @@ void MilestoneTftDisplay::drawFrameChrome() {
   endTransfer();
 }
 
-uint8_t MilestoneTftDisplay::toneChannel8(uint8_t value) {
-  // A fixed 8% contrast lift followed by an 8% luminance reduction. Black
-  // stays black, highlights remain distinct, and the hard-wired 3V3 backlight
-  // appears less harsh without a full-frame post-processing pass.
-  int16_t contrasted = static_cast<int16_t>(value) - 128;
-  contrasted = static_cast<int16_t>((contrasted * 108) / 100 + 128);
-  contrasted = std::max<int16_t>(0, std::min<int16_t>(255, contrasted));
-  return static_cast<uint8_t>((contrasted * 92) / 100);
+uint8_t MilestoneTftDisplay::toneChannel8(uint8_t value) const {
+  return MilestoneCoreLogic::applyDisplayTone(
+      value, toneLuminancePercent_, toneContrastPercent_);
 }
 
-uint16_t MilestoneTftDisplay::rgb888To565(uint32_t rgb888) {
+uint16_t MilestoneTftDisplay::rgb888To565(uint32_t rgb888) const {
   const uint8_t red = toneChannel8(static_cast<uint8_t>(rgb888 >> 16U));
   const uint8_t green = toneChannel8(static_cast<uint8_t>(rgb888 >> 8U));
   const uint8_t blue = toneChannel8(static_cast<uint8_t>(rgb888));
   return static_cast<uint16_t>(((red >> 3U) << 11U) |
                                ((green >> 2U) << 5U) | (blue >> 3U));
+}
+
+void MilestoneTftDisplay::setToneAdjustment(uint8_t luminancePercent,
+                                            int8_t contrastPercent) {
+  toneLuminancePercent_ = std::max<uint8_t>(50U, std::min<uint8_t>(100U, luminancePercent));
+  toneContrastPercent_ = std::max<int8_t>(-20, std::min<int8_t>(20, contrastPercent));
+  initializeToneTables();
+  if (initialized_) drawFrameChrome();
 }
 
 void MilestoneTftDisplay::initializeToneTables() {

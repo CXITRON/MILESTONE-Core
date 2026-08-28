@@ -1,6 +1,6 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v3.1.1
+> Current baseline: MILESTONE Core v3.1.2
 > Hardware: Waveshare ESP32-S3-Zero + ST7735-compatible 128×160 SPI TFT + three tactile switches
 > Repository: `CXITRON/MILESTONE-Core`
 
@@ -12,7 +12,7 @@ MILESTONE Core is an ESP32-S3 desktop display firmware with:
 
 - three OTA-switchable application profiles: CORE (general displays), MEDIA (stored/live media), and NOW (iPhone AMS Now Playing)
 
-CORE owns D-day, message, clock, dashboard, device-information, and general screen-cycle behavior. MEDIA never enters those views: confirm and timed transitions select the next enabled media item. NOW renders only Bluetooth connection/AMS metadata state and does not enter general or media views. All three profiles share schema 11; MEDIA and NOW preserve the stored CORE general-view fields so switching back restores the previous CORE setup exactly.
+CORE owns D-day, message, clock, dashboard, device-information, and general screen-cycle behavior. MEDIA never enters those views: confirm and timed transitions select the next enabled media item. NOW renders only Bluetooth connection/AMS metadata state and does not enter general or media views. All three profiles share schema 12; MEDIA and NOW preserve the stored CORE general-view fields so switching back restores the previous CORE setup exactly.
 
 The profile boundary is compile-time, not a runtime feature flag. CORE uses `CoreMediaDisabled.inc` only for schema-compatible no-op calls and raw shared-partition erase during an explicit factory reset; it must not link `CoreMedia.inc`, `CoreMedia.cpp`, LittleFS, media/stream HTTP routes, `StreamPage.h`, or media converter UI bytes. Release BIN inspection enforces this boundary.
 
@@ -91,13 +91,13 @@ The `*.inc` runtime files are intentionally included into the sketch as one tran
 Firmware and persistent schema versions are separate concepts.
 
 ```cpp
-FIRMWARE_VERSION = "3.1.1"
-CONFIG_VERSION = 11
+FIRMWARE_VERSION = "3.1.2"
+CONFIG_VERSION = 12
 ```
 
 Increment `CONFIG_VERSION` only when persistent NVS layout/meaning changes and implement a migration path. A firmware version change by itself must not force a schema reset.
 
-Schema 9 appends `CUSTOM_MEDIA` as View 7 and TopMode 8 without renumbering the existing values. Schema 10 adds `ap_fixed`, `ap_pass`, and `ble_media`. Schema 11 adds six CORE semantic RGB colors and the MEDIA monochrome preference. The v10→v11 migration supplies the v3.1 defaults without changing Wi-Fi, AP security, CORE view order, stored media, or NOW layout.
+Schema 9 appends `CUSTOM_MEDIA` as View 7 and TopMode 8 without renumbering the existing values. Schema 10 adds `ap_fixed`, `ap_pass`, and `ble_media`. Schema 11 adds six CORE semantic RGB colors and the MEDIA monochrome preference. Schema 12 adds common TFT luminance and contrast percentages. The v11→v12 migration preserves every existing setting and supplies the v3.1.1 tone defaults of 92% luminance and +8% contrast.
 
 ## 4. Runtime architecture
 
@@ -234,6 +234,8 @@ v2.3.7 fixes setup-AP startup after the saved 2.4GHz networks are unavailable. A
 v3.0.0 replaces the required SH1107 I2C display with the physically verified ST7735-compatible 128×160 SPI TFT. GPIO9 remains SCK and GPIO8 becomes MOSI; CS, reset, and DC use GPIO10, GPIO5, and GPIO6. The existing 128×128 one-bit U8g2/MSM1 surface is converted to RGB565 and centered, including dirty-tile stream updates; the top 16-pixel TFT-only band shows the active profile above a separator, while the bottom band remains empty below one separator. Three active-low `INPUT_PULLUP` switches add previous (GPIO1), next (GPIO2), and confirm (GPIO11); confirm mirrors the onboard BOOT action and the onboard BOOT button remains available. Previous/next navigation renders immediately on debounced press, before synchronous background network work. Because the TFT LED is hard-wired to 3V3, nonfunctional display brightness/night-brightness controls and runtime contrast mapping are removed; their old NVS keys remain reserved for schema-10 compatibility. USB CDC diagnostics use zero-timeout, capacity-checked writes so a closed serial monitor cannot stall the product loop. The incompatible hardware boundary requires a major version, while configuration schema 10 and all profile boundaries remain unchanged.
 
 v3.1.0 adds the PSRAM RGB565 display layer, semantic CORE colors, colored status glyphs, a six-page confirm-driven device information view with PSRAM metrics, and the 1–3 second confirm-button profile selector. MEDIA extends MSM1 records with a reserved RGB332 pixel-format value while preserving old one-bit files; both stored and isolated live paths use bounded PSRAM buffers and the portal selects color or monochrome. NOW consumes the Worker `/v3/artwork` fixed `MAC1` RGB565 packet and retains `/v1` and `/v2` only for old firmware. Schema 11 persists the six CORE colors and MEDIA monochrome preference without allowing MEDIA/NOW to rewrite CORE view state.
+
+v3.1.2 makes the low-cost global TFT tone LUT configurable from every profile's setup portal. Schema 12 stores 50–100% luminance and -20–+20% contrast values, migrates schema 11 to the existing 92%/+8% appearance, and recalculates the 96-byte LUT only at boot or after a successful settings save. The adjustment remains common to CORE graphics, stored/live MEDIA, NOW artwork, status icons, and frame chrome.
 
 v3.1.1 fixes an old-session GAP disconnect race in NOW by retaining separate connect, encryption, and disconnect handles and applying a disconnect only to the matching active connection. MEDIA color streaming increases each bounded PSRAM request batch from 4 to 12 frames and refills proactively before the 96-frame queue approaches underrun. CORE exposes the exact selected color values beside each picker. The 1–3 second button menu adds a device restart entry and exits immediately when the already-active profile is confirmed. Wi-Fi sleep and parked-retry waiting share an empty-circle glyph, and a fixed low-cost RGB LUT slightly raises contrast while reducing luminance for every CORE, MEDIA, NOW, artwork, status, and frame-chrome pixel. Schema 11 is unchanged.
 

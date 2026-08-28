@@ -73,7 +73,7 @@ SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 
 namespace Milestone {
 
-constexpr char FIRMWARE_VERSION[] = "3.1.1";
+constexpr char FIRMWARE_VERSION[] = "3.1.2";
 constexpr char FIRMWARE_PROFILE[] = MILESTONE_FIRMWARE_PROFILE;
 constexpr char FIRMWARE_PROFILE_LABEL[] = MILESTONE_FIRMWARE_PROFILE_LABEL;
 constexpr char FIRMWARE_PROFILE_MARKER[] = MILESTONE_PROFILE_MARKER;
@@ -89,7 +89,7 @@ constexpr char UPDATE_MANIFEST_ASSET[] = MILESTONE_MANIFEST_ASSET;
 // cover unavailable instead of fanning out into multiple on-device providers.
 constexpr char NOW_ARTWORK_SERVICE_URL[] =
     "http://milestone-artwork.typhoon-individual.workers.dev/v3/artwork";
-constexpr uint16_t CONFIG_VERSION = 11;
+constexpr uint16_t CONFIG_VERSION = 12;
 constexpr uint8_t VIEW_COUNT = 8;
 constexpr uint8_t MAX_SAVED_NETWORKS = 8;
 constexpr uint8_t NO_WIFI_INDEX = 0xFF;
@@ -341,6 +341,8 @@ struct Config {
   uint32_t colorMessage = 0xFFD166UL;
   uint32_t colorInfo = 0xB8C4D0UL;
   bool mediaMonochrome = false;
+  uint8_t displayLuminance = 92;
+  int8_t displayContrast = 8;
   bool ledEnabled = true;
   uint8_t ledBrightness = 24;
   uint8_t ledNightLevel = 6;

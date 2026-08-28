@@ -211,6 +211,8 @@ bool saveGeneralConfig() {
   if (prefs.putUInt("col_msg", config.colorMessage) != sizeof(uint32_t)) success = false;
   if (prefs.putUInt("col_info", config.colorInfo) != sizeof(uint32_t)) success = false;
   if (prefs.putBool("media_mono", config.mediaMonochrome) != sizeof(bool)) success = false;
+  if (prefs.putUChar("tone_lum", config.displayLuminance) != sizeof(uint8_t)) success = false;
+  if (prefs.putChar("tone_ctr", config.displayContrast) != sizeof(int8_t)) success = false;
   if (prefs.putBool("led_en", config.ledEnabled) != sizeof(bool)) success = false;
   if (prefs.putUChar("led_lvl", config.ledBrightness) != sizeof(uint8_t)) success = false;
   if (prefs.putUChar("led_night", config.ledNightLevel) != sizeof(uint8_t)) success = false;
@@ -271,6 +273,7 @@ bool loadConfig() {
   const bool migrateToV9 = version < 9;
   const bool migrateToV10 = version < 10;
   const bool migrateToV11 = version < 11;
+  const bool migrateToV12 = version < 12;
   config.version = CONFIG_VERSION;
   if (migrateToV4) {
     String legacySsid = prefs.getString("wifi_ssid", "");
@@ -378,6 +381,10 @@ bool loadConfig() {
     config.colorInfo = prefs.getUInt("col_info", config.colorInfo) & 0xFFFFFFUL;
     config.mediaMonochrome = prefs.getBool("media_mono", false);
   }
+  if (!migrateToV12) {
+    config.displayLuminance = clampInt(prefs.getUChar("tone_lum", 92), 50, 100);
+    config.displayContrast = clampInt(prefs.getChar("tone_ctr", 8), -20, 20);
+  }
   config.ledEnabled = prefs.getBool("led_en", true);
   config.ledBrightness = clampInt(prefs.getUChar("led_lvl", 24), 1, 64);
   config.ledNightLevel = clampInt(prefs.getUChar("led_night", 6), 1, 32);
@@ -425,7 +432,7 @@ bool loadConfig() {
   config.lastDday = prefs.getInt("last_dday", 0);
   int y, m, d;
   if (!parseDate(config.target, y, m, d)) config.target = "2026-11-19";
-  if (migrateToV3 || migrateToV4 || migrateToV5 || migrateToV6 || migrateToV7 || migrateToV8 || migrateToV9 || migrateToV10 || migrateToV11) {
+  if (migrateToV3 || migrateToV4 || migrateToV5 || migrateToV6 || migrateToV7 || migrateToV8 || migrateToV9 || migrateToV10 || migrateToV11 || migrateToV12) {
     if (saveGeneralConfig()) {
       logLine(String("configuration migrated from schema ") + String(version) + " to " + String(CONFIG_VERSION));
     } else {

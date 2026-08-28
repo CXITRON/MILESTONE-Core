@@ -19,6 +19,7 @@ bool bootSplashActive() {
 }
 
 bool initDisplay() {
+  display.setToneAdjustment(config.displayLuminance, config.displayContrast);
   if (!display.begin()) {
     logLine("ST7735 TFT initialization failed");
     return false;
