@@ -328,10 +328,12 @@ void drawStatusIcon(int x, int y) {
     updateCheckIndicatorRendered = true;
     return;
   }
-  if (runtimeState == RuntimeState::WIFI_SLEEP) {
+  const bool wifiIdleWaiting = runtimeState == RuntimeState::RUNNING_OFFLINE &&
+      WiFi.status() != WL_CONNECTED && nextRetryMs != 0 &&
+      !deadlineReached(millis(), nextRetryMs);
+  if (runtimeState == RuntimeState::WIFI_SLEEP || wifiIdleWaiting) {
     display.setInkColor(0x8A98A8UL);
     display.drawCircle(x + 5, y + 5, 4);
-    display.drawLine(x + 2, y + 8, x + 8, y + 2);
     return;
   }
   if (WiFi.status() != WL_CONNECTED) {
@@ -1178,9 +1180,10 @@ void drawMainScreen() {
     display.clearBuffer();
     display.setInkColor(0x36D9FF);
     display.setFont(u8g2_font_7x14B_tf);
-    drawCenteredStr("SWITCH PROFILE", 28);
+    drawCenteredStr("PROFILE / POWER", 28);
     display.setInkColor(profileSelectorIndex == 0 ? 0x36D9FF :
-                        profileSelectorIndex == 1 ? 0xFF5DCC : 0x57E389);
+                        profileSelectorIndex == 1 ? 0xFF5DCC :
+                        profileSelectorIndex == 2 ? 0x57E389 : 0xFF9F1C);
     display.setFont(u8g2_font_logisoso28_tf);
     String target = buttonProfileName(profileSelectorIndex);
     target.toUpperCase();

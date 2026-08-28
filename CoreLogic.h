@@ -27,6 +27,9 @@ size_t foldLatinDiacriticsUtf8(const char *input, char *output, size_t capacity)
 bool shouldIgnoreLateBluetoothEncryptionFailure(bool linkAlreadySecured,
                                                 int errorStatus,
                                                 int timeoutStatus);
+bool shouldApplyBluetoothDisconnect(uint16_t activeConnectionHandle,
+                                    uint16_t disconnectedConnectionHandle,
+                                    uint16_t noConnectionHandle);
 bool shouldRetryTransientHttpFailure(int responseCode, bool responseComplete,
                                      uint8_t attempt, uint8_t maximumAttempts);
 

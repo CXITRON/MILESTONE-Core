@@ -1,6 +1,6 @@
 // MILESTONE Core custom media storage/playback and isolated v1.10.5 STREAM_MODE transport.
 // Original JPEG/GIF/video files are converted in the setup browser. The
-// device accepts only bounded, checksummed MSM1 128x128 one-bit files.
+// device accepts bounded, checksummed MSM1 128x128 RGB332 or one-bit files.
 
 constexpr uint8_t MEDIA_MAX_ITEMS = 64;
 constexpr uint8_t MEDIA_NAME_BYTES = 49;
@@ -22,15 +22,16 @@ constexpr char MEDIA_INDEX_B[] = "/media/index.b";
 constexpr char MEDIA_UPLOAD_TEMP[] = "/media/upload.tmp";
 
 // Live streaming is an isolated runtime mode. The browser pre-converts the
-// whole source; the ESP32 only receives paced 128x128 one-bit frames into a
+// whole source; the ESP32 only receives paced RGB332 or one-bit frames into a
 // PSRAM ring and flushes them to the display. No live frame is written to flash.
 constexpr uint8_t MEDIA_STREAM_QUEUE_FRAMES = 96;
-// Arduino WebServer closes every HTTP response, so larger bounded batches
-// amortize TCP setup/teardown on iPhone captive-AP links. Twenty-four raw
-// frames remain below 50 KiB and the request scratch buffer lives in PSRAM.
-constexpr uint8_t MEDIA_STREAM_MAX_PUSH_FRAMES = 4;
-constexpr uint8_t MEDIA_STREAM_PREBUFFER_FRAMES = 32;
-constexpr uint8_t MEDIA_STREAM_REBUFFER_FRAMES = 16;
+// Arduino WebServer closes every HTTP response. Color frames are eight times
+// larger than monochrome frames, and four-frame POSTs spent too much time in
+// TCP setup/ACK turnaround to keep the queue fed. Twelve-frame batches remain
+// bounded below 200 KiB and use only the dedicated PSRAM request scratch area.
+constexpr uint8_t MEDIA_STREAM_MAX_PUSH_FRAMES = 12;
+constexpr uint8_t MEDIA_STREAM_PREBUFFER_FRAMES = 24;
+constexpr uint8_t MEDIA_STREAM_REBUFFER_FRAMES = 12;
 constexpr size_t MEDIA_STREAM_PACKET_MAX_BYTES =
     static_cast<size_t>(MEDIA_STREAM_MAX_PUSH_FRAMES) *
     (MilestoneMedia::FRAME_HEADER_BYTES + MilestoneMedia::COLOR_FRAME_BYTES + 256U);

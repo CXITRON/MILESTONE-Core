@@ -18,7 +18,7 @@ reject() {
   fi
 }
 
-require 'FIRMWARE_VERSION\[\] = "3\.1\.0"' MILESTONE_Core.ino 'firmware version is not 3.1.0'
+require 'FIRMWARE_VERSION\[\] = "3\.1\.1"' MILESTONE_Core.ino 'firmware version is not 3.1.1'
 require 'CONFIG_VERSION = 11' MILESTONE_Core.ino 'configuration schema is not 11'
 require 'bool fixedApSecurity = false;' MILESTONE_Core.ino 'fixed AP security must default off'
 require 'String fixedApPassword;' MILESTONE_Core.ino 'fixed AP password setting missing'
@@ -44,7 +44,7 @@ require 'C6B2F38C|0x8c, 0xf3, 0xb2, 0xc6' CoreBluetooth.inc 'AMS Entity Attribut
 require 'BLE_HS_ADV_TYPE_SVC_DATA_UUID128|0x15' CoreBluetooth.inc 'AMS service solicitation advertising is missing'
 require 'setShortName\("MILESTON"\)' CoreBluetooth.inc 'passive BLE scans need a name in the primary advertisement'
 require 'scanResponse\.setName\(BLE_DEVICE_NAME\)' CoreBluetooth.inc 'active BLE scans need the complete MILESTONE name'
-require 'MILESTONE_BLE_AMS_RUNTIME_V7' CoreBluetooth.inc 'compiled BLE runtime marker missing'
+require 'MILESTONE_BLE_AMS_RUNTIME_V8' CoreBluetooth.inc 'compiled BLE runtime marker missing'
 require 'requires an Arduino-ESP32 build with NimBLE enabled' MILESTONE_Core.ino 'NOW must fail compilation instead of shipping a BLE stub'
 require 'bluetoothNowPlayingVisible\(\)' CoreBluetooth.inc 'Bluetooth music overlay visibility gate missing'
 python3 - <<'PY_AMS_PARSE'
@@ -71,7 +71,9 @@ require 'const bool bluetoothIsolated = isolateBluetoothForFirmwareOperation\(\)
 require 'const bool bluetoothIsolated = isolateBluetoothForFirmwareOperation\(\)' CoreRuntime.inc 'manifest checks must capture Bluetooth isolation result'
 require 'if \(!bluetoothIsolated\)' CoreUpdate.inc 'OTA install must reject incomplete Bluetooth isolation'
 require 'if \(!bluetoothIsolated\)' CoreRuntime.inc 'manifest checks must wait for safe Bluetooth isolation'
-require 'bluetoothDisconnectedEvent && bluetoothEventConnHandle == connHandle' CoreBluetooth.inc 'BLE shutdown must wait for the matching GAP disconnect confirmation'
+require 'bluetoothDisconnectedEventConnHandle == connHandle' CoreBluetooth.inc 'BLE shutdown must wait for the matching GAP disconnect confirmation'
+require 'shouldApplyBluetoothDisconnect' CoreBluetooth.inc 'late disconnects must be matched to the active BLE session'
+require 'BLE stale disconnect ignored' CoreBluetooth.inc 'ignored old-session disconnects must remain observable'
 require 'getPeerDevices\(false\)' CoreBluetooth.inc 'OTA isolation must inspect NimBLE server peers when app state has not caught up'
 require 'getConnectedCount\(\) == 0' CoreBluetooth.inc 'OTA isolation must verify the live NimBLE connection count'
 require 'bluetoothNowPlayingHasLiveConnection\(\)' CoreBluetooth.inc 'automatic OTA checks need the NimBLE live-link state'

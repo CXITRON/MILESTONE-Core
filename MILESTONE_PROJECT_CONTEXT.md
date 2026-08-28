@@ -1,6 +1,6 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v3.1.0
+> Current baseline: MILESTONE Core v3.1.1
 > Hardware: Waveshare ESP32-S3-Zero + ST7735-compatible 128×160 SPI TFT + three tactile switches
 > Repository: `CXITRON/MILESTONE-Core`
 
@@ -91,7 +91,7 @@ The `*.inc` runtime files are intentionally included into the sketch as one tran
 Firmware and persistent schema versions are separate concepts.
 
 ```cpp
-FIRMWARE_VERSION = "3.1.0"
+FIRMWARE_VERSION = "3.1.1"
 CONFIG_VERSION = 11
 ```
 
@@ -116,7 +116,7 @@ Schema 9 appends `CUSTOM_MEDIA` as View 7 and TopMode 8 without renumbering the 
 
 ### Bluetooth Now Playing, NOW profile, and setup-AP security (v1.11.0, v2.1.0)
 
-`CoreBluetooth.inc` implements iPhone/iPad Now Playing metadata through Apple Media Service (AMS) when the Arduino-ESP32 build exposes NimBLE. Since v2.1.0, the BLE runtime is compiled only into the dedicated NOW image and is always enabled there; CORE and MEDIA contain no BLE runtime. MILESTONE advertises an AMS service solicitation plus a shortened primary-packet name, bonds with the iOS device, discovers the iPhone-hosted AMS service on the same connection, subscribes to Player/Track Entity Update attributes, and renders a large title, artist, playback state, and progress. Korean metadata uses the Korean U8g2 font and non-Korean metadata uses the Japanese font so kana/kanji titles render instead of falling back to empty glyphs. NOW does not add a ninth persistent `View`, so the existing 8-bit cycle mask and saved CORE screen-order contract remain unchanged. A NOW release must fail rather than silently compile the unsupported BLE stub when NimBLE is absent, and binary inspection must find `MILESTONE_BLE_AMS_RUNTIME_V7` only in the NOW image.
+`CoreBluetooth.inc` implements iPhone/iPad Now Playing metadata through Apple Media Service (AMS) when the Arduino-ESP32 build exposes NimBLE. Since v2.1.0, the BLE runtime is compiled only into the dedicated NOW image and is always enabled there; CORE and MEDIA contain no BLE runtime. MILESTONE advertises an AMS service solicitation plus a shortened primary-packet name, bonds with the iOS device, discovers the iPhone-hosted AMS service on the same connection, subscribes to Player/Track Entity Update attributes, and renders a large title, artist, playback state, and progress. Korean metadata uses the Korean U8g2 font and non-Korean metadata uses the Japanese font so kana/kanji titles render instead of falling back to empty glyphs. NOW does not add a ninth persistent `View`, so the existing 8-bit cycle mask and saved CORE screen-order contract remain unchanged. A NOW release must fail rather than silently compile the unsupported BLE stub when NimBLE is absent, and binary inspection must find `MILESTONE_BLE_AMS_RUNTIME_V8` only in the NOW image.
 
 The current implementation parses complete AMS Entity Update notifications and safely displays the received prefix when iOS marks a value as truncated. A later revision may add asynchronous Entity Attribute reads for the full value; do not block the main loop waiting for a GATT read. Pairing and AMS interoperability must be validated on the physical ESP32-S3/iPhone combination before treating the feature as hardware-certified.
 
@@ -234,6 +234,8 @@ v2.3.7 fixes setup-AP startup after the saved 2.4GHz networks are unavailable. A
 v3.0.0 replaces the required SH1107 I2C display with the physically verified ST7735-compatible 128×160 SPI TFT. GPIO9 remains SCK and GPIO8 becomes MOSI; CS, reset, and DC use GPIO10, GPIO5, and GPIO6. The existing 128×128 one-bit U8g2/MSM1 surface is converted to RGB565 and centered, including dirty-tile stream updates; the top 16-pixel TFT-only band shows the active profile above a separator, while the bottom band remains empty below one separator. Three active-low `INPUT_PULLUP` switches add previous (GPIO1), next (GPIO2), and confirm (GPIO11); confirm mirrors the onboard BOOT action and the onboard BOOT button remains available. Previous/next navigation renders immediately on debounced press, before synchronous background network work. Because the TFT LED is hard-wired to 3V3, nonfunctional display brightness/night-brightness controls and runtime contrast mapping are removed; their old NVS keys remain reserved for schema-10 compatibility. USB CDC diagnostics use zero-timeout, capacity-checked writes so a closed serial monitor cannot stall the product loop. The incompatible hardware boundary requires a major version, while configuration schema 10 and all profile boundaries remain unchanged.
 
 v3.1.0 adds the PSRAM RGB565 display layer, semantic CORE colors, colored status glyphs, a six-page confirm-driven device information view with PSRAM metrics, and the 1–3 second confirm-button profile selector. MEDIA extends MSM1 records with a reserved RGB332 pixel-format value while preserving old one-bit files; both stored and isolated live paths use bounded PSRAM buffers and the portal selects color or monochrome. NOW consumes the Worker `/v3/artwork` fixed `MAC1` RGB565 packet and retains `/v1` and `/v2` only for old firmware. Schema 11 persists the six CORE colors and MEDIA monochrome preference without allowing MEDIA/NOW to rewrite CORE view state.
+
+v3.1.1 fixes an old-session GAP disconnect race in NOW by retaining separate connect, encryption, and disconnect handles and applying a disconnect only to the matching active connection. MEDIA color streaming increases each bounded PSRAM request batch from 4 to 12 frames and refills proactively before the 96-frame queue approaches underrun. CORE exposes the exact selected color values beside each picker. The 1–3 second button menu adds a device restart entry and exits immediately when the already-active profile is confirmed. Wi-Fi sleep and parked-retry waiting share an empty-circle glyph, and a fixed low-cost RGB LUT slightly raises contrast while reducing luminance for every CORE, MEDIA, NOW, artwork, status, and frame-chrome pixel. Schema 11 is unchanged.
 
 The post-v2.3.1 Worker tone update retains the 4×4 Bayer packet contract but adds bounded adaptive correction at both luminance extremes. Mean luminance below 110 blends toward a gamma-0.8 lift capped at 32 while preserving 0–6 as true black; mean luminance above 160 blends toward gamma 3.5 highlight compression while preserving exact black and white. The curve is shared by both output sizes. Exact catalog exceptions use normalized title-and-artist equality, and cache generation `mab1-adaptive-tone-catalog-v2` bypasses prior positive and negative entries; packet format does not change.
 

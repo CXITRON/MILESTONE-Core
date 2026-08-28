@@ -34,7 +34,7 @@ constexpr uint32_t BLE_SECURITY_POLL_MS = 250UL;
 constexpr char BLE_DEVICE_NAME[] = "MILESTONE";
 // make-release.sh verifies this executed marker in the compiled NOW image,
 // preventing a BLE stub from being published as a working build.
-constexpr char BLE_RUNTIME_MARKER[] = "MILESTONE_BLE_AMS_RUNTIME_V7";
+constexpr char BLE_RUNTIME_MARKER[] = "MILESTONE_BLE_AMS_RUNTIME_V8";
 
 enum class BluetoothRuntimeStage : uint8_t {
   OFF,
@@ -117,7 +117,12 @@ volatile bool bluetoothConnectedEvent = false;
 volatile bool bluetoothDisconnectedEvent = false;
 volatile bool bluetoothEncryptedEvent = false;
 volatile bool bluetoothConnectFailedEvent = false;
-volatile uint16_t bluetoothEventConnHandle = BLE_HS_CONN_HANDLE_NONE;
+// GAP callbacks can queue a disconnect from the old session immediately next
+// to a connect/encryption event for a new session. Keep their handles separate
+// so a late old-session event cannot erase the new AMS connection.
+volatile uint16_t bluetoothConnectedEventConnHandle = BLE_HS_CONN_HANDLE_NONE;
+volatile uint16_t bluetoothDisconnectedEventConnHandle = BLE_HS_CONN_HANDLE_NONE;
+volatile uint16_t bluetoothEncryptedEventConnHandle = BLE_HS_CONN_HANDLE_NONE;
 volatile int bluetoothEncryptionStatus = 0;
 volatile int bluetoothConnectFailureStatus = 0;
 volatile int bluetoothLastDisconnectReason = 0;
@@ -237,7 +242,7 @@ int milestoneBluetoothGapEvent(struct ble_gap_event *event, void *) {
   switch (event->type) {
     case BLE_GAP_EVENT_CONNECT:
       if (event->connect.status == 0) {
-        bluetoothEventConnHandle = event->connect.conn_handle;
+        bluetoothConnectedEventConnHandle = event->connect.conn_handle;
         bluetoothConnectedEvent = true;
       } else {
         bluetoothConnectFailureStatus = event->connect.status;
@@ -245,12 +250,12 @@ int milestoneBluetoothGapEvent(struct ble_gap_event *event, void *) {
       }
       break;
     case BLE_GAP_EVENT_DISCONNECT:
-      bluetoothEventConnHandle = event->disconnect.conn.conn_handle;
+      bluetoothDisconnectedEventConnHandle = event->disconnect.conn.conn_handle;
       bluetoothLastDisconnectReason = event->disconnect.reason;
       bluetoothDisconnectedEvent = true;
       break;
     case BLE_GAP_EVENT_ENC_CHANGE:
-      bluetoothEventConnHandle = event->enc_change.conn_handle;
+      bluetoothEncryptedEventConnHandle = event->enc_change.conn_handle;
       bluetoothEncryptionStatus = event->enc_change.status;
       bluetoothEncryptedEvent = true;
       break;
@@ -538,11 +543,11 @@ bool waitForBluetoothDisconnectBeforeShutdown() {
   if (bluetoothNowPlaying.connHandle != BLE_HS_CONN_HANDLE_NONE &&
       ble_gap_conn_find(bluetoothNowPlaying.connHandle, &connection) == 0) {
     connHandle = bluetoothNowPlaying.connHandle;
-  } else if (bluetoothEventConnHandle != BLE_HS_CONN_HANDLE_NONE &&
-             ble_gap_conn_find(bluetoothEventConnHandle, &connection) == 0) {
+  } else if (bluetoothConnectedEventConnHandle != BLE_HS_CONN_HANDLE_NONE &&
+             ble_gap_conn_find(bluetoothConnectedEventConnHandle, &connection) == 0) {
     // A GAP CONNECT callback can arrive immediately before firmware isolation,
     // before processBluetoothNowPlaying() has copied it into the app state.
-    connHandle = bluetoothEventConnHandle;
+    connHandle = bluetoothConnectedEventConnHandle;
   } else {
     const std::map<uint16_t, conn_status_t> peers = bluetoothServer->getPeerDevices(false);
     if (!peers.empty()) connHandle = peers.begin()->first;
@@ -563,7 +568,8 @@ bool waitForBluetoothDisconnectBeforeShutdown() {
 
   const uint32_t startedMs = millis();
   while (!alreadyDisconnected &&
-         !(bluetoothDisconnectedEvent && bluetoothEventConnHandle == connHandle) &&
+         !(bluetoothDisconnectedEvent &&
+           bluetoothDisconnectedEventConnHandle == connHandle) &&
          bluetoothServer->getConnectedCount() != 0) {
     if (elapsed(millis(), startedMs, BLE_DISCONNECT_TIMEOUT_MS)) {
       logLine("BLE disconnect confirmation timed out; stack deinit refused");
@@ -592,7 +598,9 @@ void clearBluetoothPendingEvents() {
   bluetoothDisconnectedEvent = false;
   bluetoothEncryptedEvent = false;
   bluetoothConnectFailedEvent = false;
-  bluetoothEventConnHandle = BLE_HS_CONN_HANDLE_NONE;
+  bluetoothConnectedEventConnHandle = BLE_HS_CONN_HANDLE_NONE;
+  bluetoothDisconnectedEventConnHandle = BLE_HS_CONN_HANDLE_NONE;
+  bluetoothEncryptedEventConnHandle = BLE_HS_CONN_HANDLE_NONE;
   bluetoothEncryptionStatus = 0;
   bluetoothConnectFailureStatus = 0;
 }
@@ -758,7 +766,7 @@ void processBluetoothNowPlaying() {
   }
   if (bluetoothConnectedEvent) {
     bluetoothConnectedEvent = false;
-    bluetoothNowPlaying.connHandle = bluetoothEventConnHandle;
+    bluetoothNowPlaying.connHandle = bluetoothConnectedEventConnHandle;
     bluetoothNowPlaying.connected = true;
     bluetoothNowPlaying.secured = false;
     bluetoothNowPlaying.stage = BluetoothRuntimeStage::CONNECTED;
@@ -783,7 +791,9 @@ void processBluetoothNowPlaying() {
   }
   if (bluetoothEncryptedEvent) {
     bluetoothEncryptedEvent = false;
-    if (bluetoothEventConnHandle == bluetoothNowPlaying.connHandle) {
+    const uint16_t encryptedHandle = bluetoothEncryptedEventConnHandle;
+    bluetoothEncryptedEventConnHandle = BLE_HS_CONN_HANDLE_NONE;
+    if (encryptedHandle == bluetoothNowPlaying.connHandle) {
       if (bluetoothEncryptionStatus == 0) {
         if (!confirmBluetoothLinkEncrypted()) {
           bluetoothNowPlaying.nextSecurityPollMs = millis() + BLE_SECURITY_POLL_MS;
@@ -804,15 +814,29 @@ void processBluetoothNowPlaying() {
   }
   if (bluetoothDisconnectedEvent) {
     bluetoothDisconnectedEvent = false;
-    bluetoothNowPlaying.connected = false;
-    bluetoothNowPlaying.secured = false;
-    bluetoothNowPlaying.securityStartedMs = 0;
-    bluetoothNowPlaying.nextSecurityPollMs = 0;
-    bluetoothNowPlaying.connHandle = BLE_HS_CONN_HANDLE_NONE;
-    resetAmsHandles();
-    clearBluetoothNowPlayingMetadata();
-    if (!bluetoothNowPlaying.suspended) startBluetoothAdvertising();
-    logLine(String("BLE iPhone disconnected reason=") + bluetoothLastDisconnectReason);
+    const uint16_t disconnectedHandle = bluetoothDisconnectedEventConnHandle;
+    bluetoothDisconnectedEventConnHandle = BLE_HS_CONN_HANDLE_NONE;
+    if (MilestoneCoreLogic::shouldApplyBluetoothDisconnect(
+            bluetoothNowPlaying.connHandle, disconnectedHandle,
+            BLE_HS_CONN_HANDLE_NONE)) {
+      bluetoothNowPlaying.connected = false;
+      bluetoothNowPlaying.secured = false;
+      bluetoothNowPlaying.securityStartedMs = 0;
+      bluetoothNowPlaying.nextSecurityPollMs = 0;
+      bluetoothNowPlaying.connHandle = BLE_HS_CONN_HANDLE_NONE;
+      if (bluetoothConnectedEventConnHandle == disconnectedHandle) {
+        bluetoothConnectedEventConnHandle = BLE_HS_CONN_HANDLE_NONE;
+      }
+      resetAmsHandles();
+      clearBluetoothNowPlayingMetadata();
+      if (!bluetoothNowPlaying.suspended) startBluetoothAdvertising();
+      logLine(String("BLE iPhone disconnected handle=") + disconnectedHandle +
+              " reason=" + bluetoothLastDisconnectReason);
+    } else {
+      logLine(String("BLE stale disconnect ignored handle=") + disconnectedHandle +
+              " active=" + bluetoothNowPlaying.connHandle +
+              " reason=" + bluetoothLastDisconnectReason);
+    }
   }
 
   AmsNotificationPacket packet;
@@ -866,8 +890,8 @@ bool bluetoothNowPlayingHasLiveConnection() {
   struct ble_gap_conn_desc connection = {};
   if (bluetoothNowPlaying.connHandle != BLE_HS_CONN_HANDLE_NONE &&
       ble_gap_conn_find(bluetoothNowPlaying.connHandle, &connection) == 0) return true;
-  return bluetoothEventConnHandle != BLE_HS_CONN_HANDLE_NONE &&
-         ble_gap_conn_find(bluetoothEventConnHandle, &connection) == 0;
+  return bluetoothConnectedEventConnHandle != BLE_HS_CONN_HANDLE_NONE &&
+         ble_gap_conn_find(bluetoothConnectedEventConnHandle, &connection) == 0;
 }
 bool bluetoothNowPlayingAmsReady() { return bluetoothNowPlaying.amsReady; }
 bool bluetoothNowPlayingAdvertising() {

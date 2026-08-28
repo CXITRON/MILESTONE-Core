@@ -887,9 +887,9 @@ void handleNavigationPress(bool forward) {
       portalActive || resetConfirmation || firmwareUpdateBusy() || updatePromptVisible) return;
   const uint32_t startedMs = millis();
   if (profileSelectorActive) {
-    profileSelectorIndex = static_cast<uint8_t>((profileSelectorIndex + (forward ? 1U : 2U)) % 3U);
+    profileSelectorIndex = static_cast<uint8_t>((profileSelectorIndex + (forward ? 1U : 3U)) % 4U);
     profileSelectorStartedMs = millis();
-    profileSelectorStatus = "OK: CHECK RELEASE";
+    updateProfileSelectorHint();
     lastDisplayMs = millis() - DISPLAY_REFRESH_MS;
     processDisplay();
     return;
@@ -978,8 +978,8 @@ void processCycle() {
 }
 
 const char *buttonProfileName(uint8_t index) {
-  static const char *const names[] = {"core", "media", "now"};
-  return names[index % 3U];
+  static const char *const names[] = {"core", "media", "now", "restart"};
+  return names[index % 4U];
 }
 
 uint8_t currentButtonProfileIndex() {
@@ -988,13 +988,23 @@ uint8_t currentButtonProfileIndex() {
   return 0;
 }
 
+void updateProfileSelectorHint() {
+  if (profileSelectorIndex == 3U) {
+    profileSelectorStatus = "OK: RESTART DEVICE";
+  } else if (profileSelectorIndex == currentButtonProfileIndex()) {
+    profileSelectorStatus = "OK: EXIT MENU";
+  } else {
+    profileSelectorStatus = "OK: CHECK RELEASE";
+  }
+}
+
 void openProfileSelector() {
   if (thermalSafeMode || bootSplashActive() || portalActive || resetConfirmation ||
       firmwareUpdateBusy() || updateInstallRequested || mediaTransferBusy()) return;
   profileSelectorActive = true;
   profileSelectorIndex = currentButtonProfileIndex();
   profileSelectorStartedMs = millis();
-  profileSelectorStatus = "PREV / NEXT / OK";
+  updateProfileSelectorHint();
   lastDisplayMs = millis() - DISPLAY_REFRESH_MS;
   wakeDisplay();
   logLine("button profile selector opened");
@@ -1002,10 +1012,20 @@ void openProfileSelector() {
 
 bool requestButtonProfileSwitch() {
   const String profile = buttonProfileName(profileSelectorIndex);
+  if (profile == "restart") {
+    profileSelectorStatus = "RESTARTING...";
+    lastDisplayMs = millis() - DISPLAY_REFRESH_MS;
+    processDisplay();
+    logLine("device restart selected from profile menu");
+    delay(120);
+    ESP.restart();
+    return true;
+  }
   if (profile == FIRMWARE_PROFILE) {
-    profileSelectorStatus = "ALREADY ACTIVE";
-    profileSelectorStartedMs = millis();
-    return false;
+    profileSelectorActive = false;
+    wakeDisplay();
+    logLine("current profile selected; profile menu closed");
+    return true;
   }
   if (mediaTransferBusy() || firmwareUpdateBusy() || updateInstallRequested) {
     profileSelectorStatus = "BUSY - TRY LATER";

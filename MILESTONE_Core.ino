@@ -73,7 +73,7 @@ SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 
 namespace Milestone {
 
-constexpr char FIRMWARE_VERSION[] = "3.1.0";
+constexpr char FIRMWARE_VERSION[] = "3.1.1";
 constexpr char FIRMWARE_PROFILE[] = MILESTONE_FIRMWARE_PROFILE;
 constexpr char FIRMWARE_PROFILE_LABEL[] = MILESTONE_FIRMWARE_PROFILE_LABEL;
 constexpr char FIRMWARE_PROFILE_MARKER[] = MILESTONE_PROFILE_MARKER;
@@ -690,6 +690,8 @@ bool bootSplashActive();
 void wakeDisplay();
 void processDisplay();
 const char *buttonProfileName(uint8_t index);
+uint8_t currentButtonProfileIndex();
+void updateProfileSelectorHint();
 bool stationNetworkReady();
 void startSavedWifiSequence(bool preserveAp);
 void recordDiagnostic(MilestoneDiagnostics::Event event, int16_t detail,

@@ -160,9 +160,10 @@ bool MilestoneTftDisplay::labelPixel(const char *text, int16_t originX,
 
 void MilestoneTftDisplay::drawFrameChrome() {
   if (!initialized_ || !powered_) return;
-  constexpr uint16_t lineColor = 0x7BEF;
-  const uint16_t labelColor = strcmp(profileLabel_, "MEDIA") == 0 ? 0xF81F
-      : strcmp(profileLabel_, "NOW") == 0 ? 0x37F1 : 0x26FF;
+  const uint16_t lineColor = toneRgb565(0x7BEF);
+  const uint16_t labelColor = toneRgb565(
+      strcmp(profileLabel_, "MEDIA") == 0 ? 0xF81F
+      : strcmp(profileLabel_, "NOW") == 0 ? 0x37F1 : 0x26FF);
   uint8_t pixels[TFT_WIDTH * 2U];
   const size_t labelLength = strlen(profileLabel_);
   const int16_t labelWidth = labelLength == 0 ? 0 :
@@ -181,15 +182,48 @@ void MilestoneTftDisplay::drawFrameChrome() {
     SPI.writeBytes(pixels, sizeof(pixels));
   }
   setAddressWindow(0, FRAME_Y + FRAME_HEIGHT, TFT_WIDTH, 1);
-  std::fill_n(pixels, sizeof(pixels), 0xFF);
+  const uint16_t bottomLineColor = toneRgb565(0xFFFF);
+  for (uint16_t x = 0; x < TFT_WIDTH; ++x) {
+    pixels[x * 2U] = static_cast<uint8_t>(bottomLineColor >> 8U);
+    pixels[x * 2U + 1U] = static_cast<uint8_t>(bottomLineColor);
+  }
   SPI.writeBytes(pixels, sizeof(pixels));
   endTransfer();
 }
 
+uint8_t MilestoneTftDisplay::toneChannel8(uint8_t value) {
+  // A fixed 8% contrast lift followed by an 8% luminance reduction. Black
+  // stays black, highlights remain distinct, and the hard-wired 3V3 backlight
+  // appears less harsh without a full-frame post-processing pass.
+  int16_t contrasted = static_cast<int16_t>(value) - 128;
+  contrasted = static_cast<int16_t>((contrasted * 108) / 100 + 128);
+  contrasted = std::max<int16_t>(0, std::min<int16_t>(255, contrasted));
+  return static_cast<uint8_t>((contrasted * 92) / 100);
+}
+
 uint16_t MilestoneTftDisplay::rgb888To565(uint32_t rgb888) {
-  return static_cast<uint16_t>(((rgb888 >> 8U) & 0xF800U) |
-                               ((rgb888 >> 5U) & 0x07E0U) |
-                               ((rgb888 >> 3U) & 0x001FU));
+  const uint8_t red = toneChannel8(static_cast<uint8_t>(rgb888 >> 16U));
+  const uint8_t green = toneChannel8(static_cast<uint8_t>(rgb888 >> 8U));
+  const uint8_t blue = toneChannel8(static_cast<uint8_t>(rgb888));
+  return static_cast<uint16_t>(((red >> 3U) << 11U) |
+                               ((green >> 2U) << 5U) | (blue >> 3U));
+}
+
+void MilestoneTftDisplay::initializeToneTables() {
+  for (uint8_t value = 0; value < 32U; ++value) {
+    tone5_[value] = static_cast<uint8_t>(toneChannel8(
+        static_cast<uint8_t>(value * 255U / 31U)) >> 3U);
+  }
+  for (uint8_t value = 0; value < 64U; ++value) {
+    tone6_[value] = static_cast<uint8_t>(toneChannel8(
+        static_cast<uint8_t>(value * 255U / 63U)) >> 2U);
+  }
+}
+
+uint16_t MilestoneTftDisplay::toneRgb565(uint16_t color) const {
+  return static_cast<uint16_t>(tone5_[(color >> 11U) & 0x1FU] << 11U) |
+         static_cast<uint16_t>(tone6_[(color >> 5U) & 0x3FU] << 5U) |
+         tone5_[color & 0x1FU];
 }
 
 void MilestoneTftDisplay::setInkColor(uint32_t rgb888) {
@@ -299,6 +333,8 @@ void MilestoneTftDisplay::colorizeMonochrome(uint32_t rgb888) {
 }
 
 bool MilestoneTftDisplay::begin() {
+  initializeToneTables();
+  inkColor_ = rgb888To565(0xFFFFFFUL);
   pinMode(cs_, OUTPUT);
   pinMode(dc_, OUTPUT);
   pinMode(reset_, OUTPUT);
@@ -388,7 +424,8 @@ void MilestoneTftDisplay::drawRgb332(uint16_t x, uint16_t y, uint16_t width,
         const uint16_t red = static_cast<uint16_t>((value >> 5U) & 0x07U) * 31U / 7U;
         const uint16_t green = static_cast<uint16_t>((value >> 2U) & 0x07U) * 63U / 7U;
         const uint16_t blue = static_cast<uint16_t>(value & 0x03U) * 31U / 3U;
-        const uint16_t color = static_cast<uint16_t>((red << 11U) | (green << 5U) | blue);
+        const uint16_t color = toneRgb565(
+            static_cast<uint16_t>((red << 11U) | (green << 5U) | blue));
         pixels[i * 2U] = static_cast<uint8_t>(color >> 8U);
         pixels[i * 2U + 1U] = static_cast<uint8_t>(color);
       }
@@ -407,7 +444,8 @@ void MilestoneTftDisplay::loadRgb332(const uint8_t *source) {
     const uint16_t red = static_cast<uint16_t>((value >> 5U) & 0x07U) * 31U / 7U;
     const uint16_t green = static_cast<uint16_t>((value >> 2U) & 0x07U) * 63U / 7U;
     const uint16_t blue = static_cast<uint16_t>(value & 0x03U) * 31U / 3U;
-    colorBuffer_[i] = static_cast<uint16_t>((red << 11U) | (green << 5U) | blue);
+    colorBuffer_[i] = toneRgb565(
+        static_cast<uint16_t>((red << 11U) | (green << 5U) | blue));
   }
 }
 
@@ -421,8 +459,10 @@ void MilestoneTftDisplay::loadRgb565(uint16_t x, uint16_t y, uint16_t width,
       const size_t sourceOffset = (static_cast<size_t>(row) * width + column) * 2U;
       const uint16_t targetX = x + column;
       const uint16_t targetY = y + row;
-      colorBuffer_[static_cast<size_t>(targetY) * FRAME_WIDTH + targetX] =
+      const uint16_t sourceColor =
           static_cast<uint16_t>(source[sourceOffset] << 8U) | source[sourceOffset + 1U];
+      colorBuffer_[static_cast<size_t>(targetY) * FRAME_WIDTH + targetX] =
+          toneRgb565(sourceColor);
       mono[static_cast<size_t>(targetY >> 3U) * FRAME_WIDTH + targetX] |=
           static_cast<uint8_t>(1U << (targetY & 7U));
     }
@@ -430,12 +470,28 @@ void MilestoneTftDisplay::loadRgb565(uint16_t x, uint16_t y, uint16_t width,
 }
 
 void MilestoneTftDisplay::drawRgb565(uint16_t x, uint16_t y, uint16_t width,
-                                     uint16_t height, const uint8_t *pixels) {
-  if (!powered_ || !pixels || !width || !height || x + width > FRAME_WIDTH ||
+                                     uint16_t height, const uint8_t *source) {
+  if (!powered_ || !source || !width || !height || x + width > FRAME_WIDTH ||
       y + height > FRAME_HEIGHT) return;
+  uint8_t pixels[256];
   beginTransfer();
   setAddressWindow(x, FRAME_Y + y, width, height);
-  SPI.writeBytes(pixels, static_cast<size_t>(width) * height * 2U);
+  for (uint16_t row = 0; row < height; ++row) {
+    uint16_t column = 0;
+    while (column < width) {
+      const uint16_t count = std::min<uint16_t>(128, width - column);
+      for (uint16_t i = 0; i < count; ++i) {
+        const size_t offset =
+            (static_cast<size_t>(row) * width + column + i) * 2U;
+        const uint16_t color = toneRgb565(
+            static_cast<uint16_t>(source[offset] << 8U) | source[offset + 1U]);
+        pixels[i * 2U] = static_cast<uint8_t>(color >> 8U);
+        pixels[i * 2U + 1U] = static_cast<uint8_t>(color);
+      }
+      SPI.writeBytes(pixels, static_cast<size_t>(count) * 2U);
+      column += count;
+    }
+  }
   endTransfer();
 }
 

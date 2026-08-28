@@ -310,6 +310,13 @@ bool shouldIgnoreLateBluetoothEncryptionFailure(bool linkAlreadySecured,
   return linkAlreadySecured && errorStatus == timeoutStatus;
 }
 
+bool shouldApplyBluetoothDisconnect(uint16_t activeConnectionHandle,
+                                    uint16_t disconnectedConnectionHandle,
+                                    uint16_t noConnectionHandle) {
+  return activeConnectionHandle != noConnectionHandle &&
+         activeConnectionHandle == disconnectedConnectionHandle;
+}
+
 bool shouldRetryTransientHttpFailure(int responseCode, bool responseComplete,
                                      uint8_t attempt, uint8_t maximumAttempts) {
   if (attempt >= maximumAttempts) return false;
