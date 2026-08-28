@@ -202,8 +202,15 @@ bool saveGeneralConfig() {
   if (!putStringVerified("ap_pass", config.fixedApPassword)) success = false;
   if (prefs.putBool("ble_media", config.bluetoothNowPlaying) != sizeof(bool)) success = false;
   if (prefs.putUChar("now_layout", static_cast<uint8_t>(config.nowLayout)) != sizeof(uint8_t)) success = false;
-  if (prefs.putUChar("bright", config.brightness) != sizeof(uint8_t)) success = false;
-  if (prefs.putUChar("night_lvl", config.nightLevel) != sizeof(uint8_t)) success = false;
+  if (prefs.putUChar("bright", config.legacyDisplayLevel) != sizeof(uint8_t)) success = false;
+  if (prefs.putUChar("night_lvl", config.legacyDisplayNightLevel) != sizeof(uint8_t)) success = false;
+  if (prefs.putUInt("col_title", config.colorTitle) != sizeof(uint32_t)) success = false;
+  if (prefs.putUInt("col_date", config.colorDate) != sizeof(uint32_t)) success = false;
+  if (prefs.putUInt("col_time", config.colorTime) != sizeof(uint32_t)) success = false;
+  if (prefs.putUInt("col_dday", config.colorDday) != sizeof(uint32_t)) success = false;
+  if (prefs.putUInt("col_msg", config.colorMessage) != sizeof(uint32_t)) success = false;
+  if (prefs.putUInt("col_info", config.colorInfo) != sizeof(uint32_t)) success = false;
+  if (prefs.putBool("media_mono", config.mediaMonochrome) != sizeof(bool)) success = false;
   if (prefs.putBool("led_en", config.ledEnabled) != sizeof(bool)) success = false;
   if (prefs.putUChar("led_lvl", config.ledBrightness) != sizeof(uint8_t)) success = false;
   if (prefs.putUChar("led_night", config.ledNightLevel) != sizeof(uint8_t)) success = false;
@@ -263,6 +270,7 @@ bool loadConfig() {
   const bool migrateToV8 = version < 8;
   const bool migrateToV9 = version < 9;
   const bool migrateToV10 = version < 10;
+  const bool migrateToV11 = version < 11;
   config.version = CONFIG_VERSION;
   if (migrateToV4) {
     String legacySsid = prefs.getString("wifi_ssid", "");
@@ -359,8 +367,17 @@ bool loadConfig() {
   config.nowLayout = storedNowLayout <= static_cast<uint8_t>(NowLayout::ARTWORK_ONLY) &&
                              storedNowLayout != static_cast<uint8_t>(NowLayout::TITLE_ARTIST_ALBUM)
       ? static_cast<NowLayout>(storedNowLayout) : NowLayout::TITLE_ARTIST;
-  config.brightness = clampInt(prefs.getUChar("bright", 180), 1, 255);
-  config.nightLevel = clampInt(prefs.getUChar("night_lvl", 45), 1, 255);
+  config.legacyDisplayLevel = clampInt(prefs.getUChar("bright", 180), 1, 255);
+  config.legacyDisplayNightLevel = clampInt(prefs.getUChar("night_lvl", 45), 1, 255);
+  if (!migrateToV11) {
+    config.colorTitle = prefs.getUInt("col_title", config.colorTitle) & 0xFFFFFFUL;
+    config.colorDate = prefs.getUInt("col_date", config.colorDate) & 0xFFFFFFUL;
+    config.colorTime = prefs.getUInt("col_time", config.colorTime) & 0xFFFFFFUL;
+    config.colorDday = prefs.getUInt("col_dday", config.colorDday) & 0xFFFFFFUL;
+    config.colorMessage = prefs.getUInt("col_msg", config.colorMessage) & 0xFFFFFFUL;
+    config.colorInfo = prefs.getUInt("col_info", config.colorInfo) & 0xFFFFFFUL;
+    config.mediaMonochrome = prefs.getBool("media_mono", false);
+  }
   config.ledEnabled = prefs.getBool("led_en", true);
   config.ledBrightness = clampInt(prefs.getUChar("led_lvl", 24), 1, 64);
   config.ledNightLevel = clampInt(prefs.getUChar("led_night", 6), 1, 32);
@@ -408,7 +425,7 @@ bool loadConfig() {
   config.lastDday = prefs.getInt("last_dday", 0);
   int y, m, d;
   if (!parseDate(config.target, y, m, d)) config.target = "2026-11-19";
-  if (migrateToV3 || migrateToV4 || migrateToV5 || migrateToV6 || migrateToV7 || migrateToV8 || migrateToV9 || migrateToV10) {
+  if (migrateToV3 || migrateToV4 || migrateToV5 || migrateToV6 || migrateToV7 || migrateToV8 || migrateToV9 || migrateToV10 || migrateToV11) {
     if (saveGeneralConfig()) {
       logLine(String("configuration migrated from schema ") + String(version) + " to " + String(CONFIG_VERSION));
     } else {

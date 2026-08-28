@@ -7,9 +7,9 @@ The source code is always the final authority when documentation and implementat
 ## 1. Project baseline
 
 - Product: MILESTONE Core
-- Current firmware baseline: `2.3.7`
-- Persistent config schema: `10`
-- Hardware: Waveshare ESP32-S3-Zero + SH1107 128×128 OLED
+- Current firmware baseline: `3.1.0`
+- Persistent config schema: `11`
+- Hardware: Waveshare ESP32-S3-Zero + ST7735-compatible 128×160 SPI TFT + three tactile switches
 - Main branch: `main`
 - Repository: `CXITRON/MILESTONE-Core`
 - Release transport: GitHub Releases + CORE/MEDIA/NOW profile manifests and BIN assets
@@ -115,6 +115,8 @@ Treat the following as high-risk and avoid cosmetic refactors without a concrete
 - `CoreRollback.inc` candidate validation and rollback state
 - global OTA download buffer placement
 - BOOT button timing and reset confirmation
+- GPIO1/GPIO2/GPIO11 previous/next/confirm button debouncing and navigation
+- ST7735 SPI initialization, RGB order, centered 128×128 framebuffer conversion, and partial updates
 - thermal protection
 - diagnostics hooks placed on those state transitions
 - `CoreMedia.inc` LittleFS mount/format policy and A/B media index commits

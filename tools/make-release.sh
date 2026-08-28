@@ -66,7 +66,7 @@ asset_stems=(MILESTONE_Core MILESTONE_Media MILESTONE_Now)
 markers=(MILESTONE_PROFILE_CORE MILESTONE_PROFILE_MEDIA MILESTONE_PROFILE_NOW)
 media_binary_markers=(/api/media/upload /api/stream/start /media/upload.tmp)
 ble_runtime_marker=MILESTONE_BLE_AMS_RUNTIME_V7
-artwork_runtime_marker=MILESTONE_NOW_ARTWORK_RUNTIME_V6
+artwork_runtime_marker=MILESTONE_NOW_ARTWORK_RUNTIME_V7
 
 echo "고정 빌드 설정: $fqbn"
 for index in "${!profiles[@]}"; do

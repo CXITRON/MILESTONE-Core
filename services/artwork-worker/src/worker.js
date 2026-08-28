@@ -15,6 +15,11 @@ const BITMAP_HEADER_BYTES = 16;
 const BITMAP_PACKET_BYTES = BITMAP_HEADER_BYTES + SMALL_BYTES + LARGE_BYTES;
 const BITMAP_CONTENT_TYPE = "application/vnd.milestone.artwork-bitmap";
 const BITMAP_CACHE_VERSION = "mab1-adaptive-tone-catalog-v2";
+const COLOR_SMALL_BYTES = SMALL_WIDTH * SMALL_HEIGHT * 2;
+const COLOR_LARGE_BYTES = LARGE_WIDTH * LARGE_HEIGHT * 2;
+const COLOR_PACKET_BYTES = BITMAP_HEADER_BYTES + COLOR_SMALL_BYTES + COLOR_LARGE_BYTES;
+const COLOR_CONTENT_TYPE = "application/vnd.milestone.artwork-color";
+const COLOR_CACHE_VERSION = "mac1-rgb565-catalog-v1";
 const MAX_APPLE_PAGE_BYTES = 48 * 1024;
 const GAMMA_LUT = new Uint8Array(256);
 for (let value = 0; value < GAMMA_LUT.length; value += 1) {
@@ -457,6 +462,26 @@ function makeMonochromeBitmap(rgb, sourceWidth, sourceHeight, targetWidth, targe
   return output;
 }
 
+function makeColorBitmap(rgb, sourceWidth, sourceHeight, targetWidth, targetHeight) {
+  const output = new Uint8Array(targetWidth * targetHeight * 2);
+  for (let y = 0; y < targetHeight; y += 1) {
+    const sourceY = Math.floor(y * sourceHeight / targetHeight);
+    for (let x = 0; x < targetWidth; x += 1) {
+      const sourceX = Math.floor(x * sourceWidth / targetWidth);
+      const source = (sourceY * sourceWidth + sourceX) * 4;
+      const alpha = rgb[source + 3] / 255;
+      const red = Math.round(rgb[source] * alpha);
+      const green = Math.round(rgb[source + 1] * alpha);
+      const blue = Math.round(rgb[source + 2] * alpha);
+      const rgb565 = ((red >> 3) << 11) | ((green >> 2) << 5) | (blue >> 3);
+      const target = (y * targetWidth + x) * 2;
+      output[target] = rgb565 >> 8;
+      output[target + 1] = rgb565 & 0xff;
+    }
+  }
+  return output;
+}
+
 function crc32(bytes) {
   let crc = 0xffffffff;
   for (const byte of bytes) {
@@ -491,10 +516,41 @@ async function makeBitmapPacket(jpeg, decoder) {
   return packet;
 }
 
+async function makeColorPacket(jpeg, decoder) {
+  if (typeof decoder !== "function") throw new Error("missing-image-decoder");
+  const decoded = await decoder(jpeg);
+  if (!decoded.width || !decoded.height ||
+      decoded.data.byteLength !== decoded.width * decoded.height * 4) {
+    throw new Error("invalid-decoded-image");
+  }
+  const small = makeColorBitmap(
+    decoded.data, decoded.width, decoded.height, SMALL_WIDTH, SMALL_HEIGHT,
+  );
+  const large = makeColorBitmap(
+    decoded.data, decoded.width, decoded.height, LARGE_WIDTH, LARGE_HEIGHT,
+  );
+  const packet = new Uint8Array(COLOR_PACKET_BYTES);
+  packet.set([0x4d, 0x41, 0x43, 0x31], 0); // "MAC1"
+  packet.set([SMALL_WIDTH, SMALL_HEIGHT, LARGE_WIDTH, LARGE_HEIGHT], 4);
+  const view = new DataView(packet.buffer);
+  view.setUint16(8, COLOR_SMALL_BYTES, false);
+  view.setUint16(10, COLOR_LARGE_BYTES, false);
+  packet.set(small, BITMAP_HEADER_BYTES);
+  packet.set(large, BITMAP_HEADER_BYTES + COLOR_SMALL_BYTES);
+  view.setUint32(12, crc32(packet.subarray(BITMAP_HEADER_BYTES)), false);
+  return packet;
+}
+
 async function makeDeviceBitmap(source, decoder) {
   if (!source.body) throw new Error("empty-image");
   const jpeg = await readLimited(source, MAX_SOURCE_IMAGE_BYTES);
   return makeBitmapPacket(jpeg, decoder);
+}
+
+async function makeDeviceColor(source, decoder) {
+  if (!source.body) throw new Error("empty-image");
+  const jpeg = await readLimited(source, MAX_SOURCE_IMAGE_BYTES);
+  return makeColorPacket(jpeg, decoder);
 }
 
 async function makeDeviceJpeg(source) {
@@ -539,7 +595,8 @@ async function handleArtwork(request, env, context, format = "mab1") {
     return cachedResponse(400, "", ERROR_CACHE_SECONDS);
   }
 
-  const cacheFormat = format === "mab1" ? BITMAP_CACHE_VERSION : format;
+  const cacheFormat = format === "mab1" ? BITMAP_CACHE_VERSION
+    : format === "mac1" ? COLOR_CACHE_VERSION : format;
   const key = await cacheKey(request.url, metadata, cacheFormat);
   const edgeCache = env.__cache || caches.default;
   const cached = await edgeCache.match(key);
@@ -555,7 +612,16 @@ async function handleArtwork(request, env, context, format = "mab1") {
     });
   } else {
     try {
-      if (format === "mab1") {
+      if (format === "mac1") {
+        const color = await makeDeviceColor(source.response, env.__decode);
+        response = cachedResponse(200, color, POSITIVE_CACHE_SECONDS, {
+          "Content-Type": COLOR_CONTENT_TYPE,
+          "Content-Length": String(color.byteLength),
+          "X-Milestone-Artwork": "3",
+          "X-Milestone-Tone": "rgb565",
+          "X-Milestone-Upstream": trace,
+        });
+      } else if (format === "mab1") {
         const bitmap = await makeDeviceBitmap(source.response, env.__decode);
         response = cachedResponse(200, bitmap, POSITIVE_CACHE_SECONDS, {
           "Content-Type": BITMAP_CONTENT_TYPE,
@@ -589,7 +655,8 @@ export default {
     if (request.method === "GET" && url.pathname === "/health") {
       return new Response("ok", { headers: { "Cache-Control": "no-store" } });
     }
-    const format = url.pathname === "/v2/artwork" ? "mab1"
+    const format = url.pathname === "/v3/artwork" ? "mac1"
+      : url.pathname === "/v2/artwork" ? "mab1"
       : url.pathname === "/v1/artwork" ? "jpeg" : "";
     if (request.method !== "POST" || !format) {
       return new Response("Not found", { status: 404 });
@@ -613,6 +680,8 @@ export {
   handleArtwork,
   makeAdaptiveToneLut,
   makeBitmapPacket,
+  makeColorBitmap,
+  makeColorPacket,
   makeMonochromeBitmap,
   normalizeText,
 };

@@ -34,7 +34,7 @@ void appendFrame(std::vector<uint8_t> &payload, uint8_t encoding, uint16_t delay
 }
 
 std::vector<uint8_t> makeFile(const std::vector<uint8_t> &payload, uint16_t frames,
-                              uint32_t duration, uint8_t flags) {
+                              uint32_t duration, uint8_t flags, bool color = false) {
   std::vector<uint8_t> file(MilestoneMedia::HEADER_BYTES, 0);
   std::memcpy(file.data(), "MSM1", 4);
   file[4] = MilestoneMedia::FORMAT_VERSION;
@@ -42,11 +42,32 @@ std::vector<uint8_t> makeFile(const std::vector<uint8_t> &payload, uint16_t fram
   file[6] = MilestoneMedia::WIDTH;
   file[7] = MilestoneMedia::HEIGHT;
   MilestoneMedia::writeLe16(file.data() + 8, frames);
+  MilestoneMedia::writeLe16(file.data() + 10, color ? 1 : 0);
   MilestoneMedia::writeLe32(file.data() + 12, duration);
   MilestoneMedia::writeLe32(file.data() + 16, static_cast<uint32_t>(payload.size()));
   MilestoneMedia::writeLe32(file.data() + 20, MilestoneMedia::crc32(payload.data(), payload.size()));
   file.insert(file.end(), payload.begin(), payload.end());
   return file;
+}
+
+void testColorStillImage() {
+  std::vector<uint8_t> pixels(MilestoneMedia::COLOR_FRAME_BYTES, 0xE3);
+  std::vector<uint8_t> payload;
+  appendFrame(payload, 0, 0, pixels);
+  const std::vector<uint8_t> file = makeFile(payload, 1, 0, 0, true);
+  MilestoneMedia::Header header{};
+  MilestoneMedia::Error error = MilestoneMedia::Error::MAGIC;
+  EXPECT_TRUE(MilestoneMedia::validateFile(file.data(), file.size(), &header, &error));
+  EXPECT_TRUE(header.color);
+  EXPECT_EQ(MilestoneMedia::frameBytes(header), MilestoneMedia::COLOR_FRAME_BYTES);
+  std::vector<uint8_t> decoded(MilestoneMedia::COLOR_FRAME_BYTES);
+  uint16_t delay = 1;
+  size_t consumed = 0;
+  EXPECT_TRUE(MilestoneMedia::decodeFrameSized(
+      payload.data(), payload.size(), true, decoded.data(), decoded.size(),
+      delay, consumed, &error));
+  EXPECT_EQ(decoded[0], 0xE3);
+  EXPECT_EQ(decoded.back(), 0xE3);
 }
 
 std::vector<uint8_t> rawFrame(uint8_t value) {
@@ -192,6 +213,7 @@ void testStoredPlaybackRotationBoundary() {
 
 int main() {
   testStillImage();
+  testColorStillImage();
   testAnimationDelta();
   testCorruptionRejected();
   testInvalidDeltaRejected();

@@ -4,6 +4,7 @@
 #include "CoreMedia.h"
 
 #include <string.h>
+#include <stdlib.h>
 
 namespace MilestoneMedia {
 namespace {
@@ -12,13 +13,13 @@ void setError(Error *error, Error value) {
   if (error) *error = value;
 }
 
-bool decodeDelta(const uint8_t *data, size_t size, uint8_t *frame) {
+bool decodeDelta(const uint8_t *data, size_t size, uint8_t *frame, size_t frameBytes) {
   size_t input = 0;
   size_t output = 0;
-  while (input < size && output < FRAME_BYTES) {
+  while (input < size && output < frameBytes) {
     const uint8_t control = data[input++];
     const size_t run = static_cast<size_t>(control & 0x7FU) + 1U;
-    if (run > FRAME_BYTES - output) return false;
+    if (run > frameBytes - output) return false;
     if ((control & 0x80U) == 0) {
       output += run;
       continue;
@@ -28,7 +29,7 @@ bool decodeDelta(const uint8_t *data, size_t size, uint8_t *frame) {
     input += run;
     output += run;
   }
-  return input == size && output == FRAME_BYTES;
+  return input == size && output == frameBytes;
 }
 
 }  // namespace
@@ -92,10 +93,11 @@ bool parseHeader(const uint8_t *data, size_t size, Header &header, Error *error)
   header.durationMs = readLe32(data + 12);
   header.payloadSize = readLe32(data + 16);
   header.payloadCrc32 = readLe32(data + 20);
-  if (header.version != FORMAT_VERSION || reserved != 0) {
+  if (header.version != FORMAT_VERSION || reserved > 1U) {
     setError(error, Error::VERSION);
     return false;
   }
+  header.color = reserved == 1U;
   if ((header.flags & ~KNOWN_FLAGS) != 0) {
     setError(error, Error::FLAGS);
     return false;
@@ -120,9 +122,20 @@ bool parseHeader(const uint8_t *data, size_t size, Header &header, Error *error)
   return true;
 }
 
+size_t frameBytes(const Header &header) {
+  return header.color ? COLOR_FRAME_BYTES : FRAME_BYTES;
+}
+
 bool decodeFrame(const uint8_t *data, size_t size, bool firstFrame,
                  uint8_t *frame, uint16_t &delayMs, size_t &consumed,
                  Error *error) {
+  return decodeFrameSized(data, size, firstFrame, frame, FRAME_BYTES,
+                          delayMs, consumed, error);
+}
+
+bool decodeFrameSized(const uint8_t *data, size_t size, bool firstFrame,
+                      uint8_t *frame, size_t decodedBytes, uint16_t &delayMs,
+                      size_t &consumed, Error *error) {
   setError(error, Error::NONE);
   consumed = 0;
   delayMs = 0;
@@ -148,13 +161,15 @@ bool decodeFrame(const uint8_t *data, size_t size, bool firstFrame,
   const Encoding encoding = static_cast<Encoding>(encodingValue);
   const uint8_t *payload = data + FRAME_HEADER_BYTES;
   if (encoding == Encoding::RAW) {
-    if (dataSize != FRAME_BYTES) {
+    if (dataSize != decodedBytes) {
       setError(error, Error::FRAME_SIZE);
       return false;
     }
-    memcpy(frame, payload, FRAME_BYTES);
+    memcpy(frame, payload, decodedBytes);
   } else if (encoding == Encoding::XOR_RLE) {
-    if (dataSize > MAX_ENCODED_FRAME_BYTES) {
+    const size_t maximumEncoded = decodedBytes == FRAME_BYTES
+        ? MAX_ENCODED_FRAME_BYTES : decodedBytes + 256U;
+    if (dataSize > maximumEncoded) {
       setError(error, Error::FRAME_SIZE);
       return false;
     }
@@ -162,7 +177,7 @@ bool decodeFrame(const uint8_t *data, size_t size, bool firstFrame,
       setError(error, Error::FRAME_ENCODING);
       return false;
     }
-    if (!decodeDelta(payload, dataSize, frame)) {
+    if (!decodeDelta(payload, dataSize, frame, decodedBytes)) {
       setError(error, Error::DELTA_STREAM);
       return false;
     }
@@ -183,14 +198,20 @@ bool validateFile(const uint8_t *data, size_t size, Header *headerOut, Error *er
     return false;
   }
 
-  uint8_t frame[FRAME_BYTES] = {};
+  const size_t decodedBytes = frameBytes(header);
+  uint8_t *frame = static_cast<uint8_t *>(calloc(decodedBytes, 1U));
+  if (!frame) {
+    setError(error, Error::NULL_ARGUMENT);
+    return false;
+  }
   size_t offset = 0;
   uint64_t duration = 0;
   for (uint16_t i = 0; i < header.frameCount; ++i) {
     uint16_t delay = 0;
     size_t consumed = 0;
-    if (!decodeFrame(payload + offset, header.payloadSize - offset, i == 0,
-                     frame, delay, consumed, error)) {
+    if (!decodeFrameSized(payload + offset, header.payloadSize - offset, i == 0,
+                          frame, decodedBytes, delay, consumed, error)) {
+      free(frame);
       return false;
     }
     offset += consumed;
@@ -201,21 +222,26 @@ bool validateFile(const uint8_t *data, size_t size, Header *headerOut, Error *er
     }
   }
   if (offset != header.payloadSize) {
+    free(frame);
     setError(error, Error::PAYLOAD_SIZE);
     return false;
   }
   if (duration != header.durationMs) {
+    free(frame);
     setError(error, Error::DURATION);
     return false;
   }
   if (header.frameCount == 1 && header.durationMs != 0) {
+    free(frame);
     setError(error, Error::DURATION);
     return false;
   }
   if (header.frameCount > 1 && header.durationMs == 0) {
+    free(frame);
     setError(error, Error::DURATION);
     return false;
   }
+  free(frame);
   if (headerOut) *headerOut = header;
   setError(error, Error::NONE);
   return true;

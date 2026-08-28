@@ -478,4 +478,20 @@ bool validArtworkBitmapPacket(const uint8_t *data, size_t size) {
       ARTWORK_BITMAP_SMALL_BYTES + ARTWORK_BITMAP_LARGE_BYTES);
 }
 
+bool validArtworkColorPacket(const uint8_t *data, size_t size) {
+  if (data == nullptr || size != ARTWORK_COLOR_PACKET_BYTES) return false;
+  if (memcmp(data, "MAC1", 4) != 0 || data[4] != 60 || data[5] != 60 ||
+      data[6] != 88 || data[7] != 88) return false;
+  const uint16_t smallBytes = static_cast<uint16_t>(data[8] << 8U) | data[9];
+  const uint16_t largeBytes = static_cast<uint16_t>(data[10] << 8U) | data[11];
+  if (smallBytes != ARTWORK_COLOR_SMALL_BYTES || largeBytes != ARTWORK_COLOR_LARGE_BYTES) {
+    return false;
+  }
+  const uint32_t expected = (static_cast<uint32_t>(data[12]) << 24U) |
+      (static_cast<uint32_t>(data[13]) << 16U) |
+      (static_cast<uint32_t>(data[14]) << 8U) | data[15];
+  return artworkBitmapCrc32(data + ARTWORK_BITMAP_HEADER_BYTES,
+                            ARTWORK_COLOR_SMALL_BYTES + ARTWORK_COLOR_LARGE_BYTES) == expected;
+}
+
 }  // namespace MilestoneCoreLogic

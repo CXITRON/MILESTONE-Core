@@ -9,6 +9,7 @@ constexpr uint8_t FORMAT_VERSION = 1;
 constexpr uint8_t WIDTH = 128;
 constexpr uint8_t HEIGHT = 128;
 constexpr size_t FRAME_BYTES = static_cast<size_t>(WIDTH) * HEIGHT / 8U;
+constexpr size_t COLOR_FRAME_BYTES = static_cast<size_t>(WIDTH) * HEIGHT;
 constexpr size_t HEADER_BYTES = 24;
 constexpr size_t FRAME_HEADER_BYTES = 5;
 constexpr size_t MAX_ENCODED_FRAME_BYTES = FRAME_BYTES + 32U;
@@ -52,7 +53,10 @@ struct Header {
   uint32_t durationMs;
   uint32_t payloadSize;
   uint32_t payloadCrc32;
+  bool color;
 };
+
+size_t frameBytes(const Header &header);
 
 uint16_t readLe16(const uint8_t *value);
 uint32_t readLe32(const uint8_t *value);
@@ -65,6 +69,9 @@ bool parseHeader(const uint8_t *data, size_t size, Header &header, Error *error 
 bool decodeFrame(const uint8_t *data, size_t size, bool firstFrame,
                  uint8_t *frame, uint16_t &delayMs, size_t &consumed,
                  Error *error = nullptr);
+bool decodeFrameSized(const uint8_t *data, size_t size, bool firstFrame,
+                      uint8_t *frame, size_t frameBytes, uint16_t &delayMs,
+                      size_t &consumed, Error *error = nullptr);
 
 bool validateFile(const uint8_t *data, size_t size, Header *header = nullptr,
                   Error *error = nullptr);

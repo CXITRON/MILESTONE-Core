@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <vector>
 
 using MilestoneCoreLogic::CivilDate;
 
@@ -241,6 +242,32 @@ void testArtworkBitmapPacket() {
   EXPECT_FALSE(MilestoneCoreLogic::validArtworkBitmapPacket(packet, sizeof(packet) - 1U));
 }
 
+void testArtworkColorPacket() {
+  std::vector<uint8_t> packet(MilestoneCoreLogic::ARTWORK_COLOR_PACKET_BYTES);
+  std::memcpy(packet.data(), "MAC1", 4);
+  packet[4] = 60;
+  packet[5] = 60;
+  packet[6] = 88;
+  packet[7] = 88;
+  packet[8] = 0x1C;
+  packet[9] = 0x20;
+  packet[10] = 0x3C;
+  packet[11] = 0x80;
+  for (size_t i = MilestoneCoreLogic::ARTWORK_BITMAP_HEADER_BYTES;
+       i < packet.size(); ++i) packet[i] = static_cast<uint8_t>(i * 29U);
+  const uint32_t crc = MilestoneCoreLogic::artworkBitmapCrc32(
+      packet.data() + MilestoneCoreLogic::ARTWORK_BITMAP_HEADER_BYTES,
+      MilestoneCoreLogic::ARTWORK_COLOR_SMALL_BYTES +
+          MilestoneCoreLogic::ARTWORK_COLOR_LARGE_BYTES);
+  packet[12] = static_cast<uint8_t>(crc >> 24U);
+  packet[13] = static_cast<uint8_t>(crc >> 16U);
+  packet[14] = static_cast<uint8_t>(crc >> 8U);
+  packet[15] = static_cast<uint8_t>(crc);
+  EXPECT_TRUE(MilestoneCoreLogic::validArtworkColorPacket(packet.data(), packet.size()));
+  packet[1000] ^= 1U;
+  EXPECT_FALSE(MilestoneCoreLogic::validArtworkColorPacket(packet.data(), packet.size()));
+}
+
 }  // namespace
 
 int main() {
@@ -256,6 +283,7 @@ int main() {
   testMusicBrainzReleaseGroupParser();
   testAppleArtworkUrlParser();
   testArtworkBitmapPacket();
+  testArtworkColorPacket();
 
   if (failures != 0) {
     std::cerr << failures << " core logic test(s) failed\n";

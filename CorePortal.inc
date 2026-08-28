@@ -824,6 +824,9 @@ void handlePostRadioConfig() {
   sendJson(200, result);
 }
 
+String colorHex(uint32_t color);
+bool parseColorArg(const char *name, uint32_t &value);
+
 void handleGetConfig() {
   if (!requireSetupApRequest()) return;
   if (rejectPortalWorkDuringStream()) return;
@@ -868,8 +871,6 @@ void handleGetConfig() {
   json += "\"dday_period\":" + String(config.ddayPeriodSec) + ",";
   json += "\"retry_period\":" + String(config.retryPeriodSec) + ",";
   json += "\"wifi_sleep\":" + String(config.wifiSleep ? "true" : "false") + ",";
-  json += "\"brightness\":" + String(config.brightness) + ",";
-  json += "\"night_level\":" + String(config.nightLevel) + ",";
   json += "\"led_enabled\":" + String(config.ledEnabled ? "true" : "false") + ",";
   json += "\"led_brightness\":" + String(config.ledBrightness) + ",";
   json += "\"led_night_level\":" + String(config.ledNightLevel) + ",";
@@ -877,6 +878,13 @@ void handleGetConfig() {
   json += "\"night_end\":" + String(config.nightEndMin) + ",";
   json += "\"burnin\":" + String(config.burninShift ? "true" : "false") + ",";
   json += "\"screen_off\":" + String(config.screenOffMin) + ",";
+  json += "\"color_title\":\"" + colorHex(config.colorTitle) + "\",";
+  json += "\"color_date\":\"" + colorHex(config.colorDate) + "\",";
+  json += "\"color_time\":\"" + colorHex(config.colorTime) + "\",";
+  json += "\"color_dday\":\"" + colorHex(config.colorDday) + "\",";
+  json += "\"color_message\":\"" + colorHex(config.colorMessage) + "\",";
+  json += "\"color_info\":\"" + colorHex(config.colorInfo) + "\",";
+  json += "\"media_monochrome\":" + String(config.mediaMonochrome ? "true" : "false") + ",";
   json += "\"cycle_mask\":" + String(config.cycleMask) + ",";
   json += "\"cycle_order\":\"" + cycleOrderToString(config) + "\",";
   json += "\"cycle_interval\":" + String(config.cycleIntervalSec) + ",";
@@ -982,6 +990,30 @@ bool parseBoolArg(const char *name, bool &value) {
   return false;
 }
 
+String colorHex(uint32_t color) {
+  char text[8];
+  snprintf(text, sizeof(text), "#%06lX", static_cast<unsigned long>(color & 0xFFFFFFUL));
+  return String(text);
+}
+
+bool parseColorArg(const char *name, uint32_t &value) {
+  if (!server.hasArg(name)) return false;
+  const String text = server.arg(name);
+  if (text.length() != 7 || text[0] != '#') return false;
+  uint32_t parsed = 0;
+  for (uint8_t i = 1; i < 7; ++i) {
+    const char c = text[i];
+    uint8_t digit;
+    if (c >= '0' && c <= '9') digit = static_cast<uint8_t>(c - '0');
+    else if (c >= 'a' && c <= 'f') digit = static_cast<uint8_t>(c - 'a' + 10);
+    else if (c >= 'A' && c <= 'F') digit = static_cast<uint8_t>(c - 'A' + 10);
+    else return false;
+    parsed = (parsed << 4U) | digit;
+  }
+  value = parsed;
+  return true;
+}
+
 void handlePostConfig() {
   if (!authorizePortalRequest()) return;
   if (rejectPortalWorkDuringStream()) return;
@@ -993,14 +1025,17 @@ void handlePostConfig() {
   next.title = server.arg("title");
   next.target = server.arg("target");
   next.message = server.arg("message");
-  uint32_t mode, cycleMask, cycleInterval, scrollSpeed, brightness, nightLevel;
+  uint32_t mode, cycleMask, cycleInterval, scrollSpeed;
   uint32_t ledBrightness, ledNightLevel, nightStart, nightEnd, screenOff;
   uint32_t ntpPeriod, ddayPeriod, retryPeriod;
   bool ddayTextStyle, afterComplete, messageLeft, messageScroll, hour24, showSeconds;
   bool showChipTemperature, bootSync, wifiSleep, ledEnabled, burninShift;
+  bool mediaMonochrome = config.mediaMonochrome;
+  uint32_t colorTitle = config.colorTitle, colorDate = config.colorDate;
+  uint32_t colorTime = config.colorTime, colorDday = config.colorDday;
+  uint32_t colorMessage = config.colorMessage, colorInfo = config.colorInfo;
   if (!parseUintArg("mode", mode) || !parseUintArg("cycle_mask", cycleMask) ||
       !parseUintArg("cycle_interval", cycleInterval) || !parseUintArg("scroll_speed", scrollSpeed) ||
-      !parseUintArg("brightness", brightness) || !parseUintArg("night_level", nightLevel) ||
       !parseUintArg("led_brightness", ledBrightness) || !parseUintArg("led_night_level", ledNightLevel) ||
       !parseUintArg("night_start", nightStart) || !parseUintArg("night_end", nightEnd) ||
       !parseUintArg("screen_off", screenOff) || !parseUintArg("ntp_period", ntpPeriod) ||
@@ -1013,6 +1048,15 @@ void handlePostConfig() {
       !parseBoolArg("burnin", burninShift)) {
     return sendJson(400, "{\"error\":\"설정 값이 누락되었거나 숫자·선택 형식이 잘못되었습니다.\"}");
   }
+  if (MILESTONE_HAS_GENERAL_VIEWS &&
+      (!parseColorArg("color_title", colorTitle) || !parseColorArg("color_date", colorDate) ||
+       !parseColorArg("color_time", colorTime) || !parseColorArg("color_dday", colorDday) ||
+       !parseColorArg("color_message", colorMessage) || !parseColorArg("color_info", colorInfo))) {
+    return sendJson(400, "{\"error\":\"화면 색상 값은 #RRGGBB 형식이어야 합니다.\"}");
+  }
+  if (MILESTONE_HAS_MEDIA && !parseBoolArg("media_monochrome", mediaMonochrome)) {
+    return sendJson(400, "{\"error\":\"미디어 색상 모드 값이 누락되었습니다.\"}");
+  }
   int year, month, day;
   if (utf8Codepoints(next.title) > 24 || next.title.length() > 96 || next.title.length() == 0) return sendJson(400, "{\"error\":\"목표 이름은 1~24자여야 합니다.\"}");
   if (utf8Codepoints(next.message) > 60 || next.message.length() > 240) return sendJson(400, "{\"error\":\"문구는 60자 이하여야 합니다.\"}");
@@ -1020,8 +1064,7 @@ void handlePostConfig() {
   if (mode > 8) return sendJson(400, "{\"error\":\"표시 모드가 잘못되었습니다.\"}");
   if (cycleMask < 1 || cycleMask > 255) return sendJson(400, "{\"error\":\"순환 화면을 하나 이상 선택하세요.\"}");
   if (!(cycleInterval == 0 || (cycleInterval >= 3 && cycleInterval <= 60))) return sendJson(400, "{\"error\":\"자동 전환은 0초 또는 3~60초여야 합니다.\"}");
-  if (scrollSpeed < 5 || scrollSpeed > 80 || brightness < 1 || brightness > 255 ||
-      nightLevel < 1 || nightLevel > 255 || ledBrightness < 1 || ledBrightness > 64 ||
+  if (scrollSpeed < 5 || scrollSpeed > 80 || ledBrightness < 1 || ledBrightness > 64 ||
       ledNightLevel < 1 || ledNightLevel > 32 || nightStart > 1439 || nightEnd > 1439 ||
       screenOff > 1440) {
     return sendJson(400, "{\"error\":\"밝기·시간·스크롤 설정 범위를 확인하세요.\"}");
@@ -1047,8 +1090,6 @@ void handlePostConfig() {
   next.ddayPeriodSec = ddayPeriod;
   next.retryPeriodSec = retryPeriod;
   next.wifiSleep = wifiSleep;
-  next.brightness = static_cast<uint8_t>(brightness);
-  next.nightLevel = static_cast<uint8_t>(nightLevel);
   next.ledEnabled = ledEnabled;
   next.ledBrightness = static_cast<uint8_t>(ledBrightness);
   next.ledNightLevel = static_cast<uint8_t>(ledNightLevel);
@@ -1056,6 +1097,15 @@ void handlePostConfig() {
   next.nightEndMin = static_cast<uint16_t>(nightEnd);
   next.burninShift = burninShift;
   next.screenOffMin = static_cast<uint16_t>(screenOff);
+  if (MILESTONE_HAS_GENERAL_VIEWS) {
+    next.colorTitle = colorTitle;
+    next.colorDate = colorDate;
+    next.colorTime = colorTime;
+    next.colorDday = colorDday;
+    next.colorMessage = colorMessage;
+    next.colorInfo = colorInfo;
+  }
+  if (MILESTONE_HAS_MEDIA) next.mediaMonochrome = mediaMonochrome;
   next.cycleMask = static_cast<uint8_t>(cycleMask);
   memcpy(next.cycleOrder, parsedOrder, sizeof(parsedOrder));
   next.cycleIntervalSec = static_cast<uint8_t>(cycleInterval);
@@ -1079,6 +1129,12 @@ void handlePostConfig() {
     memcpy(next.cycleOrder, config.cycleOrder, sizeof(next.cycleOrder));
     next.cycleIntervalSec = config.cycleIntervalSec;
     next.cycleIndex = config.cycleIndex;
+    next.colorTitle = config.colorTitle;
+    next.colorDate = config.colorDate;
+    next.colorTime = config.colorTime;
+    next.colorDday = config.colorDday;
+    next.colorMessage = config.colorMessage;
+    next.colorInfo = config.colorInfo;
   }
   if (next.mode != TopMode::SELECTED_CYCLE) next.lastView = topModeView(next.mode);
   const Config previous = config;
@@ -1109,14 +1165,13 @@ void handlePostConfig() {
     closeMediaPlayback();
   }
 #endif
-  if (currentView == View::DEVICE_INFO) deviceInfoStartedMs = millis();
+  if (currentView == View::DEVICE_INFO) deviceInfoPage = 0;
   lastTemperatureReadMs = 0;
   invalidateTimeDisplayCache();
   appliedLedColor = UINT32_MAX;
   scrollStartedMs = millis();
   lastCycleMs = millis();
   wakeDisplay();
-  updateContrast();
   sendJson(200, "{\"ok\":true}");
 }
 
@@ -1270,7 +1325,6 @@ void handleSettingsReset() {
   invalidateTimeDisplayCache();
   appliedLedColor = UINT32_MAX;
   wakeDisplay();
-  updateContrast();
   logLine("display, time, LED, AP security, and Bluetooth settings restored to defaults; saved Wi-Fi retained");
   sendJson(200, "{\"ok\":true,\"wifi_retained\":true}");
 }

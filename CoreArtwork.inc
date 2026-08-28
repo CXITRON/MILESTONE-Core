@@ -1,21 +1,21 @@
 // NOW-only, best-effort album-art lookup. The gateway resolves, converts, and
-// caches fixed MAB1 one-bit bitmaps. The ESP32 validates the header, dimensions,
+// caches fixed MAC1 RGB565 images. The ESP32 validates the header, dimensions,
 // length, and CRC before displaying them; failures never block AMS text/progress.
 
-const char NOW_ARTWORK_RUNTIME_MARKER[] __attribute__((used)) = "MILESTONE_NOW_ARTWORK_RUNTIME_V6";
+const char NOW_ARTWORK_RUNTIME_MARKER[] __attribute__((used)) = "MILESTONE_NOW_ARTWORK_RUNTIME_V7";
 constexpr uint16_t NOW_ART_SMALL_W = 60;
 constexpr uint16_t NOW_ART_SMALL_H = 60;
 constexpr uint16_t NOW_ART_LARGE_W = 88;
 constexpr uint16_t NOW_ART_LARGE_H = 88;
-constexpr size_t NOW_ART_SMALL_BYTES = ((NOW_ART_SMALL_W + 7U) / 8U) * NOW_ART_SMALL_H;
-constexpr size_t NOW_ART_LARGE_BYTES = ((NOW_ART_LARGE_W + 7U) / 8U) * NOW_ART_LARGE_H;
+constexpr size_t NOW_ART_SMALL_BYTES = NOW_ART_SMALL_W * NOW_ART_SMALL_H * 2U;
+constexpr size_t NOW_ART_LARGE_BYTES = NOW_ART_LARGE_W * NOW_ART_LARGE_H * 2U;
 constexpr size_t NOW_ART_BITMAP_HEADER_BYTES = 16;
 constexpr size_t NOW_ART_BITMAP_PACKET_BYTES =
     NOW_ART_BITMAP_HEADER_BYTES + NOW_ART_SMALL_BYTES + NOW_ART_LARGE_BYTES;
 static_assert(NOW_ART_BITMAP_HEADER_BYTES == MilestoneCoreLogic::ARTWORK_BITMAP_HEADER_BYTES);
-static_assert(NOW_ART_SMALL_BYTES == MilestoneCoreLogic::ARTWORK_BITMAP_SMALL_BYTES);
-static_assert(NOW_ART_LARGE_BYTES == MilestoneCoreLogic::ARTWORK_BITMAP_LARGE_BYTES);
-static_assert(NOW_ART_BITMAP_PACKET_BYTES == MilestoneCoreLogic::ARTWORK_BITMAP_PACKET_BYTES);
+static_assert(NOW_ART_SMALL_BYTES == MilestoneCoreLogic::ARTWORK_COLOR_SMALL_BYTES);
+static_assert(NOW_ART_LARGE_BYTES == MilestoneCoreLogic::ARTWORK_COLOR_LARGE_BYTES);
+static_assert(NOW_ART_BITMAP_PACKET_BYTES == MilestoneCoreLogic::ARTWORK_COLOR_PACKET_BYTES);
 constexpr uint8_t NOW_ART_CACHE_SLOTS = 6;
 constexpr uint32_t NOW_ART_TRACK_SETTLE_MS = 1500UL;
 constexpr uint32_t NOW_ART_RETRY_MS = 5UL * 60UL * 1000UL;
@@ -85,8 +85,7 @@ String nowArtworkInterruptedStage;
 char nowArtworkWorkerTitle[192] = {};
 char nowArtworkWorkerArtist[192] = {};
 char nowArtworkWorkerAlbum[192] = {};
-uint8_t nowArtworkWorkerSmall[NOW_ART_SMALL_BYTES] = {};
-uint8_t nowArtworkWorkerLarge[NOW_ART_LARGE_BYTES] = {};
+uint8_t *nowArtworkWorkerPixels = nullptr;
 portMUX_TYPE nowArtworkMux = portMUX_INITIALIZER_UNLOCKED;
 
 uint64_t nowArtworkHash(const String &title, const String &artist, const String &album) {
@@ -157,15 +156,21 @@ NowArtworkDownloadResult nowArtworkConsumeBitmapResponse(
     http.end();
     return NowArtworkDownloadResult::INVALID;
   }
-  uint8_t packet[NOW_ART_BITMAP_PACKET_BYTES];
+  uint8_t *packet = static_cast<uint8_t *>(heap_caps_malloc(
+      NOW_ART_BITMAP_PACKET_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  if (!packet || !nowArtworkWorkerPixels) {
+    if (packet) free(packet);
+    http.end();
+    return NowArtworkDownloadResult::FAILED;
+  }
   size_t receivedTotal = 0;
   WiFiClient *stream = http.getStreamPtr();
   uint32_t lastDataMs = millis();
-  while (stream && http.connected() && receivedTotal < sizeof(packet)) {
+  while (stream && http.connected() && receivedTotal < NOW_ART_BITMAP_PACKET_BYTES) {
     if (nowArtworkWorkerCancelled(generation)) break;
     const size_t available = stream->available();
     if (available) {
-      const size_t take = min(available, sizeof(packet) - receivedTotal);
+      const size_t take = min(available, NOW_ART_BITMAP_PACKET_BYTES - receivedTotal);
       const int received = stream->readBytes(packet + receivedTotal, take);
       if (received <= 0) break;
       receivedTotal += static_cast<size_t>(received);
@@ -176,15 +181,24 @@ NowArtworkDownloadResult nowArtworkConsumeBitmapResponse(
     }
   }
   http.end();
-  if (nowArtworkWorkerCancelled(generation)) return NowArtworkDownloadResult::CANCELLED;
-  if (receivedTotal != sizeof(packet)) return NowArtworkDownloadResult::FAILED;
+  if (nowArtworkWorkerCancelled(generation)) {
+    free(packet);
+    return NowArtworkDownloadResult::CANCELLED;
+  }
+  if (receivedTotal != NOW_ART_BITMAP_PACKET_BYTES) {
+    free(packet);
+    return NowArtworkDownloadResult::FAILED;
+  }
   nowArtworkRtcStage = 3;
-  const bool packetValid = MilestoneCoreLogic::validArtworkBitmapPacket(
-      packet, sizeof(packet));
+  const bool packetValid = MilestoneCoreLogic::validArtworkColorPacket(
+      packet, NOW_ART_BITMAP_PACKET_BYTES);
   const uint8_t *payload = packet + NOW_ART_BITMAP_HEADER_BYTES;
-  if (!packetValid) return NowArtworkDownloadResult::INVALID;
-  memcpy(nowArtworkWorkerSmall, payload, NOW_ART_SMALL_BYTES);
-  memcpy(nowArtworkWorkerLarge, payload + NOW_ART_SMALL_BYTES, NOW_ART_LARGE_BYTES);
+  if (!packetValid) {
+    free(packet);
+    return NowArtworkDownloadResult::INVALID;
+  }
+  memcpy(nowArtworkWorkerPixels, payload, NOW_ART_SMALL_BYTES + NOW_ART_LARGE_BYTES);
+  free(packet);
   return NowArtworkDownloadResult::READY;
 }
 
@@ -733,8 +747,7 @@ void nowArtworkAcceptWorkerResult() {
     if (nowArtworkCache[i].used < oldest) { oldest = nowArtworkCache[i].used; slot = i; }
   }
   uint8_t *destination = nowArtworkSlotBytes(slot);
-  memcpy(destination, nowArtworkWorkerSmall, NOW_ART_SMALL_BYTES);
-  memcpy(destination + NOW_ART_SMALL_BYTES, nowArtworkWorkerLarge, NOW_ART_LARGE_BYTES);
+  memcpy(destination, nowArtworkWorkerPixels, NOW_ART_SMALL_BYTES + NOW_ART_LARGE_BYTES);
   nowArtworkCache[slot].key = nowArtworkWorkerKey;
   nowArtworkCache[slot].used = ++nowArtworkUseCounter;
   nowArtworkCache[slot].valid = true;
@@ -778,6 +791,11 @@ void processNowArtwork() {
         NOW_ART_CACHE_SLOTS, NOW_ART_SMALL_BYTES + NOW_ART_LARGE_BYTES,
         MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
     if (nowArtworkCacheBytes) logLine(String("NOW artwork ready: ") + NOW_ARTWORK_RUNTIME_MARKER);
+  }
+  if (!nowArtworkWorkerPixels && psramFound()) {
+    nowArtworkWorkerPixels = static_cast<uint8_t *>(heap_caps_malloc(
+        NOW_ART_SMALL_BYTES + NOW_ART_LARGE_BYTES,
+        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
   }
   nowArtworkAcceptWorkerResult();
   const String title = bluetoothNowPlayingTitle();

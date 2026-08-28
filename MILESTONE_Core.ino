@@ -3,8 +3,8 @@
 #if MILESTONE_HAS_BLUETOOTH && !defined(CONFIG_NIMBLE_ENABLED)
 #error "The NOW firmware requires an Arduino-ESP32 build with NimBLE enabled"
 #endif
-#include <Wire.h>
 #include <U8g2lib.h>
+#include "CoreTftDisplay.h"
 #include <WiFi.h>
 #include <WebServer.h>
 #include <DNSServer.h>
@@ -69,11 +69,11 @@ SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 
 // CYTRON//MILESTONE — MILESTONE Core
 // Target: Waveshare ESP32-S3-Zero / ESP32-S3 Zero
-// OLED: SH1107 128x128 I2C, verified at 0x3C
+// TFT: ST7735-compatible 128x160 SPI with a centered 128x128 render surface.
 
 namespace Milestone {
 
-constexpr char FIRMWARE_VERSION[] = "2.3.7";
+constexpr char FIRMWARE_VERSION[] = "3.1.0";
 constexpr char FIRMWARE_PROFILE[] = MILESTONE_FIRMWARE_PROFILE;
 constexpr char FIRMWARE_PROFILE_LABEL[] = MILESTONE_FIRMWARE_PROFILE_LABEL;
 constexpr char FIRMWARE_PROFILE_MARKER[] = MILESTONE_PROFILE_MARKER;
@@ -88,18 +88,22 @@ constexpr char UPDATE_MANIFEST_ASSET[] = MILESTONE_MANIFEST_ASSET;
 // The configured gateway is exclusive: a gateway failure leaves the optional
 // cover unavailable instead of fanning out into multiple on-device providers.
 constexpr char NOW_ARTWORK_SERVICE_URL[] =
-    "http://milestone-artwork.typhoon-individual.workers.dev/v2/artwork";
-constexpr uint16_t CONFIG_VERSION = 10;
+    "http://milestone-artwork.typhoon-individual.workers.dev/v3/artwork";
+constexpr uint16_t CONFIG_VERSION = 11;
 constexpr uint8_t VIEW_COUNT = 8;
 constexpr uint8_t MAX_SAVED_NETWORKS = 8;
 constexpr uint8_t NO_WIFI_INDEX = 0xFF;
 
-constexpr uint8_t PIN_SDA = 8;
-constexpr uint8_t PIN_SCL = 9;
+constexpr uint8_t PIN_TFT_MOSI = 8;
+constexpr uint8_t PIN_TFT_SCK = 9;
+constexpr uint8_t PIN_TFT_CS = 10;
+constexpr uint8_t PIN_TFT_RESET = 5;
+constexpr uint8_t PIN_TFT_DC = 6;
 constexpr uint8_t PIN_BOOT = 0;
+constexpr uint8_t PIN_BUTTON_PREVIOUS = 1;
+constexpr uint8_t PIN_BUTTON_NEXT = 2;
+constexpr uint8_t PIN_BUTTON_CONFIRM = 11;
 constexpr uint8_t PIN_RGB_LED = 21;
-constexpr uint8_t OLED_ADDR_PRIMARY = 0x3C;
-constexpr uint8_t OLED_ADDR_SECONDARY = 0x3D;
 
 constexpr uint32_t AP_TIMEOUT_MS = 10UL * 60UL * 1000UL;
 constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 30UL * 1000UL;
@@ -146,8 +150,7 @@ constexpr uint32_t UPDATE_PROMPT_MS = 15UL * 1000UL;
 constexpr uint32_t UPDATE_CURRENT_HOLD_MS = 1000UL;
 constexpr uint32_t UPDATE_NETWORK_SETTLE_MS = 2000UL;
 constexpr uint32_t BOOT_SPLASH_MS = 3000UL;
-constexpr uint32_t DEVICE_INFO_PAGE_MS = 5000UL;
-constexpr uint8_t DEVICE_INFO_PAGE_COUNT = 5;
+constexpr uint8_t DEVICE_INFO_PAGE_COUNT = 6;
 constexpr uint32_t UPDATE_WEEKLY_SEC = 7UL * 24UL * 60UL * 60UL;
 constexpr uint32_t UPDATE_CHECK_TRANSIENT_RETRY_MS = 10UL * 60UL * 1000UL;
 constexpr uint32_t UPDATE_BLUETOOTH_DEFER_MS = 5UL * 60UL * 1000UL;
@@ -327,8 +330,17 @@ struct Config {
   String fixedApPassword;
   bool bluetoothNowPlaying = false;
   NowLayout nowLayout = NowLayout::TITLE_ARTIST;
-  uint8_t brightness = 180;
-  uint8_t nightLevel = 45;
+  // Retained only to preserve schema-10 NVS layout and old keys. The TFT
+  // backlight is hard-wired to 3V3, so these values have no runtime behavior.
+  uint8_t legacyDisplayLevel = 180;
+  uint8_t legacyDisplayNightLevel = 45;
+  uint32_t colorTitle = 0x36D9FFUL;
+  uint32_t colorDate = 0x7FDBFFUL;
+  uint32_t colorTime = 0xFFFFFFUL;
+  uint32_t colorDday = 0xFF5D8FUL;
+  uint32_t colorMessage = 0xFFD166UL;
+  uint32_t colorInfo = 0xB8C4D0UL;
+  bool mediaMonochrome = false;
   bool ledEnabled = true;
   uint8_t ledBrightness = 24;
   uint8_t ledNightLevel = 6;
@@ -349,10 +361,8 @@ Preferences diagnosticsPrefs;
 bool prefsReady = false;
 bool diagnosticsPrefsReady = false;
 Config config;
-// This generic 1.5-inch module uses SH1107 column offset 0.  The plain
-// SH1107_128X128 profile applies a 96-pixel offset and wraps the leftmost
-// 32 pixels onto the right edge on this panel.
-U8G2_SH1107_PIMORONI_128X128_F_HW_I2C display(U8G2_R0, U8X8_PIN_NONE, PIN_SCL, PIN_SDA);
+MilestoneTftDisplay display(U8G2_R0, PIN_TFT_SCK, PIN_TFT_MOSI,
+                            PIN_TFT_CS, PIN_TFT_DC, PIN_TFT_RESET);
 Adafruit_NeoPixel statusLed(1, PIN_RGB_LED, NEO_GRB + NEO_KHZ800);
 WebServer server(80);
 DNSServer dnsServer;
@@ -369,7 +379,6 @@ String apPassword;
 String sessionToken;
 View currentView = View::DDAY_TIME;
 uint8_t currentCycleIndex = 0;
-uint8_t oledAddress = 0;
 bool oledReady = false;
 bool portalActive = false;
 bool portalCloseRequested = false;
@@ -449,7 +458,7 @@ float highestChipTemperatureC = NAN;
 
 uint32_t stateStartedMs = 0;
 uint32_t bootSplashStartedMs = 0;
-uint32_t deviceInfoStartedMs = 0;
+uint8_t deviceInfoPage = 0;
 uint32_t portalStartedMs = 0;
 uint32_t portalCloseNotBeforeMs = 0;
 uint32_t lastPortalRadioHealthMs = 0;
@@ -489,6 +498,18 @@ bool buttonRawPressed = false;
 bool buttonStablePressed = false;
 uint32_t buttonRawChangedMs = 0;
 uint32_t buttonPressedMs = 0;
+struct NavigationButtonState {
+  uint8_t pin;
+  bool rawPressed;
+  bool stablePressed;
+  uint32_t rawChangedMs;
+};
+NavigationButtonState previousButton{PIN_BUTTON_PREVIOUS, false, false, 0};
+NavigationButtonState nextButton{PIN_BUTTON_NEXT, false, false, 0};
+bool profileSelectorActive = false;
+uint8_t profileSelectorIndex = 0;
+uint32_t profileSelectorStartedMs = 0;
+String profileSelectorStatus;
 bool viewSavePending = false;
 uint32_t viewSaveDueMs = 0;
 bool resetConfirmation = false;
@@ -496,7 +517,6 @@ uint32_t resetConfirmStartedMs = 0;
 bool resetConfirmPressEligible = false;
 uint64_t cachedNightMinute = UINT64_MAX;
 bool cachedNightMode = false;
-int16_t appliedDisplayContrast = -1;
 uint32_t appliedLedColor = UINT32_MAX;
 
 String jsonEscape(const String &value) {
@@ -642,8 +662,16 @@ bool timeIsValid() {
 }
 
 void logLine(const String &message) {
-  Serial.print("[MILESTONE] ");
-  Serial.println(message);
+  // USB CDC writes can wait for their TX timeout when no host is consuming
+  // data. Diagnostics must never stall the product runtime.
+  if (!Serial) return;
+  String line;
+  if (!line.reserve(message.length() + 16U)) return;
+  line = "[MILESTONE] ";
+  line += message;
+  line += "\r\n";
+  if (Serial.availableForWrite() < static_cast<int>(line.length())) return;
+  Serial.write(reinterpret_cast<const uint8_t *>(line.c_str()), line.length());
 }
 
 void setRuntimeState(RuntimeState next) {
@@ -660,6 +688,8 @@ const char *resetReasonName(esp_reset_reason_t reason);
 void drawCenteredStr(const char *text, int baseline, int8_t offsetX);
 bool bootSplashActive();
 void wakeDisplay();
+void processDisplay();
+const char *buttonProfileName(uint8_t index);
 bool stationNetworkReady();
 void startSavedWifiSequence(bool preserveAp);
 void recordDiagnostic(MilestoneDiagnostics::Event event, int16_t detail,

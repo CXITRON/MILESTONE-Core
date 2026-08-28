@@ -9,6 +9,8 @@ import worker, {
   crc32,
   makeAdaptiveToneLut,
   makeBitmapPacket,
+  makeColorBitmap,
+  makeColorPacket,
   makeMonochromeBitmap,
   knownArtworkOverride,
   normalizeText,
@@ -247,6 +249,24 @@ test("bitmap packet contains both fixed sizes and a payload CRC", async () => {
   assert.equal(view.getUint16(8, false), 480);
   assert.equal(view.getUint16(10, false), 968);
   assert.equal(packet.byteLength, 1464);
+  assert.equal(view.getUint32(12, false), crc32(packet.subarray(16)));
+});
+
+test("color packet contains RGB565 artwork at both fixed sizes", async () => {
+  const rgba = new Uint8Array(4 * 4 * 4);
+  for (let offset = 0; offset < rgba.length; offset += 4) {
+    rgba[offset] = 255;
+    rgba[offset + 3] = 255;
+  }
+  assert.deepEqual(makeColorBitmap(rgba, 4, 4, 1, 1), new Uint8Array([0xf8, 0x00]));
+  const encoded = jpeg.encode({ data: rgba, width: 4, height: 4 }, 100).data;
+  const packet = await makeColorPacket(encoded, decodeForTest);
+  const view = new DataView(packet.buffer, packet.byteOffset, packet.byteLength);
+  assert.equal(new TextDecoder().decode(packet.subarray(0, 4)), "MAC1");
+  assert.deepEqual([...packet.subarray(4, 8)], [60, 60, 88, 88]);
+  assert.equal(view.getUint16(8, false), 7200);
+  assert.equal(view.getUint16(10, false), 15488);
+  assert.equal(packet.byteLength, 22704);
   assert.equal(view.getUint32(12, false), crc32(packet.subarray(16)));
 });
 

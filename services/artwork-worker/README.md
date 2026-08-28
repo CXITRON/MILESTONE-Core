@@ -13,7 +13,10 @@ search index is missing; overrides require an exact normalized title and artist
 and contain only Apple's public thumbnail URL. Positive and negative responses are stored in the
 Cloudflare edge cache. `/v1/artwork` preserves the JPEG response for v2.2.21
 devices.
-`/v2/artwork` decodes with Wasm MozJPEG, applies bounded adaptive exposure and
+`/v3/artwork` is the current NOW endpoint. It decodes with Wasm MozJPEG and
+returns a fixed 22,704-byte `MAC1` packet containing 60×60 and 88×88 big-endian
+RGB565 images plus CRC-32. `/v2/artwork` remains available for older firmware;
+it decodes with Wasm MozJPEG, applies bounded adaptive exposure and
 a gamma-0.8 lookup table to dark covers, and applies up to gamma 3.5 to bright
 covers before 4×4 Bayer ordered dithering. It returns a fixed 1,464-byte `MAB1`
 packet containing 60×60 and 88×88 one-bit bitmaps plus CRC-32. Mathematical

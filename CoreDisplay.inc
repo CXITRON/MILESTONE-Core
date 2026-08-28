@@ -1,14 +1,3 @@
-bool detectOledAddress() {
-  for (uint8_t address : {OLED_ADDR_PRIMARY, OLED_ADDR_SECONDARY}) {
-    Wire.beginTransmission(address);
-    if (Wire.endTransmission() == 0) {
-      oledAddress = address;
-      return true;
-    }
-  }
-  return false;
-}
-
 void drawCenteredStr(const char *text, int baseline, int8_t offsetX = 0) {
   const int width = display.getStrWidth(text);
   display.drawStr(max(0, (128 - width) / 2 + static_cast<int>(offsetX)), baseline, text);
@@ -30,18 +19,13 @@ bool bootSplashActive() {
 }
 
 bool initDisplay() {
-  Wire.begin(PIN_SDA, PIN_SCL, 400000);
-  if (!detectOledAddress()) {
-    logLine("OLED not found at 0x3C or 0x3D");
+  if (!display.begin()) {
+    logLine("ST7735 TFT initialization failed");
     return false;
   }
-  display.setI2CAddress(oledAddress << 1);  // U8g2 expects the 8-bit address.
-  display.setBusClock(400000);
-  display.begin();
-  display.enableUTF8Print();
-  display.setContrast(config.brightness);
+  display.setProfileLabel(FIRMWARE_PROFILE_LABEL);
   drawBootSplashFrame();
-  logLine(String("OLED ready at 0x") + String(oledAddress, HEX));
+  logLine("ST7735 TFT ready: 128x160 RGB, 128x128 centered render surface");
   return true;
 }
 
@@ -64,7 +48,6 @@ bool isNightTime(const tm &local) {
 
 void invalidateTimeDisplayCache() {
   cachedNightMinute = UINT64_MAX;
-  appliedDisplayContrast = -1;
 }
 
 bool nightModeActive() {
@@ -216,14 +199,6 @@ void processLed() {
   }
 }
 
-void updateContrast() {
-  if (!oledReady) return;
-  const uint8_t level = nightModeActive() ? config.nightLevel : config.brightness;
-  if (appliedDisplayContrast == level) return;
-  display.setContrast(level);
-  appliedDisplayContrast = level;
-}
-
 void getBurninOffset(int8_t &x, int8_t &y) {
   x = 0;
   y = 0;
@@ -325,6 +300,7 @@ void drawChipTemperature(int statusX, int y) {
     int rounded = static_cast<int>(chipTemperatureC >= 0.0f ? chipTemperatureC + 0.5f : chipTemperatureC - 0.5f);
     snprintf(buffer, sizeof(buffer), thermalWarning ? "!%dC" : "%dC", rounded);
   }
+  display.setInkColor(thermalWarning || temperatureSensorFault ? 0xFF4050UL : config.colorInfo);
   display.setFont(u8g2_font_5x8_tf);
   int width = display.getStrWidth(buffer);
   display.drawStr(statusX - width - 4, y + 7, buffer);
@@ -332,56 +308,65 @@ void drawChipTemperature(int statusX, int y) {
 
 void drawStatusIcon(int x, int y) {
   if (portalActive) {
+    display.setInkColor(0x20D9FFUL);
     display.setFont(u8g2_font_5x8_tf);
     display.drawStr(x - 2, y + 7, "AP");
     return;
   }
   if (ntpRequestActive || runtimeState == RuntimeState::TIME_SYNCING) {
-    // Letter icons remain distinguishable on the low-resolution OLED even
-    // when circular/spinner glyphs blur together.
-    display.setFont(u8g2_font_6x10_tf);
-    display.drawStr(x + 2, y + 8, "T");
+    display.setInkColor(0x3D8BFFUL);
+    display.drawCircle(x + 5, y + 5, 4);
+    display.drawLine(x + 5, y + 5, x + 5, y + 2);
+    display.drawLine(x + 5, y + 5, x + 8, y + 5);
     return;
   }
   if (updateState == UpdateState::CHECKING) {
-    display.setFont(u8g2_font_6x10_tf);
-    display.drawStr(x + 2, y + 8, "U");
+    display.setInkColor(0xFF9F1CUL);
+    display.drawLine(x + 5, y + 9, x + 5, y + 1);
+    display.drawLine(x + 5, y + 1, x + 2, y + 4);
+    display.drawLine(x + 5, y + 1, x + 8, y + 4);
     updateCheckIndicatorRendered = true;
     return;
   }
   if (runtimeState == RuntimeState::WIFI_SLEEP) {
+    display.setInkColor(0x8A98A8UL);
     display.drawCircle(x + 5, y + 5, 4);
+    display.drawLine(x + 2, y + 8, x + 8, y + 2);
     return;
   }
   if (WiFi.status() != WL_CONNECTED) {
-    if (!timeIsValid()) {
-      display.setFont(u8g2_font_6x10_tf);
-      display.drawStr(x + 2, y + 8, "?");
-    } else {
-      display.drawLine(x + 1, y + 1, x + 9, y + 9);
-      display.drawLine(x + 9, y + 1, x + 1, y + 9);
-    }
+    display.setInkColor(0xFF4050UL);
+    display.drawFrame(x + 1, y + 1, 9, 9);
+    display.drawLine(x + 2, y + 2, x + 8, y + 8);
+    display.drawLine(x + 8, y + 2, x + 2, y + 8);
     return;
   }
   if (ntpFailed || !internetVerified) {
+    display.setInkColor(0xFFD166UL);
     display.setFont(u8g2_font_6x10_tf);
     display.drawStr(x + 2, y + 8, "!");
     return;
   }
   if (!timeIsValid()) {
+    display.setInkColor(0xC77DFFUL);
     display.setFont(u8g2_font_6x10_tf);
     display.drawStr(x + 2, y + 8, "?");
     return;
   }
   if (runtimeState == RuntimeState::RUNNING_ONLINE) {
-    display.drawDisc(x + 5, y + 5, 4);
+    display.setInkColor(0x35E58AUL);
+    display.drawCircle(x + 5, y + 5, 4);
+    display.drawLine(x + 2, y + 5, x + 4, y + 7);
+    display.drawLine(x + 4, y + 7, x + 8, y + 3);
     return;
   }
+  display.setInkColor(0xFFD166UL);
   display.setFont(u8g2_font_6x10_tf);
   display.drawStr(x + 2, y + 8, "!");
 }
 
 void drawTopTitle(const String &title, int8_t offsetX, int8_t offsetY) {
+  display.setInkColor(config.colorTitle);
   display.setFont(u8g2_font_unifont_t_korean2);
   String shown = title;
   const int titleWidth = (thermalWarning || temperatureSensorFault) ? 84 : (config.showChipTemperature ? 89 : 103);
@@ -393,6 +378,7 @@ void drawTopTitle(const String &title, int8_t offsetX, int8_t offsetY) {
   display.drawUTF8(clampInt(static_cast<int>(offsetX), 0, 127), 15 + offsetY, shown.c_str());
   drawChipTemperature(116 + offsetX, 2 + offsetY);
   drawStatusIcon(116 + offsetX, 2 + offsetY);
+  display.setInkColor(config.colorInfo);
   display.drawHLine(0, 17 + offsetY, 128);
 }
 
@@ -558,6 +544,7 @@ bool splitMessageLines(const String &text, String &line1, String &line2, int max
 }
 
 void drawMessageBlock(int8_t ox, int8_t oy, int singleY, int firstY, int secondY) {
+  display.setInkColor(config.colorMessage);
   display.setFont(u8g2_font_unifont_t_korean2);
   String line1, line2;
   bool overflow = splitMessageLines(config.message, line1, line2);
@@ -581,8 +568,10 @@ void drawDdayView(bool withMessage, int8_t ox, int8_t oy) {
   if (!confirmed) dday += "?";
   if (config.ddayTextStyle) display.setFont(u8g2_font_unifont_t_korean2);
   else display.setFont(u8g2_font_logisoso32_tf);
+  display.setInkColor(config.colorDday);
   drawCenteredUtf8(dday, 65 + oy, ox);
   if (withMessage) {
+    display.setInkColor(config.colorMessage);
     display.setFont(u8g2_font_unifont_t_korean2);
     drawScrollingUtf8(config.message, 118 + oy, 1, 126, true);
     return;
@@ -594,15 +583,19 @@ void drawDdayView(bool withMessage, int8_t ox, int8_t oy) {
     char dateBuffer[20];
     strftime(dateBuffer, sizeof(dateBuffer), "%Y.%m.%d", &local);
     display.setFont(u8g2_font_unifont_t_korean2);
+    display.setInkColor(config.colorDate);
     drawCenteredUtf8(String(dateBuffer) + " " + weekdayKorean(local.tm_wday), 92 + oy, ox);
     String clockLine = formatTimeLine(false);
     display.setFont(u8g2_font_logisoso20_tf);
     if (display.getUTF8Width(clockLine.c_str()) > 126) display.setFont(u8g2_font_6x10_tf);
+    display.setInkColor(config.colorTime);
     drawCenteredUtf8(clockLine, 120 + oy, ox);
   } else {
     display.setFont(u8g2_font_unifont_t_korean2);
+    display.setInkColor(config.colorDate);
     drawCenteredUtf8("날짜 미확정", 92 + oy, ox);
     display.setFont(u8g2_font_logisoso20_tf);
+    display.setInkColor(config.colorTime);
     drawCenteredUtf8("--:--", 120 + oy, ox);
   }
 }
@@ -635,10 +628,12 @@ void drawClockOnly(int8_t ox, int8_t oy) {
   String clock = prefix + timeBuffer;
   display.setFont(config.showSeconds ? u8g2_font_logisoso20_tf : u8g2_font_logisoso28_tf);
   if (display.getUTF8Width(clock.c_str()) > 126) display.setFont(u8g2_font_6x10_tf);
+  display.setInkColor(config.colorTime);
   drawCenteredUtf8(clock, 61 + oy, ox);
   char dateBuffer[20];
   strftime(dateBuffer, sizeof(dateBuffer), "%Y.%m.%d", &local);
   display.setFont(u8g2_font_6x10_tf);
+  display.setInkColor(config.colorDate);
   int dateWidth = display.getStrWidth(dateBuffer);
   display.drawStr((128 - dateWidth) / 2 + ox, 83 + oy, dateBuffer);
   display.setFont(u8g2_font_unifont_t_korean2);
@@ -660,11 +655,13 @@ void drawMessageClock(int8_t ox, int8_t oy) {
     display.setFont(config.showSeconds ? u8g2_font_logisoso20_tf : u8g2_font_logisoso28_tf);
     String clockLine = formatTimeLine(false);
     if (display.getUTF8Width(clockLine.c_str()) > 126) display.setFont(u8g2_font_6x10_tf);
+    display.setInkColor(config.colorTime);
     drawCenteredUtf8(clockLine, 57 + oy, ox);
   } else {
     display.setFont(u8g2_font_unifont_t_korean2);
     drawCenteredUtf8("시간 미확정", 53 + oy, ox);
   }
+  display.setInkColor(config.colorInfo);
   display.drawHLine(4, 68 + oy, 120);
   drawMessageBlock(ox, oy, 105, 94, 118);
 }
@@ -677,23 +674,28 @@ void drawDashboard(int8_t ox, int8_t oy) {
   String dday = formatDday(days);
   if (!confirmed) dday += "?";
   display.setFont(config.ddayTextStyle ? u8g2_font_unifont_t_korean2 : u8g2_font_logisoso20_tf);
+  display.setInkColor(config.colorDday);
   drawCenteredUtf8(dday, 45 + oy, ox);
 
   tm local{};
   if (timeIsValid() && getLocalTime(&local, 20)) {
     display.setFont(config.showSeconds ? u8g2_font_6x10_tf : u8g2_font_logisoso20_tf);
+    display.setInkColor(config.colorTime);
     drawCenteredUtf8(formatTimeLine(false), 72 + oy, ox);
     char dateBuffer[20];
     strftime(dateBuffer, sizeof(dateBuffer), "%Y.%m.%d", &local);
     display.setFont(u8g2_font_unifont_t_korean2);
+    display.setInkColor(config.colorDate);
     drawCenteredUtf8(String(dateBuffer) + " " + weekdayKorean(local.tm_wday), 96 + oy, ox);
   } else {
     display.setFont(u8g2_font_unifont_t_korean2);
     drawCenteredUtf8("시간 미확정", 78 + oy, ox);
   }
 
+  display.setInkColor(config.colorInfo);
   display.drawHLine(4, 101 + oy, 120);
   display.setFont(u8g2_font_unifont_t_korean2);
+  display.setInkColor(config.colorMessage);
   drawScrollingUtf8(config.message, 123 + oy, 1, 126, true);
 }
 
@@ -754,8 +756,7 @@ void drawDeviceInfoHeader(const char *title, uint8_t page, int8_t ox, int8_t oy)
     // Device-info normally uses the upper-right corner for its page counter.
     // While checking for firmware, reserve that corner for the same U indicator
     // used by all other normal views so the check cannot be invisible.
-    display.drawStr(118 + ox, 10 + oy, "U");
-    updateCheckIndicatorRendered = true;
+    drawStatusIcon(112 + ox, oy);
   } else {
     char pageText[8];
     snprintf(pageText, sizeof(pageText), "%u/%u", page + 1, DEVICE_INFO_PAGE_COUNT);
@@ -772,8 +773,8 @@ void drawDeviceInfoLine(uint8_t y, const char *label, const char *value, int8_t 
 }
 
 void drawDeviceInfo(int8_t ox, int8_t oy) {
-  const uint8_t page = static_cast<uint8_t>(((millis() - deviceInfoStartedMs) / DEVICE_INFO_PAGE_MS) %
-                                             DEVICE_INFO_PAGE_COUNT);
+  const uint8_t page = deviceInfoPage % DEVICE_INFO_PAGE_COUNT;
+  display.setInkColor(config.colorInfo);
   display.setFont(u8g2_font_5x8_tf);
   char value[32];
 
@@ -813,6 +814,18 @@ void drawDeviceInfo(int8_t ox, int8_t oy) {
     formatByteCount(uxTaskGetStackHighWaterMark(nullptr), value, sizeof(value));
     drawDeviceInfoLine(119, "STACK", value, ox, oy);
   } else if (page == 2) {
+    drawDeviceInfoHeader("PSRAM", page, ox, oy);
+    formatByteCount(ESP.getPsramSize(), value, sizeof(value));
+    drawDeviceInfoLine(29, "TOTAL", value, ox, oy);
+    formatByteCount(ESP.getFreePsram(), value, sizeof(value));
+    drawDeviceInfoLine(47, "FREE", value, ox, oy);
+    formatByteCount(ESP.getPsramSize() - ESP.getFreePsram(), value, sizeof(value));
+    drawDeviceInfoLine(65, "USED", value, ox, oy);
+    formatByteCount(ESP.getMaxAllocPsram(), value, sizeof(value));
+    drawDeviceInfoLine(83, "BLOCK", value, ox, oy);
+    drawDeviceInfoLine(101, "TYPE", "EXTERNAL RAM", ox, oy);
+    drawDeviceInfoLine(119, "USE", "COLOR / MEDIA", ox, oy);
+  } else if (page == 3) {
     drawDeviceInfoHeader("STORAGE", page, ox, oy);
     formatByteCount(ESP.getFlashChipSize(), value, sizeof(value));
     drawDeviceInfoLine(33, "FLASH", value, ox, oy);
@@ -823,7 +836,7 @@ void drawDeviceInfo(int8_t ox, int8_t oy) {
     formatByteCount(ESP.getFreeSketchSpace(), value, sizeof(value));
     drawDeviceInfoLine(93, "OTA FREE", value, ox, oy);
     drawDeviceInfoLine(113, "VERIFY", "SIZE + SHA256", ox, oy);
-  } else if (page == 3) {
+  } else if (page == 4) {
     drawDeviceInfoHeader("NETWORK", page, ox, oy);
     const bool connected = WiFi.status() == WL_CONNECTED;
     const char *networkState = runtimeState == RuntimeState::WIFI_SLEEP ? "SLEEP" :
@@ -896,6 +909,7 @@ void drawButtonOverlay(uint32_t heldMs) {
   else if (resetConfirmation) drawCenteredStr("HOLD 3S TO RESET", 50);
   else if (heldMs >= 8000) drawCenteredStr("RELEASE: RESET?", 50);
   else if (heldMs >= 3000) drawCenteredStr("RELEASE: SETUP", 50);
+  else if (heldMs >= 1000) drawCenteredStr("RELEASE: PROFILES", 50);
   else drawCenteredStr("HOLDING...", 50);
   display.setFont(u8g2_font_logisoso24_tn);
   char seconds[12];
@@ -1091,7 +1105,7 @@ void drawBluetoothNowPlayingScreen() {
       break;
     case NowLayout::TITLE_ARTWORK: {
       const uint8_t *art = nowArtworkSmallBitmap();
-      if (nowArtworkAvailable() && art) display.drawXBMP(34, 16, NOW_ART_SMALL_W, NOW_ART_SMALL_H, art);
+      if (nowArtworkAvailable() && art) display.loadRgb565(34, 16, NOW_ART_SMALL_W, NOW_ART_SMALL_H, art);
       else drawNowArtworkPlaceholder(34, 16, NOW_ART_SMALL_W);
       setNowPlayingTextFont(title);
       drawScrollingUtf8(title, 87, 2, 124, true);
@@ -1100,7 +1114,7 @@ void drawBluetoothNowPlayingScreen() {
     }
     case NowLayout::ARTWORK_ONLY: {
       const uint8_t *art = nowArtworkLargeBitmap();
-      if (nowArtworkAvailable() && art) display.drawXBMP(20, 15, NOW_ART_LARGE_W, NOW_ART_LARGE_H, art);
+      if (nowArtworkAvailable() && art) display.loadRgb565(20, 15, NOW_ART_LARGE_W, NOW_ART_LARGE_H, art);
       else drawNowArtworkPlaceholder(20, 15, NOW_ART_LARGE_W);
       drawNowPlayingProgress(105, 126);
       break;
@@ -1158,6 +1172,24 @@ void drawMainScreen() {
   }
   if (updateState == UpdateState::AVAILABLE && updatePromptVisible) {
     drawUpdateScreen();
+    return;
+  }
+  if (profileSelectorActive) {
+    display.clearBuffer();
+    display.setInkColor(0x36D9FF);
+    display.setFont(u8g2_font_7x14B_tf);
+    drawCenteredStr("SWITCH PROFILE", 28);
+    display.setInkColor(profileSelectorIndex == 0 ? 0x36D9FF :
+                        profileSelectorIndex == 1 ? 0xFF5DCC : 0x57E389);
+    display.setFont(u8g2_font_logisoso28_tf);
+    String target = buttonProfileName(profileSelectorIndex);
+    target.toUpperCase();
+    drawCenteredStr(target.c_str(), 73);
+    display.setInkColor(0xB8C4D0);
+    display.setFont(u8g2_font_5x8_tf);
+    drawCenteredStr(profileSelectorStatus.c_str(), 103);
+    drawCenteredStr("HOLD OK 3s: SETUP", 122);
+    display.sendBuffer();
     return;
   }
   if (portalActive) {

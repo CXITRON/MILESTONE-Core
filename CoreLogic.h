@@ -35,8 +35,13 @@ constexpr size_t ARTWORK_BITMAP_SMALL_BYTES = 480;
 constexpr size_t ARTWORK_BITMAP_LARGE_BYTES = 968;
 constexpr size_t ARTWORK_BITMAP_PACKET_BYTES = ARTWORK_BITMAP_HEADER_BYTES +
     ARTWORK_BITMAP_SMALL_BYTES + ARTWORK_BITMAP_LARGE_BYTES;
+constexpr size_t ARTWORK_COLOR_SMALL_BYTES = 60U * 60U * 2U;
+constexpr size_t ARTWORK_COLOR_LARGE_BYTES = 88U * 88U * 2U;
+constexpr size_t ARTWORK_COLOR_PACKET_BYTES = ARTWORK_BITMAP_HEADER_BYTES +
+    ARTWORK_COLOR_SMALL_BYTES + ARTWORK_COLOR_LARGE_BYTES;
 uint32_t artworkBitmapCrc32(const uint8_t *data, size_t size);
 bool validArtworkBitmapPacket(const uint8_t *data, size_t size);
+bool validArtworkColorPacket(const uint8_t *data, size_t size);
 
 struct MusicBrainzReleaseGroupParser {
   char tag[256];

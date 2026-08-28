@@ -51,7 +51,7 @@ require_fixed tools/make-release.sh 'media_binary_markers=(/api/media/upload /ap
 require_fixed tools/make-release.sh '미디어/스트리밍 구현이 BIN에 남아 있습니다' 'CORE binary exclusion check is missing'
 require_fixed tools/make-release.sh 'grep -F -- "$marker" >/dev/null' 'profile marker check can still fail from a pipefail/SIGPIPE false negative'
 require_fixed tools/make-release.sh 'ble_runtime_marker=MILESTONE_BLE_AMS_RUNTIME_V7' 'release build does not verify the NOW BLE runtime implementation'
-require_fixed tools/make-release.sh 'artwork_runtime_marker=MILESTONE_NOW_ARTWORK_RUNTIME_V6' 'release build does not verify the NOW artwork runtime implementation'
+require_fixed tools/make-release.sh 'artwork_runtime_marker=MILESTONE_NOW_ARTWORK_RUNTIME_V7' 'release build does not verify the NOW color artwork runtime implementation'
 if grep -Fq 'strings -a -- "$source_bin" | grep -Fq' tools/make-release.sh; then
   echo 'Profile OTA contract: profile marker check still uses grep -q under pipefail' >&2
   exit 1

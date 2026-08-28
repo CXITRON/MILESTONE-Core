@@ -100,6 +100,7 @@ MILESTONE_RENDERED_MEDIA_PORTAL="$media_portal_html" bash "$project_dir/tests/te
 bash "$project_dir/tests/test_radio_bluetooth_contract.sh"
 bash "$project_dir/tests/test_profile_ota_contract.sh"
 bash "$project_dir/tests/test_network_stability_contract.sh"
+bash "$project_dir/tests/test_hardware_contract.sh"
 bash "$project_dir/tests/test_docs_contract.sh"
 node "$project_dir/tests/test_media_picker.js" "$media_portal_html"
 bash "$project_dir/tests/test_release_reconcile.sh"

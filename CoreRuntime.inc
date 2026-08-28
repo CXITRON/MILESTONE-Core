@@ -421,7 +421,7 @@ void processFirmwareUpdate() {
       // entered and left again before processDisplay() ever sent a frame, so the
       // U indicator was invisible on successful first-attempt checks. Enter the
       // state first, return to loop(), and do not start HTTPS until a display
-      // renderer has confirmed that the U frame reached the OLED.
+      // renderer has confirmed that the U frame reached the display.
       updateCheckIndicatorRendered = false;
       setUpdateState(UpdateState::CHECKING);
       return;
@@ -763,7 +763,59 @@ void advanceView(bool persist) {
   }
   if (previousView == View::CUSTOM_MEDIA && currentView != View::CUSTOM_MEDIA) closeMediaPlayback();
   if (currentView == View::CUSTOM_MEDIA && previousView != View::CUSTOM_MEDIA) selectNextMediaItem();
-  if (currentView == View::DEVICE_INFO) deviceInfoStartedMs = millis();
+  if (currentView == View::DEVICE_INFO) {
+    deviceInfoPage = 0;
+  }
+  if (persist) {
+    config.lastView = currentView;
+    config.cycleIndex = currentCycleIndex;
+    scheduleViewStateSave();
+  }
+  scrollStartedMs = millis();
+  lastCycleMs = millis();
+  if (persist) wakeDisplay();
+#endif
+}
+
+void retreatView(bool persist) {
+#if MILESTONE_HAS_NOW_VIEW
+  (void)persist;
+  lastCycleMs = millis();
+  wakeDisplay();
+  return;
+#else
+  if (!MILESTONE_HAS_GENERAL_VIEWS) {
+    currentView = View::CUSTOM_MEDIA;
+#if MILESTONE_HAS_MEDIA
+    if (mediaHasEnabledItems()) selectPreviousMediaItem();
+#endif
+    lastCycleMs = millis();
+    wakeDisplay();
+    return;
+  }
+  const View previousView = currentView;
+  if (config.mode == TopMode::SELECTED_CYCLE) {
+    for (uint8_t step = 1; step <= VIEW_COUNT; ++step) {
+      const uint8_t index = static_cast<uint8_t>(
+          (static_cast<uint16_t>(currentCycleIndex) + VIEW_COUNT - step) % VIEW_COUNT);
+      const View candidate = static_cast<View>(config.cycleOrder[index]);
+      if (viewEnabled(candidate)) {
+        currentCycleIndex = index;
+        currentView = candidate;
+        break;
+      }
+    }
+  } else {
+    do {
+      currentView = static_cast<View>(
+          (static_cast<uint8_t>(currentView) + VIEW_COUNT - 1U) % VIEW_COUNT);
+    } while (currentView == View::CUSTOM_MEDIA && !MILESTONE_HAS_MEDIA);
+  }
+  if (previousView == View::CUSTOM_MEDIA && currentView != View::CUSTOM_MEDIA) closeMediaPlayback();
+  if (currentView == View::CUSTOM_MEDIA && previousView != View::CUSTOM_MEDIA) selectNextMediaItem();
+  if (currentView == View::DEVICE_INFO) {
+    deviceInfoPage = 0;
+  }
   if (persist) {
     config.lastView = currentView;
     config.cycleIndex = currentCycleIndex;
@@ -798,9 +850,94 @@ void advanceNowLayout() {
 #endif
 }
 
+void retreatNowLayout() {
+#if MILESTONE_HAS_NOW_VIEW
+  const Config previous = config;
+  static constexpr NowLayout layouts[] = {
+      NowLayout::TITLE_ONLY, NowLayout::TITLE_ARTIST,
+      NowLayout::TITLE_ARTWORK, NowLayout::ARTWORK_ONLY};
+  uint8_t current = 0;
+  for (uint8_t i = 0; i < sizeof(layouts) / sizeof(layouts[0]); ++i) {
+    if (layouts[i] == config.nowLayout) { current = i; break; }
+  }
+  const uint8_t count = sizeof(layouts) / sizeof(layouts[0]);
+  config.nowLayout = layouts[(current + count - 1U) % count];
+  if (!saveGeneralConfig()) {
+    config = previous;
+    logLine("NOW layout change could not be persisted");
+    return;
+  }
+  scrollStartedMs = millis();
+  wakeDisplay();
+  logLine(String("NOW layout -> ") + String(static_cast<uint8_t>(config.nowLayout)));
+#endif
+}
+
+bool primaryButtonPressed() {
+  return digitalRead(PIN_BOOT) == LOW || digitalRead(PIN_BUTTON_CONFIRM) == LOW;
+}
+
+bool navigationButtonPressed() {
+  return previousButton.rawPressed || previousButton.stablePressed ||
+         nextButton.rawPressed || nextButton.stablePressed;
+}
+
+void handleNavigationPress(bool forward) {
+  if (thermalSafeMode || bootSplashActive() ||
+      portalActive || resetConfirmation || firmwareUpdateBusy() || updatePromptVisible) return;
+  const uint32_t startedMs = millis();
+  if (profileSelectorActive) {
+    profileSelectorIndex = static_cast<uint8_t>((profileSelectorIndex + (forward ? 1U : 2U)) % 3U);
+    profileSelectorStartedMs = millis();
+    profileSelectorStatus = "OK: CHECK RELEASE";
+    lastDisplayMs = millis() - DISPLAY_REFRESH_MS;
+    processDisplay();
+    return;
+  }
+#if MILESTONE_HAS_NOW_VIEW
+  if (forward) advanceNowLayout();
+  else retreatNowLayout();
+#elif MILESTONE_HAS_GENERAL_VIEWS
+  if (forward) advanceView(true);
+  else retreatView(true);
+#elif MILESTONE_HAS_MEDIA
+  if (forward) selectNextMediaItem();
+  else selectPreviousMediaItem();
+  lastCycleMs = millis();
+  wakeDisplay();
+#endif
+  // Render the navigation result before synchronous network/update work gets a
+  // chance to delay visible feedback by several seconds.
+  lastDisplayMs = millis() - DISPLAY_REFRESH_MS;
+  processDisplay();
+  logLine(String(forward ? "NEXT" : "PREVIOUS") +
+          " button rendered in " + String(millis() - startedMs) + " ms");
+}
+
+void processNavigationButton(NavigationButtonState &button, bool forward, uint32_t now) {
+  const bool rawPressed = digitalRead(button.pin) == LOW;
+  if (rawPressed != button.rawPressed) {
+    button.rawPressed = rawPressed;
+    button.rawChangedMs = now;
+  }
+  if (rawPressed == button.stablePressed ||
+      !elapsed(now, button.rawChangedMs, BUTTON_DEBOUNCE_MS)) return;
+  button.stablePressed = rawPressed;
+  if (rawPressed) {
+    wakeDisplay();
+    handleNavigationPress(forward);
+  }
+}
+
+void processNavigationButtons(uint32_t now) {
+  processNavigationButton(previousButton, false, now);
+  processNavigationButton(nextButton, true, now);
+}
+
 void processCycle() {
-  if (thermalSafeMode || bootSplashActive() || portalActive || resetConfirmation || buttonRawPressed ||
-      buttonStablePressed || displaySleeping || firmwareUpdateBusy() || updatePromptVisible) return;
+  if (thermalSafeMode || bootSplashActive() || portalActive || resetConfirmation || profileSelectorActive || buttonRawPressed ||
+      buttonStablePressed || navigationButtonPressed() || displaySleeping ||
+      firmwareUpdateBusy() || updatePromptVisible) return;
 #if MILESTONE_HAS_MEDIA
   if ((!MILESTONE_HAS_GENERAL_VIEWS || config.mode == TopMode::CUSTOM_MEDIA) &&
       currentView == View::CUSTOM_MEDIA) {
@@ -838,6 +975,69 @@ void processCycle() {
   if (elapsed(millis(), lastCycleMs, static_cast<uint32_t>(interval) * 1000UL)) {
     advanceView(false);
   }
+}
+
+const char *buttonProfileName(uint8_t index) {
+  static const char *const names[] = {"core", "media", "now"};
+  return names[index % 3U];
+}
+
+uint8_t currentButtonProfileIndex() {
+  if (strcmp(FIRMWARE_PROFILE, "media") == 0) return 1;
+  if (strcmp(FIRMWARE_PROFILE, "now") == 0) return 2;
+  return 0;
+}
+
+void openProfileSelector() {
+  if (thermalSafeMode || bootSplashActive() || portalActive || resetConfirmation ||
+      firmwareUpdateBusy() || updateInstallRequested || mediaTransferBusy()) return;
+  profileSelectorActive = true;
+  profileSelectorIndex = currentButtonProfileIndex();
+  profileSelectorStartedMs = millis();
+  profileSelectorStatus = "PREV / NEXT / OK";
+  lastDisplayMs = millis() - DISPLAY_REFRESH_MS;
+  wakeDisplay();
+  logLine("button profile selector opened");
+}
+
+bool requestButtonProfileSwitch() {
+  const String profile = buttonProfileName(profileSelectorIndex);
+  if (profile == FIRMWARE_PROFILE) {
+    profileSelectorStatus = "ALREADY ACTIVE";
+    profileSelectorStartedMs = millis();
+    return false;
+  }
+  if (mediaTransferBusy() || firmwareUpdateBusy() || updateInstallRequested) {
+    profileSelectorStatus = "BUSY - TRY LATER";
+    return false;
+  }
+  if (thermalSafeMode || temperatureSensorFault || thermalWarning) {
+    profileSelectorStatus = "TEMP PROTECTION";
+    return false;
+  }
+  if (config.savedNetworkCount == 0) {
+    profileSelectorStatus = "SAVE WIFI FIRST";
+    return false;
+  }
+  requestFirmwareUpdateCheck(UpdateCheckReason::MANUAL, profile);
+  if (!stationNetworkReady()) {
+    startSavedWifiSequence(false);
+  } else if (!timeIsValid() || !freshNtpSinceBoot) {
+    if (!beginNtpRequest()) {
+      pendingUpdateCheckReason = UpdateCheckReason::NONE;
+      profileSelectorStatus = "NETWORK NOT READY";
+      return false;
+    }
+    setRuntimeState(RuntimeState::TIME_SYNCING);
+  } else {
+    if (updateState == UpdateState::CURRENT || updateState == UpdateState::ERROR_STATE) {
+      setUpdateState(UpdateState::IDLE);
+    }
+    updateCheckNotBeforeMs = millis() + UPDATE_NETWORK_SETTLE_MS;
+  }
+  profileSelectorActive = false;
+  logLine(String("button profile switch check queued: ") + profile);
+  return true;
 }
 
 void performPhysicalFactoryReset() {
@@ -881,6 +1081,10 @@ void handleButtonRelease(uint32_t heldMs) {
     return;
   }
   if (heldMs < 50) return;
+  if (profileSelectorActive) {
+    if (heldMs < 1000) requestButtonProfileSwitch();
+    return;
+  }
   if (updateState == UpdateState::AVAILABLE && updatePromptVisible) {
     if (heldMs < 1000) {
       updateInstallRequested = true;
@@ -893,10 +1097,17 @@ void handleButtonRelease(uint32_t heldMs) {
 #if MILESTONE_HAS_NOW_VIEW
     advanceNowLayout();
 #else
-    advanceView(true);
+    if (MILESTONE_HAS_GENERAL_VIEWS && currentView == View::DEVICE_INFO) {
+      deviceInfoPage = static_cast<uint8_t>((deviceInfoPage + 1U) % DEVICE_INFO_PAGE_COUNT);
+      lastDisplayMs = millis() - DISPLAY_REFRESH_MS;
+      wakeDisplay();
+      logLine(String("device info page -> ") + String(deviceInfoPage + 1U));
+    } else {
+      advanceView(true);
+    }
 #endif
   } else if (heldMs < 3000) {
-    // Deliberate no-op zone: prevents accidental setup entry.
+    openProfileSelector();
   } else if (heldMs < 8000) {
     startPortal();
   } else {
@@ -909,7 +1120,8 @@ void handleButtonRelease(uint32_t heldMs) {
 
 void processButton() {
   const uint32_t now = millis();
-  const bool rawPressed = digitalRead(PIN_BOOT) == LOW;
+  processNavigationButtons(now);
+  const bool rawPressed = primaryButtonPressed();
   if (rawPressed != buttonRawPressed) {
     buttonRawPressed = rawPressed;
     buttonRawChangedMs = now;
@@ -932,12 +1144,18 @@ void processButton() {
     wakeDisplay();
     logLine("factory reset confirmation expired");
   }
+  if (profileSelectorActive && !buttonStablePressed &&
+      elapsed(now, profileSelectorStartedMs, 20000UL)) {
+    profileSelectorActive = false;
+    wakeDisplay();
+    logLine("button profile selector expired");
+  }
 }
 
 void processDisplay() {
   if (!oledReady) return;
   const uint32_t now = millis();
-  if (config.screenOffMin > 0 && !thermalSafeMode && !bootSplashActive() && !portalActive && !resetConfirmation && !buttonStablePressed &&
+  if (config.screenOffMin > 0 && !thermalSafeMode && !bootSplashActive() && !portalActive && !resetConfirmation && !profileSelectorActive && !buttonStablePressed &&
       !firmwareUpdateBusy() && !updatePromptVisible &&
       elapsed(now, lastInteractionMs, static_cast<uint32_t>(config.screenOffMin) * 60000UL)) {
     if (!displaySleeping) {
@@ -947,8 +1165,7 @@ void processDisplay() {
     return;
   }
 #if MILESTONE_HAS_MEDIA
-  if (mediaDisplayOwnsFrame()) {
-    if (elapsed(now, lastDisplayMs, DISPLAY_REFRESH_MS)) updateContrast();
+  if (!profileSelectorActive && mediaDisplayOwnsFrame()) {
     if (renderMediaFrameIfNeeded(now)) {
       lastDisplayMs = now;
     } else if ((mediaPlaybackFailed || !mediaHasEnabledItems()) &&
@@ -962,7 +1179,6 @@ void processDisplay() {
   const uint32_t refreshMs = buttonStablePressed ? BUTTON_DISPLAY_REFRESH_MS : DISPLAY_REFRESH_MS;
   if (!elapsed(now, lastDisplayMs, refreshMs)) return;
   lastDisplayMs = now;
-  updateContrast();
   if (buttonStablePressed) drawButtonOverlay(now - buttonPressedMs);
   else drawMainScreen();
 }
@@ -992,7 +1208,9 @@ void initializeView() {
     if (mediaHasEnabledItems()) selectNextMediaItem();
     else currentView = View::DASHBOARD;
   }
-  if (currentView == View::DEVICE_INFO) deviceInfoStartedMs = millis();
+  if (currentView == View::DEVICE_INFO) {
+    deviceInfoPage = 0;
+  }
   lastCycleMs = millis();
   scrollStartedMs = millis();
 #endif
@@ -1021,7 +1239,7 @@ void enterMediaStreamPerformanceMode() {
     if (!setCpuFrequencyMhz(240)) logLine("STREAM_MODE could not force 240 MHz CPU");
   }
   mediaStreamLastThermalCheckMs = 0;
-  mediaStreamButtonPressed = digitalRead(PIN_BOOT) == LOW;
+  mediaStreamButtonPressed = primaryButtonPressed();
   buttonRawPressed = mediaStreamButtonPressed;
   buttonStablePressed = mediaStreamButtonPressed;
   buttonRawChangedMs = millis();
@@ -1087,7 +1305,7 @@ void processMediaStreamThermalOnly(uint32_t now) {
 
 void processMediaStreamButtonOnly(uint32_t now) {
   if (!mediaStreamActive) return;
-  const bool rawPressed = digitalRead(PIN_BOOT) == LOW;
+  const bool rawPressed = primaryButtonPressed();
   if (rawPressed != buttonRawPressed) {
     buttonRawPressed = rawPressed;
     buttonRawChangedMs = now;
@@ -1137,6 +1355,7 @@ void processMediaStreamMode() {
 
 void setupFirmware() {
   Serial.begin(115200);
+  Serial.setTxTimeoutMs(0);
   normalCpuFrequencyMhz = getCpuFrequencyMhz();
   statusLed.begin();
   statusLed.clear();
@@ -1144,21 +1363,29 @@ void setupFirmware() {
   writeStatusLed(40, 255, 180);
   delay(250);
   logLine(String("booting firmware ") + currentFirmwareIdentity() + " [" + FIRMWARE_PROFILE_MARKER + "]");
-  Serial.printf("[MILESTONE] reset=%s (%d), heap=%lu, min_heap=%lu, largest=%lu\n",
-                resetReasonName(esp_reset_reason()), static_cast<int>(esp_reset_reason()),
-                static_cast<unsigned long>(ESP.getFreeHeap()),
-                static_cast<unsigned long>(ESP.getMinFreeHeap()),
-                static_cast<unsigned long>(ESP.getMaxAllocHeap()));
+  logLine(String("reset=") + resetReasonName(esp_reset_reason()) + " (" +
+          String(static_cast<int>(esp_reset_reason())) + "), heap=" + String(ESP.getFreeHeap()) +
+          ", min_heap=" + String(ESP.getMinFreeHeap()) +
+          ", largest=" + String(ESP.getMaxAllocHeap()));
   // ESP32 requires the STA hostname to be set before Wi-Fi is started.
   WiFi.setHostname(HOSTNAME);
   // The disconnect reason is valuable when distinguishing RF/AP failures from
   // DNS/TLS/GitHub failures. The callback itself remains diagnostic-only.
   WiFi.onEvent(wifiDisconnectedEvent, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
   pinMode(PIN_BOOT, INPUT_PULLUP);
-  buttonRawPressed = digitalRead(PIN_BOOT) == LOW;
+  pinMode(PIN_BUTTON_PREVIOUS, INPUT_PULLUP);
+  pinMode(PIN_BUTTON_NEXT, INPUT_PULLUP);
+  pinMode(PIN_BUTTON_CONFIRM, INPUT_PULLUP);
+  buttonRawPressed = primaryButtonPressed();
   buttonStablePressed = buttonRawPressed;
   buttonRawChangedMs = millis();
   buttonPressedMs = buttonRawChangedMs;
+  previousButton.rawPressed = digitalRead(previousButton.pin) == LOW;
+  previousButton.stablePressed = previousButton.rawPressed;
+  previousButton.rawChangedMs = buttonRawChangedMs;
+  nextButton.rawPressed = digitalRead(nextButton.pin) == LOW;
+  nextButton.stablePressed = nextButton.rawPressed;
+  nextButton.rawChangedMs = buttonRawChangedMs;
   setenv("TZ", TZ_INFO, 1);
   tzset();
   sntp_set_time_sync_notification_cb(ntpTimeAvailable);

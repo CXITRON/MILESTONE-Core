@@ -1,7 +1,7 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v2.3.7
-> Hardware: Waveshare ESP32-S3-Zero + SH1107 128×128 OLED
+> Current baseline: MILESTONE Core v3.1.0
+> Hardware: Waveshare ESP32-S3-Zero + ST7735-compatible 128×160 SPI TFT + three tactile switches
 > Repository: `CXITRON/MILESTONE-Core`
 
 This document gives coding agents and maintainers the architectural context needed before modifying the firmware. `AGENTS.md` contains operational rules, especially the release workflow. `README.md` contains user-facing behavior and detailed version history. When documentation conflicts with implementation, inspect the current source and treat the source as authoritative.
@@ -12,13 +12,13 @@ MILESTONE Core is an ESP32-S3 desktop display firmware with:
 
 - three OTA-switchable application profiles: CORE (general displays), MEDIA (stored/live media), and NOW (iPhone AMS Now Playing)
 
-CORE owns D-day, message, clock, dashboard, device-information, and general screen-cycle behavior. MEDIA never enters those views: BOOT and timed transitions select the next enabled media item. NOW renders only Bluetooth connection/AMS metadata state and does not enter general or media views. All three profiles share schema 10; MEDIA and NOW preserve the stored CORE general-view fields so switching back restores the previous CORE setup exactly.
+CORE owns D-day, message, clock, dashboard, device-information, and general screen-cycle behavior. MEDIA never enters those views: confirm and timed transitions select the next enabled media item. NOW renders only Bluetooth connection/AMS metadata state and does not enter general or media views. All three profiles share schema 11; MEDIA and NOW preserve the stored CORE general-view fields so switching back restores the previous CORE setup exactly.
 
 The profile boundary is compile-time, not a runtime feature flag. CORE uses `CoreMediaDisabled.inc` only for schema-compatible no-op calls and raw shared-partition erase during an explicit factory reset; it must not link `CoreMedia.inc`, `CoreMedia.cpp`, LittleFS, media/stream HTTP routes, `StreamPage.h`, or media converter UI bytes. Release BIN inspection enforces this boundary.
 
 - D-day, date, time, and message views
 - selectable/automatic screen cycling
-- BOOT-button interaction
+- previous/next/confirm tactile-button interaction plus the onboard BOOT fallback
 - local captive configuration portal with optional fixed/open setup-AP security
 - multiple remembered Wi-Fi networks
 - WPA2-Enterprise PEAP support
@@ -29,7 +29,7 @@ The profile boundary is compile-time, not a runtime feature flag. CORE uses `Cor
 - post-OTA candidate validation and application-level rollback
 - device diagnostics for memory, network, update, rollback, and thermal state
 - persistent recent Diagnostics & Health event history with portal copy/clear tools
-- browser-converted 128×128 monochrome photos, GIFs, and short local videos
+- browser-converted 128×128 RGB332 color or monochrome photos, GIFs, and short local videos
 - isolated `/stream` live playback with browser-side full preconversion, RAW/XOR-RLE binary frame-record transport, PSRAM buffering, and stream-specific runtime isolation
 - dedicated NOW profile for iPhone/iPad BLE Now Playing metadata via Apple Media Service (AMS)
 
@@ -59,6 +59,8 @@ MILESTONE_Core/
 ├── CoreDiagnostics.cpp
 ├── CoreMedia.h
 ├── CoreMedia.cpp
+├── CoreTftDisplay.h
+├── CoreTftDisplay.cpp
 ├── PortalPage.h
 ├── StreamPage.h
 ├── UpdateCertificates.h
@@ -89,13 +91,13 @@ The `*.inc` runtime files are intentionally included into the sketch as one tran
 Firmware and persistent schema versions are separate concepts.
 
 ```cpp
-FIRMWARE_VERSION = "2.3.7"
-CONFIG_VERSION = 10
+FIRMWARE_VERSION = "3.1.0"
+CONFIG_VERSION = 11
 ```
 
 Increment `CONFIG_VERSION` only when persistent NVS layout/meaning changes and implement a migration path. A firmware version change by itself must not force a schema reset.
 
-Schema 9 appends `CUSTOM_MEDIA` as View 7 and TopMode 8 without renumbering the existing values. The v8→v9 migration appends View 7 to the saved order but leaves cycle-mask bit 7 off, preserving the user's previous visible cycle until explicitly enabled. Schema 10 adds `ap_fixed`, `ap_pass`, and `ble_media`. The v9→v10 migration defaults fixed AP security and BLE Now Playing to off, so existing devices keep the previous random 8-character setup-AP password behavior until the user explicitly changes it. v2.2.0 stores `now_layout` as an optional backward-compatible key while retaining schema 10: v2.1.1 ignores it during rollback, and its absent-key default is title + artist.
+Schema 9 appends `CUSTOM_MEDIA` as View 7 and TopMode 8 without renumbering the existing values. Schema 10 adds `ap_fixed`, `ap_pass`, and `ble_media`. Schema 11 adds six CORE semantic RGB colors and the MEDIA monochrome preference. The v10→v11 migration supplies the v3.1 defaults without changing Wi-Fi, AP security, CORE view order, stored media, or NOW layout.
 
 ## 4. Runtime architecture
 
@@ -105,7 +107,7 @@ Schema 9 appends `CUSTOM_MEDIA` as View 7 and TopMode 8 without renumbering the 
 
 ### Display
 
-`CoreDisplay.inc` renders the OLED views, status indicators, thermal status, and device information. Display-only changes are lower risk than persistent-state or OTA changes, but timing and screen-cycle interactions still matter.
+`CoreDisplay.inc` renders views, colored status indicators, thermal status, and device information into the 128×128 U8g2 surface. `CoreTftDisplay.h/.cpp` tracks a PSRAM RGB565 layer alongside that surface and sends it to the centered 128×128 TFT region. Semantic CORE colors, RGB332 MEDIA frames, and RGB565 NOW artwork share this backend while preserving the existing fonts and layout.
 
 ### Network and time
 
@@ -229,6 +231,10 @@ v2.3.6 lets a MEDIA live stream preempt an active NTP transaction without losing
 
 v2.3.7 fixes setup-AP startup after the saved 2.4GHz networks are unavailable. A cancelled STA connection or scan could leave the ESP-IDF radio reporting AP+STA mode and `192.168.4.1` even though no `MILESTONE-D1-SETUP` beacon was transmitted. Portal entry now preserves AP+STA only for a live station; otherwise it fully stops the radio, restarts in AP-only mode, verifies a visible configured SSID, and falls back to one more full-radio rebuild if startup fails. Portal scans still enable STA on demand, and schema 10 is unchanged.
 
+v3.0.0 replaces the required SH1107 I2C display with the physically verified ST7735-compatible 128×160 SPI TFT. GPIO9 remains SCK and GPIO8 becomes MOSI; CS, reset, and DC use GPIO10, GPIO5, and GPIO6. The existing 128×128 one-bit U8g2/MSM1 surface is converted to RGB565 and centered, including dirty-tile stream updates; the top 16-pixel TFT-only band shows the active profile above a separator, while the bottom band remains empty below one separator. Three active-low `INPUT_PULLUP` switches add previous (GPIO1), next (GPIO2), and confirm (GPIO11); confirm mirrors the onboard BOOT action and the onboard BOOT button remains available. Previous/next navigation renders immediately on debounced press, before synchronous background network work. Because the TFT LED is hard-wired to 3V3, nonfunctional display brightness/night-brightness controls and runtime contrast mapping are removed; their old NVS keys remain reserved for schema-10 compatibility. USB CDC diagnostics use zero-timeout, capacity-checked writes so a closed serial monitor cannot stall the product loop. The incompatible hardware boundary requires a major version, while configuration schema 10 and all profile boundaries remain unchanged.
+
+v3.1.0 adds the PSRAM RGB565 display layer, semantic CORE colors, colored status glyphs, a six-page confirm-driven device information view with PSRAM metrics, and the 1–3 second confirm-button profile selector. MEDIA extends MSM1 records with a reserved RGB332 pixel-format value while preserving old one-bit files; both stored and isolated live paths use bounded PSRAM buffers and the portal selects color or monochrome. NOW consumes the Worker `/v3/artwork` fixed `MAC1` RGB565 packet and retains `/v1` and `/v2` only for old firmware. Schema 11 persists the six CORE colors and MEDIA monochrome preference without allowing MEDIA/NOW to rewrite CORE view state.
+
 The post-v2.3.1 Worker tone update retains the 4×4 Bayer packet contract but adds bounded adaptive correction at both luminance extremes. Mean luminance below 110 blends toward a gamma-0.8 lift capped at 32 while preserving 0–6 as true black; mean luminance above 160 blends toward gamma 3.5 highlight compression while preserving exact black and white. The curve is shared by both output sizes. Exact catalog exceptions use normalized title-and-artist equality, and cache generation `mab1-adaptive-tone-catalog-v2` bypasses prior positive and negative entries; packet format does not change.
 
 Do not split the OTA transaction merely because the function is long. Its sequential structure encodes safety assumptions.
@@ -241,13 +247,13 @@ Application-level rollback cannot recover a candidate that fails before the roll
 
 ### Runtime/input/thermal
 
-`CoreRuntime.inc` coordinates the main loop, BOOT-button behavior, screen cycling, temperature protection, and high-level state progression. Preserve cooperative/early-return semantics when modifying state processing.
+`CoreRuntime.inc` coordinates the main loop, previous/next/confirm and onboard BOOT behavior, screen cycling, temperature protection, and high-level state progression. Previous/next navigate CORE views, MEDIA items, or NOW layouts. Confirm and onboard BOOT share the existing short/hold confirmation path. Preserve cooperative/early-return semantics when modifying state processing.
 
 ### Live streaming (v1.10.5+, buffering/render pacing revised in v1.10.8)
 
 Live streaming is intentionally isolated from the normal cooperative runtime. `/stream` serves a dedicated lightweight browser page. The browser pre-converts the full source into 128×128 one-bit frames before playback, then sends paced `application/octet-stream` frame-record bodies. The first source frame is RAW and later frames use bounded XOR-RLE deltas only when smaller; the ESP32 reconstructs every accepted record into a raw PSRAM ring before playback. Live frames are never written to LittleFS.
 
-While `mediaStreamActive` is true, `loopFirmware()` enters `processMediaStreamMode()` and returns before normal OTA, diagnostics, cycle, display, LED, NTP/reconnect scheduling, or stored-media work can run. The stream loop services only captive-portal networking, the binary frame-record transport, PSRAM queue/OLED timing, BOOT-stop input, resource guards, and low-rate thermal checks. A stream started inside `processNetwork()` is detected immediately and also returns before any normal background subsystem runs.
+While `mediaStreamActive` is true, `loopFirmware()` enters `processMediaStreamMode()` and returns before normal OTA, diagnostics, cycle, display, LED, NTP/reconnect scheduling, or stored-media work can run. The stream loop services only captive-portal networking, the binary frame-record transport, PSRAM queue/TFT timing, confirm-or-BOOT stop input, resource guards, and low-rate thermal checks. A stream started inside `processNetwork()` is detected immediately and also returns before any normal background subsystem runs.
 
 Important stream contracts:
 
@@ -256,8 +262,8 @@ Important stream contracts:
 - Pushes carry at most 8 RAW/XOR-RLE frame records and receive a compact binary ACK; the browser refills by queue watermarks, and transport-loss retries reuse the same idempotent sequence/header/body.
 - On Arduino-ESP32 3.3.11, raw-body routes do not expose URL query metadata through `server.arg()` during `RAW_START`; live pushes therefore carry session, sequence, frame-count, and encoded-byte length in explicitly collected `X-MILESTONE-*` request headers. Do not move these fields back into the push URL.
 - Duplicate committed sequence numbers are consumed and ACKed without enqueueing frames twice.
-- 20fps is the normal source-timebase target; 24fps is experimental. The OLED service clock adapts to measured flush cost and reserves a network-service slice; stale source frames are dropped rather than accumulating latency.
-- The SH1107 path detects changed tiles on both X and Y axes and uses row spans/bounding rectangles before falling back to a full 2048-byte flush.
+- 20fps is the normal source-timebase target; 24fps is experimental. The TFT service clock adapts to measured flush cost and reserves a network-service slice; stale source frames are dropped rather than accumulating latency.
+- The TFT path detects changed 8×8 tiles on both axes and converts row spans/bounding rectangles to RGB565 before falling back to a full centered 128×128 update.
 - Stream thermal policy is 75°C warning, 80°C controlled stream stop, 85°C emergency thermal-safe entry.
 - End-of-source is explicit: `/api/stream/finish` marks EOF and the device drains the real queue before leaving STREAM_MODE, including short sources below the normal prebuffer threshold.
 - The OTA 2KiB transfer scratch buffer is allocated only during an OTA download instead of permanently occupying internal SRAM while streaming.

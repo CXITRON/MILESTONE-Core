@@ -30,8 +30,8 @@ void wifiDisconnectedEvent(WiFiEvent_t, WiFiEventInfo_t info) {
   // the callback diagnostic-only: never mutate the firmware state machine or
   // call WiFi APIs from this separate FreeRTOS task.
   lastWifiDisconnectReason = info.wifi_sta_disconnected.reason;
-  Serial.printf("[MILESTONE] Wi-Fi STA disconnected reason=%u\n",
-                static_cast<unsigned>(lastWifiDisconnectReason));
+  logLine(String("Wi-Fi STA disconnected reason=") +
+          String(static_cast<unsigned>(lastWifiDisconnectReason)));
 }
 
 void cancelPortalWifiScan();
