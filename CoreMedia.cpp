@@ -189,6 +189,48 @@ bool decodeFrameSized(const uint8_t *data, size_t size, bool firstFrame,
   return true;
 }
 
+bool parseLiveJpegRecord(const uint8_t *data, size_t size, size_t maximumBytes,
+                         const uint8_t *&payload, uint16_t &payloadBytes,
+                         size_t &consumed, Error *error) {
+  setError(error, Error::NONE);
+  payload = nullptr;
+  payloadBytes = 0;
+  consumed = 0;
+  if (!data) {
+    setError(error, Error::NULL_ARGUMENT);
+    return false;
+  }
+  if (size < FRAME_HEADER_BYTES) {
+    setError(error, Error::FRAME_HEADER);
+    return false;
+  }
+  const uint16_t delayMs = readLe16(data + 1);
+  const uint16_t dataSize = readLe16(data + 3);
+  if (data[0] != LIVE_JPEG_ENCODING) {
+    setError(error, Error::FRAME_ENCODING);
+    return false;
+  }
+  if (delayMs != 0) {
+    setError(error, Error::FRAME_DELAY);
+    return false;
+  }
+  if (dataSize < 4U || dataSize > maximumBytes ||
+      static_cast<size_t>(dataSize) > size - FRAME_HEADER_BYTES) {
+    setError(error, Error::FRAME_SIZE);
+    return false;
+  }
+  const uint8_t *jpeg = data + FRAME_HEADER_BYTES;
+  if (jpeg[0] != 0xFFU || jpeg[1] != 0xD8U ||
+      jpeg[dataSize - 2U] != 0xFFU || jpeg[dataSize - 1U] != 0xD9U) {
+    setError(error, Error::FRAME_ENCODING);
+    return false;
+  }
+  payload = jpeg;
+  payloadBytes = dataSize;
+  consumed = FRAME_HEADER_BYTES + dataSize;
+  return true;
+}
+
 bool validateFile(const uint8_t *data, size_t size, Header *headerOut, Error *error) {
   Header header;
   if (!parseHeader(data, size, header, error)) return false;

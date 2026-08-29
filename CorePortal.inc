@@ -275,6 +275,8 @@ String mediaStreamStatusJson() {
   json += "\"dropped\":" + String(mediaStreamDroppedFrames) + ",";
   json += "\"underruns\":" + String(mediaStreamUnderruns) + ",";
   json += "\"flush_us\":" + String(mediaStreamFlushEmaUs) + ",";
+  json += "\"decode_us\":" + String(mediaStreamDecodeEmaUs) + ",";
+  json += "\"jpeg\":" + String(mediaStreamJpegMode ? "true" : "false") + ",";
   json += "\"render_interval_ms\":" + String(mediaStreamRenderIntervalMs) + ",";
   json += "\"dirty_tiles\":" + String(mediaStreamLastDirtyTiles) + ",";
   json += "\"temperature_c\":" + String(isnan(chipTemperatureC) ? 0.0f : chipTemperatureC, 1) + ",";
@@ -285,7 +287,7 @@ String mediaStreamStatusJson() {
 }
 
 void sendMediaStreamAck() {
-  uint8_t ack[28] = {'M', 'S', 'A', '1', 1, static_cast<uint8_t>(mediaStreamPhase),
+  uint8_t ack[30] = {'M', 'S', 'A', '1', 2, static_cast<uint8_t>(mediaStreamPhase),
                      mediaStreamQueueCount, MEDIA_STREAM_QUEUE_FRAMES};
   MilestoneMedia::writeLe32(ack + 8, mediaStreamReceivedFrames);
   MilestoneMedia::writeLe32(ack + 12, mediaStreamDisplayedFrames);
@@ -296,6 +298,8 @@ void sendMediaStreamAck() {
   MilestoneMedia::writeLe16(ack + 24, mediaStreamActualFpsX10);
   const uint32_t flush10 = mediaStreamFlushEmaUs / 10U;
   MilestoneMedia::writeLe16(ack + 26, static_cast<uint16_t>(flush10 > 65535U ? 65535U : flush10));
+  const uint32_t decode10 = mediaStreamDecodeEmaUs / 10U;
+  MilestoneMedia::writeLe16(ack + 28, static_cast<uint16_t>(decode10 > 65535U ? 65535U : decode10));
   server.setContentLength(sizeof(ack));
   server.send(200, "application/octet-stream", "");
   server.sendContent(reinterpret_cast<const char *>(ack), sizeof(ack));
@@ -416,12 +420,10 @@ void handleMediaStreamPushRaw() {
   if (raw.status == RAW_WRITE) {
     if (!mediaStreamRawFailed) {
       writeMediaStreamRawChunk(raw.buf, raw.currentSize);
-      // WebServer services a complete raw request inside handleClient(). Keep
-      // monochrome partial updates responsive, but drain large color bodies
-      // before spending a full-frame SPI flush on display work. Interleaving
-      // those flushes with every color POST can collapse SoftAP throughput.
-      if (mediaStreamPhase == MediaStreamPhase::PLAYING &&
-          mediaStreamFrameBytes != MilestoneMedia::COLOR_FRAME_BYTES) {
+      // JPEG keeps color requests bounded, so service due frames while the
+      // synchronous WebServer drains a body instead of exposing its receive
+      // time as a visible screen freeze.
+      if (mediaStreamPhase == MediaStreamPhase::PLAYING) {
         renderMediaStreamFrameIfDue(millis());
       }
     }

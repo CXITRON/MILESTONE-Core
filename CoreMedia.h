@@ -15,6 +15,7 @@ constexpr size_t FRAME_HEADER_BYTES = 5;
 constexpr size_t MAX_ENCODED_FRAME_BYTES = FRAME_BYTES + 32U;
 constexpr size_t MAX_FILE_BYTES = 160U * 1024U;
 constexpr uint16_t MAX_FRAMES = 1024;
+constexpr uint8_t LIVE_JPEG_ENCODING = 2;
 
 constexpr uint8_t FLAG_ANIMATED = 0x01;
 constexpr uint8_t FLAG_LOOP = 0x02;
@@ -72,6 +73,13 @@ bool decodeFrame(const uint8_t *data, size_t size, bool firstFrame,
 bool decodeFrameSized(const uint8_t *data, size_t size, bool firstFrame,
                       uint8_t *frame, size_t frameBytes, uint16_t &delayMs,
                       size_t &consumed, Error *error = nullptr);
+
+// Live JPEG uses the existing five-byte frame-record envelope without making
+// JPEG a valid stored MSM1 encoding. This parser therefore remains separate
+// from decodeFrameSized().
+bool parseLiveJpegRecord(const uint8_t *data, size_t size, size_t maximumBytes,
+                         const uint8_t *&payload, uint16_t &payloadBytes,
+                         size_t &consumed, Error *error = nullptr);
 
 bool validateFile(const uint8_t *data, size_t size, Header *header = nullptr,
                   Error *error = nullptr);

@@ -18,7 +18,7 @@ reject() {
   fi
 }
 
-require 'FIRMWARE_VERSION\[\] = "3\.1\.3"' MILESTONE_Core.ino 'firmware version is not 3.1.3'
+require 'FIRMWARE_VERSION\[\] = "3\.2\.0"' MILESTONE_Core.ino 'firmware version is not 3.2.0'
 require 'CONFIG_VERSION = 12' MILESTONE_Core.ino 'configuration schema is not 12'
 require 'bool fixedApSecurity = false;' MILESTONE_Core.ino 'fixed AP security must default off'
 require 'String fixedApPassword;' MILESTONE_Core.ino 'fixed AP password setting missing'
@@ -155,7 +155,16 @@ require 'NOW_ART_BITMAP_PACKET_BYTES' CoreArtwork.inc 'NOW fixed bitmap packet b
 require 'validArtworkColorPacket' CoreArtwork.inc 'NOW must validate color image headers and CRC before display'
 require 'ARTWORK_COLOR_PACKET_BYTES' CoreLogic.h 'color artwork packet contract must be shared with host tests'
 require 'testArtworkBitmapPacket' tests/test_core_logic.cpp 'bitmap corruption needs a host regression test'
-reject '^#include <jpeg_decoder\.h>' MILESTONE_Core.ino 'NOW still includes the on-device JPEG decoder'
+require '#include <jpeg_decoder\.h>' MILESTONE_Core.ino 'MEDIA live JPEG decoder include missing'
+python3 - <<'PY_MEDIA_JPEG_GUARD'
+from pathlib import Path
+s = Path('MILESTONE_Core.ino').read_text()
+needle = '#include <jpeg_decoder.h>'
+pos = s.index(needle)
+guard = s.rfind('#if MILESTONE_HAS_MEDIA', 0, pos)
+end = s.find('#endif', pos)
+assert guard >= 0 and end > pos, 'JPEG decoder include must stay inside the MEDIA compile-time guard'
+PY_MEDIA_JPEG_GUARD
 require 'artwork_gateway_code' CorePortal.inc 'NOW portal must expose the gateway HTTP result'
 require 'artwork_gateway_enabled' CorePortal.inc 'NOW portal must expose whether the gateway path is active'
 require '무료 캐시 중계 서비스' PortalPage.h 'NOW portal must explain the gateway artwork path'

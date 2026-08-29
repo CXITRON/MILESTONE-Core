@@ -22,19 +22,19 @@ constexpr char MEDIA_INDEX_B[] = "/media/index.b";
 constexpr char MEDIA_UPLOAD_TEMP[] = "/media/upload.tmp";
 
 // Live streaming is an isolated runtime mode. The browser pre-converts the
-// whole source; the ESP32 only receives paced RGB332 or one-bit frames into a
+// whole source; the ESP32 receives paced JPEG color or one-bit frames into a
 // PSRAM ring and flushes them to the display. No live frame is written to flash.
 constexpr uint8_t MEDIA_STREAM_QUEUE_FRAMES = 96;
-// Arduino WebServer closes every HTTP response. Color frames are eight times
-// larger than monochrome frames, and four-frame POSTs spent too much time in
-// TCP setup/ACK turnaround to keep the queue fed. Twelve-frame batches remain
-// bounded below 200 KiB and use only the dedicated PSRAM request scratch area.
 constexpr uint8_t MEDIA_STREAM_MAX_PUSH_FRAMES = 12;
+constexpr size_t MEDIA_STREAM_JPEG_MAX_BYTES = 12U * 1024U;
+constexpr size_t MEDIA_STREAM_JPEG_OUTPUT_BYTES =
+    MilestoneMedia::COLOR_FRAME_BYTES * sizeof(uint16_t);
+constexpr size_t MEDIA_STREAM_JPEG_WORK_BYTES = 4096U;
 constexpr uint8_t MEDIA_STREAM_PREBUFFER_FRAMES = 24;
 constexpr uint8_t MEDIA_STREAM_REBUFFER_FRAMES = 12;
 constexpr size_t MEDIA_STREAM_PACKET_MAX_BYTES =
     static_cast<size_t>(MEDIA_STREAM_MAX_PUSH_FRAMES) *
-    (MilestoneMedia::FRAME_HEADER_BYTES + MilestoneMedia::COLOR_FRAME_BYTES + 256U);
+    (MilestoneMedia::FRAME_HEADER_BYTES + MEDIA_STREAM_JPEG_MAX_BYTES);
 // Full-screen display flushes consume a meaningful part of a 20 fps frame period.
 // Reserve an explicit service window after each display transaction so the HTTP
 // server can drain incoming frame batches instead of being starved by display
@@ -107,6 +107,9 @@ String mediaUploadError;
 uint8_t *mediaStreamQueue = nullptr;
 uint8_t *mediaStreamRawPacket = nullptr;
 uint8_t *mediaStreamDecodeFrame = nullptr;
+uint8_t *mediaStreamJpegWorkBuffer = nullptr;
+uint16_t mediaStreamJpegLengths[MEDIA_STREAM_QUEUE_FRAMES] = {};
+bool mediaStreamJpegMode = false;
 bool mediaStreamActive = false;
 bool mediaStreamResumeNtpAfterExit = false;
 MediaStreamPhase mediaStreamPhase = MediaStreamPhase::INACTIVE;
@@ -144,6 +147,8 @@ uint32_t mediaStreamMinLargestHeapBlock = 0xFFFFFFFFUL;
 uint32_t mediaStreamMinStackFree = 0xFFFFFFFFUL;
 uint32_t mediaStreamLastFlushUs = 0;
 uint32_t mediaStreamFlushEmaUs = 0;
+uint32_t mediaStreamLastDecodeUs = 0;
+uint32_t mediaStreamDecodeEmaUs = 0;
 uint16_t mediaStreamRenderIntervalMs = 0;
 uint16_t mediaStreamLastDirtyTiles = 0;
 uint32_t mediaStreamFpsWindowStartedMs = 0;
@@ -901,14 +906,28 @@ bool allocateMediaStreamBuffer() {
   if (!psramFound()) return false;
   const size_t queueBytes =
       static_cast<size_t>(MEDIA_STREAM_QUEUE_FRAMES) * mediaStreamFrameBytes;
+  const size_t decodeBytes = mediaStreamJpegMode
+      ? MEDIA_STREAM_JPEG_OUTPUT_BYTES : MilestoneMedia::FRAME_BYTES;
   const size_t allocationBytes =
-      queueBytes + MEDIA_STREAM_PACKET_MAX_BYTES + mediaStreamFrameBytes;
+      queueBytes + MEDIA_STREAM_PACKET_MAX_BYTES + decodeBytes;
   mediaStreamQueue = static_cast<uint8_t *>(heap_caps_malloc(
       allocationBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
   if (!mediaStreamQueue) return false;
   mediaStreamRawPacket = mediaStreamQueue + queueBytes;
   mediaStreamDecodeFrame = mediaStreamRawPacket + MEDIA_STREAM_PACKET_MAX_BYTES;
-  memset(mediaStreamDecodeFrame, 0, mediaStreamFrameBytes);
+  memset(mediaStreamDecodeFrame, 0, decodeBytes);
+  if (mediaStreamJpegMode) {
+    mediaStreamJpegWorkBuffer = static_cast<uint8_t *>(heap_caps_malloc(
+        MEDIA_STREAM_JPEG_WORK_BYTES, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    if (!mediaStreamJpegWorkBuffer) {
+      free(mediaStreamQueue);
+      mediaStreamQueue = nullptr;
+      mediaStreamRawPacket = nullptr;
+      mediaStreamDecodeFrame = nullptr;
+      return false;
+    }
+  }
+  memset(mediaStreamJpegLengths, 0, sizeof(mediaStreamJpegLengths));
   return true;
 }
 
@@ -926,9 +945,12 @@ void releaseMediaPlaybackBuffersForStream() {
 
 void releaseMediaStreamBuffer() {
   if (mediaStreamQueue) free(mediaStreamQueue);
+  if (mediaStreamJpegWorkBuffer) free(mediaStreamJpegWorkBuffer);
   mediaStreamQueue = nullptr;
   mediaStreamRawPacket = nullptr;
   mediaStreamDecodeFrame = nullptr;
+  mediaStreamJpegWorkBuffer = nullptr;
+  memset(mediaStreamJpegLengths, 0, sizeof(mediaStreamJpegLengths));
 }
 
 void resetMediaStreamRawState() {
@@ -982,8 +1004,9 @@ bool startMediaStream(uint16_t fps) {
   if (fps < MEDIA_STREAM_MIN_FPS || fps > MEDIA_STREAM_MAX_FPS) return false;
   if (mediaStreamActive) stopMediaStream();
   releaseMediaPlaybackBuffersForStream();
-  mediaStreamFrameBytes = config.mediaMonochrome
-      ? MilestoneMedia::FRAME_BYTES : MilestoneMedia::COLOR_FRAME_BYTES;
+  mediaStreamJpegMode = !config.mediaMonochrome;
+  mediaStreamFrameBytes = mediaStreamJpegMode
+      ? MEDIA_STREAM_JPEG_MAX_BYTES : MilestoneMedia::FRAME_BYTES;
   if (!allocateMediaStreamBuffer()) {
     allocateMediaBuffers();
     return false;
@@ -1012,6 +1035,8 @@ bool startMediaStream(uint16_t fps) {
   mediaStreamMinStackFree = uxTaskGetStackHighWaterMark(nullptr);
   mediaStreamLastFlushUs = 0;
   mediaStreamFlushEmaUs = 0;
+  mediaStreamLastDecodeUs = 0;
+  mediaStreamDecodeEmaUs = 0;
   mediaStreamRenderIntervalMs = mediaStreamFrameIntervalMs;
   mediaStreamLastDirtyTiles = 0;
   mediaStreamFpsWindowStartedMs = mediaStreamLastPushMs;
@@ -1137,34 +1162,51 @@ bool commitMediaStreamRawWrite() {
         (mediaStreamRawBaseTail + i) % MEDIA_STREAM_QUEUE_FRAMES);
     uint8_t *destination =
         mediaStreamQueue + static_cast<size_t>(slot) * mediaStreamFrameBytes;
-    const bool firstFrame = mediaStreamReceivedFrames == 0 && i == 0;
-    if (!firstFrame) {
-      if (i == 0) {
-        memcpy(destination, mediaStreamDecodeFrame, mediaStreamFrameBytes);
-      } else {
-        const uint8_t previousSlot = static_cast<uint8_t>(
-            (mediaStreamRawBaseTail + i - 1U) % MEDIA_STREAM_QUEUE_FRAMES);
-        memcpy(destination,
-               mediaStreamQueue + static_cast<size_t>(previousSlot) * mediaStreamFrameBytes,
-               mediaStreamFrameBytes);
-      }
-    }
-    uint16_t delayMs = 0;
     size_t consumed = 0;
     MilestoneMedia::Error decodeError = MilestoneMedia::Error::NONE;
-    if (!MilestoneMedia::decodeFrameSized(
-            mediaStreamRawPacket + offset,
-            mediaStreamRawExpectedBytes - offset,
-            firstFrame, destination, mediaStreamFrameBytes,
-            delayMs, consumed, &decodeError) ||
-        delayMs != 0 || consumed == 0) {
-      mediaStreamRawError = "encoded-frame-invalid";
-      mediaStreamRawFailed = true;
-      mediaStreamRawComplete = false;
-      return false;
+    if (mediaStreamJpegMode) {
+      const uint8_t *jpeg = nullptr;
+      uint16_t jpegBytes = 0;
+      if (!MilestoneMedia::parseLiveJpegRecord(
+              mediaStreamRawPacket + offset,
+              mediaStreamRawExpectedBytes - offset,
+              MEDIA_STREAM_JPEG_MAX_BYTES, jpeg, jpegBytes, consumed,
+              &decodeError)) {
+        mediaStreamRawError = "jpeg-frame-invalid";
+        mediaStreamRawFailed = true;
+        mediaStreamRawComplete = false;
+        return false;
+      }
+      memcpy(destination, jpeg, jpegBytes);
+      mediaStreamJpegLengths[slot] = jpegBytes;
+    } else {
+      const bool firstFrame = mediaStreamReceivedFrames == 0 && i == 0;
+      if (!firstFrame) {
+        if (i == 0) {
+          memcpy(destination, mediaStreamDecodeFrame, mediaStreamFrameBytes);
+        } else {
+          const uint8_t previousSlot = static_cast<uint8_t>(
+              (mediaStreamRawBaseTail + i - 1U) % MEDIA_STREAM_QUEUE_FRAMES);
+          memcpy(destination,
+                 mediaStreamQueue + static_cast<size_t>(previousSlot) * mediaStreamFrameBytes,
+                 mediaStreamFrameBytes);
+        }
+      }
+      uint16_t delayMs = 0;
+      if (!MilestoneMedia::decodeFrameSized(
+              mediaStreamRawPacket + offset,
+              mediaStreamRawExpectedBytes - offset,
+              firstFrame, destination, mediaStreamFrameBytes,
+              delayMs, consumed, &decodeError) ||
+          delayMs != 0 || consumed == 0) {
+        mediaStreamRawError = "encoded-frame-invalid";
+        mediaStreamRawFailed = true;
+        mediaStreamRawComplete = false;
+        return false;
+      }
+      lastDecodedSlot = slot;
     }
     offset += consumed;
-    lastDecodedSlot = slot;
   }
   if (offset != mediaStreamRawExpectedBytes) {
     mediaStreamRawError = "encoded-body-trailing-data";
@@ -1173,9 +1215,11 @@ bool commitMediaStreamRawWrite() {
     return false;
   }
 
-  memcpy(mediaStreamDecodeFrame,
-         mediaStreamQueue + static_cast<size_t>(lastDecodedSlot) * mediaStreamFrameBytes,
-         mediaStreamFrameBytes);
+  if (!mediaStreamJpegMode) {
+    memcpy(mediaStreamDecodeFrame,
+           mediaStreamQueue + static_cast<size_t>(lastDecodedSlot) * mediaStreamFrameBytes,
+           mediaStreamFrameBytes);
+  }
   mediaStreamQueueTail = static_cast<uint8_t>(
       (mediaStreamQueueTail + mediaStreamRawFrameCount) % MEDIA_STREAM_QUEUE_FRAMES);
   mediaStreamQueueCount = static_cast<uint8_t>(mediaStreamQueueCount + mediaStreamRawFrameCount);
@@ -1282,9 +1326,11 @@ uint16_t mediaStreamSafeRenderIntervalMs() {
   uint32_t intervalMs = mediaStreamFrameIntervalMs;
   const uint32_t flushBudgetUs = mediaStreamLastFlushUs > mediaStreamFlushEmaUs
       ? mediaStreamLastFlushUs : mediaStreamFlushEmaUs;
-  if (flushBudgetUs > 0) {
-    const uint32_t flushMs = (flushBudgetUs + 999U) / 1000U;
-    const uint32_t safeMs = flushMs + MEDIA_STREAM_NETWORK_SLICE_MS;
+  const uint32_t decodeBudgetUs = mediaStreamLastDecodeUs > mediaStreamDecodeEmaUs
+      ? mediaStreamLastDecodeUs : mediaStreamDecodeEmaUs;
+  if (flushBudgetUs > 0 || decodeBudgetUs > 0) {
+    const uint32_t renderMs = (flushBudgetUs + decodeBudgetUs + 999U) / 1000U;
+    const uint32_t safeMs = renderMs + MEDIA_STREAM_NETWORK_SLICE_MS;
     if (safeMs > intervalMs) intervalMs = safeMs;
   }
   if (intervalMs > MEDIA_STREAM_MAX_RENDER_INTERVAL_MS) {
@@ -1293,9 +1339,31 @@ uint16_t mediaStreamSafeRenderIntervalMs() {
   return static_cast<uint16_t>(intervalMs);
 }
 
-bool flushMediaStreamFrame(const uint8_t *frame) {
-  if (mediaStreamFrameBytes == MilestoneMedia::COLOR_FRAME_BYTES) {
-    display.loadRgb332(frame);
+bool flushMediaStreamFrame(const uint8_t *frame, size_t encodedBytes) {
+  if (mediaStreamJpegMode) {
+    if (!frame || !mediaStreamDecodeFrame || !mediaStreamJpegWorkBuffer ||
+        encodedBytes == 0 || encodedBytes > MEDIA_STREAM_JPEG_MAX_BYTES) return false;
+    esp_jpeg_image_cfg_t cfg = {};
+    cfg.indata = const_cast<uint8_t *>(frame);
+    cfg.indata_size = static_cast<uint32_t>(encodedBytes);
+    cfg.outbuf = mediaStreamDecodeFrame;
+    cfg.outbuf_size = MEDIA_STREAM_JPEG_OUTPUT_BYTES;
+    cfg.out_format = JPEG_IMAGE_FORMAT_RGB565;
+    cfg.out_scale = JPEG_IMAGE_SCALE_0;
+    cfg.advanced.working_buffer = mediaStreamJpegWorkBuffer;
+    cfg.advanced.working_buffer_size = MEDIA_STREAM_JPEG_WORK_BYTES;
+    esp_jpeg_image_output_t output = {};
+    const uint32_t decodeStartedUs = micros();
+    const esp_err_t decodeResult = esp_jpeg_decode(&cfg, &output);
+    const uint32_t decodeUs = micros() - decodeStartedUs;
+    mediaStreamLastDecodeUs = decodeUs;
+    mediaStreamDecodeEmaUs = mediaStreamDecodeEmaUs == 0 ? decodeUs
+        : static_cast<uint32_t>((mediaStreamDecodeEmaUs * 7ULL + decodeUs) / 8ULL);
+    if (decodeResult != ESP_OK || output.width != MilestoneMedia::WIDTH ||
+        output.height != MilestoneMedia::HEIGHT ||
+        output.output_len != MEDIA_STREAM_JPEG_OUTPUT_BYTES) return false;
+    display.loadRgb565Native(
+        reinterpret_cast<const uint16_t *>(mediaStreamDecodeFrame));
     const uint32_t startedUs = micros();
     display.sendBuffer();
     const uint32_t flushUs = micros() - startedUs;
@@ -1405,11 +1473,17 @@ bool renderMediaStreamFrameIfDue(uint32_t now) {
   const uint32_t scheduledRenderMs = mediaStreamNextRenderMs;
   const uint8_t *frame = mediaStreamQueue +
       static_cast<size_t>(mediaStreamQueueHead) * mediaStreamFrameBytes;
-  flushMediaStreamFrame(frame);
+  const size_t encodedBytes = mediaStreamJpegMode
+      ? mediaStreamJpegLengths[mediaStreamQueueHead] : mediaStreamFrameBytes;
+  const bool rendered = flushMediaStreamFrame(frame, encodedBytes);
   mediaStreamQueueHead = static_cast<uint8_t>((mediaStreamQueueHead + 1U) % MEDIA_STREAM_QUEUE_FRAMES);
   --mediaStreamQueueCount;
-  ++mediaStreamDisplayedFrames;
-  ++mediaStreamFpsWindowFrames;
+  if (rendered) {
+    ++mediaStreamDisplayedFrames;
+    ++mediaStreamFpsWindowFrames;
+  } else {
+    ++mediaStreamDroppedFrames;
+  }
   const uint32_t afterFlush = millis();
   updateMediaStreamMeasuredFps(afterFlush);
   mediaStreamNextFrameMs += mediaStreamFrameIntervalMs;

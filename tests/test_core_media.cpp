@@ -209,6 +209,29 @@ void testStoredPlaybackRotationBoundary() {
   EXPECT_TRUE(shouldRotateStoredItem(2, true, false, false, false));
 }
 
+void testLiveJpegRecord() {
+  std::vector<uint8_t> record = {MilestoneMedia::LIVE_JPEG_ENCODING, 0, 0, 6, 0,
+                                 0xFF, 0xD8, 1, 2, 0xFF, 0xD9};
+  const uint8_t *payload = nullptr;
+  uint16_t payloadBytes = 0;
+  size_t consumed = 0;
+  MilestoneMedia::Error error = MilestoneMedia::Error::NONE;
+  EXPECT_TRUE(MilestoneMedia::parseLiveJpegRecord(
+      record.data(), record.size(), 12, payload, payloadBytes, consumed, &error));
+  EXPECT_EQ(payloadBytes, 6);
+  EXPECT_EQ(consumed, record.size());
+  EXPECT_EQ(payload[0], 0xFF);
+
+  record[0] = static_cast<uint8_t>(MilestoneMedia::Encoding::RAW);
+  EXPECT_FALSE(MilestoneMedia::parseLiveJpegRecord(
+      record.data(), record.size(), 12, payload, payloadBytes, consumed, &error));
+  EXPECT_EQ(error, MilestoneMedia::Error::FRAME_ENCODING);
+  record[0] = MilestoneMedia::LIVE_JPEG_ENCODING;
+  EXPECT_FALSE(MilestoneMedia::parseLiveJpegRecord(
+      record.data(), record.size(), 5, payload, payloadBytes, consumed, &error));
+  EXPECT_EQ(error, MilestoneMedia::Error::FRAME_SIZE);
+}
+
 }  // namespace
 
 int main() {
@@ -220,6 +243,7 @@ int main() {
   testMetadataRules();
   testHeaderAndFrameBounds();
   testStoredPlaybackRotationBoundary();
+  testLiveJpegRecord();
   if (failures) return EXIT_FAILURE;
   std::cout << "All MILESTONE media tests passed\n";
   return EXIT_SUCCESS;

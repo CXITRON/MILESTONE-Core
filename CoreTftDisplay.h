@@ -37,6 +37,7 @@ class MilestoneTftDisplay : public U8G2 {
   u8g2_uint_t drawUTF8X2(u8g2_uint_t x, u8g2_uint_t y, const char *text);
   void colorizeMonochrome(uint32_t rgb888 = 0xFFFFFFUL);
   void loadRgb332(const uint8_t *pixels);
+  void loadRgb565Native(const uint16_t *pixels);
   void loadRgb565(uint16_t x, uint16_t y, uint16_t width, uint16_t height,
                   const uint8_t *bigEndianPixels);
   void drawRgb332(uint16_t x, uint16_t y, uint16_t width, uint16_t height,

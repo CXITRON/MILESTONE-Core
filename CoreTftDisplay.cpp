@@ -453,6 +453,14 @@ void MilestoneTftDisplay::loadRgb332(const uint8_t *source) {
   }
 }
 
+void MilestoneTftDisplay::loadRgb565Native(const uint16_t *source) {
+  if (!source || !colorBuffer_) return;
+  memset(getBufferPtr(), 0xFF, FRAME_WIDTH * FRAME_HEIGHT / 8U);
+  for (size_t i = 0; i < FRAME_WIDTH * FRAME_HEIGHT; ++i) {
+    colorBuffer_[i] = toneRgb565(source[i]);
+  }
+}
+
 void MilestoneTftDisplay::loadRgb565(uint16_t x, uint16_t y, uint16_t width,
                                      uint16_t height, const uint8_t *source) {
   if (!source || !colorBuffer_ || !width || !height ||
