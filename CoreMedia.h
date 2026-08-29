@@ -16,6 +16,9 @@ constexpr size_t MAX_ENCODED_FRAME_BYTES = FRAME_BYTES + 32U;
 constexpr size_t MAX_FILE_BYTES = 160U * 1024U;
 constexpr uint16_t MAX_FRAMES = 1024;
 constexpr uint8_t LIVE_JPEG_ENCODING = 2;
+constexpr size_t LIVE_WS_PUSH_HEADER_BYTES = 16;
+constexpr uint8_t LIVE_WS_VERSION = 1;
+constexpr uint8_t LIVE_WS_PUSH_TYPE = 1;
 
 constexpr uint8_t FLAG_ANIMATED = 0x01;
 constexpr uint8_t FLAG_LOOP = 0x02;
@@ -80,6 +83,14 @@ bool decodeFrameSized(const uint8_t *data, size_t size, bool firstFrame,
 bool parseLiveJpegRecord(const uint8_t *data, size_t size, size_t maximumBytes,
                          const uint8_t *&payload, uint16_t &payloadBytes,
                          size_t &consumed, Error *error = nullptr);
+
+// A persistent WebSocket message carries the stream metadata that the legacy
+// HTTP transport placed in X-MILESTONE headers. Encoded frame records follow
+// this fixed header directly.
+bool parseLiveWebSocketPushHeader(const uint8_t *header, size_t messageBytes,
+                                  uint8_t maximumFrames, size_t maximumPayloadBytes,
+                                  uint32_t &session, uint32_t &sequence,
+                                  uint8_t &frameCount, size_t &payloadBytes);
 
 bool validateFile(const uint8_t *data, size_t size, Header *header = nullptr,
                   Error *error = nullptr);

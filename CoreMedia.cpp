@@ -231,6 +231,37 @@ bool parseLiveJpegRecord(const uint8_t *data, size_t size, size_t maximumBytes,
   return true;
 }
 
+bool parseLiveWebSocketPushHeader(const uint8_t *header, size_t messageBytes,
+                                  uint8_t maximumFrames, size_t maximumPayloadBytes,
+                                  uint32_t &session, uint32_t &sequence,
+                                  uint8_t &frameCount, size_t &payloadBytes) {
+  session = 0;
+  sequence = 0;
+  frameCount = 0;
+  payloadBytes = 0;
+  if (!header || messageBytes < LIVE_WS_PUSH_HEADER_BYTES ||
+      memcmp(header, "MSW1", 4) != 0 ||
+      header[4] != LIVE_WS_VERSION || header[5] != LIVE_WS_PUSH_TYPE ||
+      header[7] != 0) {
+    return false;
+  }
+  const uint8_t count = header[6];
+  const uint32_t parsedSession = readLe32(header + 8);
+  const uint32_t parsedSequence = readLe32(header + 12);
+  const size_t encodedBytes = messageBytes - LIVE_WS_PUSH_HEADER_BYTES;
+  const size_t minimumBytes = static_cast<size_t>(count) * FRAME_HEADER_BYTES;
+  if (count == 0 || count > maximumFrames || parsedSession == 0 ||
+      parsedSequence == 0 || encodedBytes < minimumBytes ||
+      encodedBytes > maximumPayloadBytes) {
+    return false;
+  }
+  session = parsedSession;
+  sequence = parsedSequence;
+  frameCount = count;
+  payloadBytes = encodedBytes;
+  return true;
+}
+
 bool validateFile(const uint8_t *data, size_t size, Header *headerOut, Error *error) {
   Header header;
   if (!parseHeader(data, size, header, error)) return false;

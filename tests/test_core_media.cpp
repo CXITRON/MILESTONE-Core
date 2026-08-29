@@ -232,6 +232,33 @@ void testLiveJpegRecord() {
   EXPECT_EQ(error, MilestoneMedia::Error::FRAME_SIZE);
 }
 
+void testLiveWebSocketPushHeader() {
+  uint8_t header[MilestoneMedia::LIVE_WS_PUSH_HEADER_BYTES] = {
+      'M', 'S', 'W', '1', MilestoneMedia::LIVE_WS_VERSION,
+      MilestoneMedia::LIVE_WS_PUSH_TYPE, 6, 0};
+  MilestoneMedia::writeLe32(header + 8, 0x12345678UL);
+  MilestoneMedia::writeLe32(header + 12, 9);
+  uint32_t session = 0, sequence = 0;
+  uint8_t frames = 0;
+  size_t payload = 0;
+  EXPECT_TRUE(MilestoneMedia::parseLiveWebSocketPushHeader(
+      header, sizeof(header) + 1200, 12, 32768,
+      session, sequence, frames, payload));
+  EXPECT_EQ(session, 0x12345678UL);
+  EXPECT_EQ(sequence, 9U);
+  EXPECT_EQ(frames, 6U);
+  EXPECT_EQ(payload, 1200U);
+
+  header[4] = 2;
+  EXPECT_FALSE(MilestoneMedia::parseLiveWebSocketPushHeader(
+      header, sizeof(header) + 1200, 12, 32768,
+      session, sequence, frames, payload));
+  header[4] = MilestoneMedia::LIVE_WS_VERSION;
+  EXPECT_FALSE(MilestoneMedia::parseLiveWebSocketPushHeader(
+      header, sizeof(header) + 32769, 12, 32768,
+      session, sequence, frames, payload));
+}
+
 }  // namespace
 
 int main() {
@@ -244,6 +271,7 @@ int main() {
   testHeaderAndFrameBounds();
   testStoredPlaybackRotationBoundary();
   testLiveJpegRecord();
+  testLiveWebSocketPushHeader();
   if (failures) return EXIT_FAILURE;
   std::cout << "All MILESTONE media tests passed\n";
   return EXIT_SUCCESS;
