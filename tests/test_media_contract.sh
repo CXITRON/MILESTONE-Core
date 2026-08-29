@@ -79,6 +79,8 @@ reject 'mediaStreamRenderFps' CoreMedia.inc 'legacy render-fps clamp state must 
 require 'updateDisplayArea\(' CoreMedia.inc 'SH1107 partial full-buffer update path missing'
 require 'renderMediaStreamFrameIfDue' CoreMedia.inc 'live stream renderer missing'
 require 'MEDIA_STREAM_NETWORK_SLICE_MS = 12' CoreMedia.inc 'OLED renderer must reserve network service time'
+require 'messageInProgress' CoreMedia.inc 'an in-flight WebSocket message must keep draining within its network slice'
+require 'delay\(1\)' CoreMedia.inc 'WebSocket draining must yield so lwIP can refill the receive window'
 require 'mediaStreamNextRenderMs' CoreMedia.inc 'source timeline and OLED service clock must be separated'
 require 'rowFirstTile\[16\]' CoreMedia.inc 'stream partial refresh must track horizontal dirty tile spans'
 require '\+\+mediaStreamFpsWindowFrames' CoreMedia.inc 'actual stream FPS counter must advance on displayed frames'

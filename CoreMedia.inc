@@ -41,7 +41,8 @@ constexpr size_t MEDIA_STREAM_WS_MAX_MESSAGE_BYTES =
     MilestoneMedia::LIVE_WS_PUSH_HEADER_BYTES + MEDIA_STREAM_WS_MAX_PUSH_BYTES;
 constexpr size_t MEDIA_STREAM_WS_HANDSHAKE_MAX_BYTES = 2048U;
 constexpr uint32_t MEDIA_STREAM_WS_HANDSHAKE_TIMEOUT_MS = 3000UL;
-constexpr size_t MEDIA_STREAM_WS_READ_BUDGET = 8192U;
+constexpr size_t MEDIA_STREAM_WS_READ_BUDGET =
+    MEDIA_STREAM_WS_MAX_MESSAGE_BYTES + 14U;
 // Full-screen display flushes consume a meaningful part of a 20 fps frame period.
 // Reserve an explicit service window after each display transaction so the HTTP
 // server can drain incoming frame batches instead of being starved by display
@@ -1583,8 +1584,23 @@ void processMediaStreamWebSocket() {
     return;
   }
 
+  const uint32_t serviceStartedUs = micros();
+  const uint32_t serviceBudgetUs =
+      static_cast<uint32_t>(MEDIA_STREAM_NETWORK_SLICE_MS) * 1000U;
   uint8_t chunk[1024];
-  while (budget > 0 && mediaStreamWsClient && mediaStreamWsClient.available() > 0) {
+  while (budget > 0 && mediaStreamWsClient &&
+         static_cast<uint32_t>(micros() - serviceStartedUs) < serviceBudgetUs) {
+    if (mediaStreamWsClient.available() <= 0) {
+      // lwIP's small receive window is refilled by the Wi-Fi/TCP task after
+      // the current bytes are consumed. Once a message has started, yield
+      // briefly inside the reserved network slice instead of postponing every
+      // next TCP segment until after another JPEG decode + TFT flush.
+      const bool messageInProgress = mediaStreamWsHeaderRead > 0 ||
+                                     mediaStreamWsPayloadRead > 0;
+      if (!messageInProgress) break;
+      delay(1);
+      continue;
+    }
     if (mediaStreamWsHeaderRead < mediaStreamWsHeaderNeeded) {
       const int value = mediaStreamWsClient.read();
       if (value < 0) break;
