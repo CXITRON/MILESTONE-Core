@@ -1470,13 +1470,21 @@ bool sendMediaStreamWsFrame(uint8_t opcode, const uint8_t *payload, size_t lengt
 }
 
 void rejectMediaStreamWs(uint16_t code, const char *reason) {
+  if (Serial && Serial.availableForWrite() >= 160) {
+    Serial.printf("[MILESTONE] STREAM_MODE WebSocket reject: code=%u, reason=%s, seq=%lu, queue=%u, raw=%u, ready=%u\n",
+                  static_cast<unsigned>(code), reason ? reason : "unknown",
+                  static_cast<unsigned long>(mediaStreamWsCurrentSequence),
+                  static_cast<unsigned>(mediaStreamQueueCount),
+                  mediaStreamRawActive ? 1U : 0U,
+                  __atomic_load_n(&mediaStreamWsMessageReady, __ATOMIC_ACQUIRE) ? 1U : 0U);
+  }
   if (mediaStreamWsUpgraded && mediaStreamWsClient) {
     uint8_t payload[125] = {static_cast<uint8_t>((code >> 8U) & 0xFFU),
                             static_cast<uint8_t>(code & 0xFFU)};
     size_t reasonBytes = reason ? strlen(reason) : 0;
     if (reasonBytes > sizeof(payload) - 2U) reasonBytes = sizeof(payload) - 2U;
     if (reasonBytes) memcpy(payload + 2, reason, reasonBytes);
-    sendMediaStreamWsFrame(0x08, payload, reasonBytes + 2U);
+    if (sendMediaStreamWsFrame(0x08, payload, reasonBytes + 2U)) delay(5);
   }
   closeMediaStreamWsClient();
 }

@@ -18,7 +18,7 @@ reject() {
   fi
 }
 
-require 'FIRMWARE_VERSION\[\] = "3\.3\.3"' MILESTONE_Core.ino 'firmware version is not 3.3.3'
+require 'FIRMWARE_VERSION\[\] = "3\.3\.4"' MILESTONE_Core.ino 'firmware version is not 3.3.4'
 require 'CONFIG_VERSION = 12' MILESTONE_Core.ino 'configuration schema is not 12'
 require 'bool fixedApSecurity = false;' MILESTONE_Core.ino 'fixed AP security must default off'
 require 'String fixedApPassword;' MILESTONE_Core.ino 'fixed AP password setting missing'
