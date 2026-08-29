@@ -12,6 +12,8 @@
 #if MILESTONE_HAS_MEDIA
 #include <LittleFS.h>
 #include <jpeg_decoder.h>
+#include <base64.h>
+#include <mbedtls/sha1.h>
 #endif
 #include <ESPmDNS.h>
 #include <Adafruit_NeoPixel.h>

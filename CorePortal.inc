@@ -277,6 +277,11 @@ String mediaStreamStatusJson() {
   json += "\"flush_us\":" + String(mediaStreamFlushEmaUs) + ",";
   json += "\"decode_us\":" + String(mediaStreamDecodeEmaUs) + ",";
   json += "\"jpeg\":" + String(mediaStreamJpegMode ? "true" : "false") + ",";
+  json += "\"transport\":\"websocket\",";
+  json += "\"ws_port\":" + String(MEDIA_STREAM_WS_PORT) + ",";
+  json += "\"ws_connected\":" + String(mediaStreamWsUpgraded ? "true" : "false") + ",";
+  json += "\"ws_messages\":" + String(mediaStreamWsMessages) + ",";
+  json += "\"ws_reconnects\":" + String(mediaStreamWsReconnects) + ",";
   json += "\"render_interval_ms\":" + String(mediaStreamRenderIntervalMs) + ",";
   json += "\"dirty_tiles\":" + String(mediaStreamLastDirtyTiles) + ",";
   json += "\"temperature_c\":" + String(isnan(chipTemperatureC) ? 0.0f : chipTemperatureC, 1) + ",";
@@ -287,19 +292,8 @@ String mediaStreamStatusJson() {
 }
 
 void sendMediaStreamAck() {
-  uint8_t ack[30] = {'M', 'S', 'A', '1', 2, static_cast<uint8_t>(mediaStreamPhase),
-                     mediaStreamQueueCount, MEDIA_STREAM_QUEUE_FRAMES};
-  MilestoneMedia::writeLe32(ack + 8, mediaStreamReceivedFrames);
-  MilestoneMedia::writeLe32(ack + 12, mediaStreamDisplayedFrames);
-  MilestoneMedia::writeLe32(ack + 16, mediaStreamDroppedFrames);
-  MilestoneMedia::writeLe16(ack + 20, static_cast<uint16_t>(mediaStreamUnderruns > 65535U ? 65535U : mediaStreamUnderruns));
-  const int16_t tempDeci = isnan(chipTemperatureC) ? 0 : static_cast<int16_t>(chipTemperatureC * 10.0f);
-  MilestoneMedia::writeLe16(ack + 22, static_cast<uint16_t>(tempDeci));
-  MilestoneMedia::writeLe16(ack + 24, mediaStreamActualFpsX10);
-  const uint32_t flush10 = mediaStreamFlushEmaUs / 10U;
-  MilestoneMedia::writeLe16(ack + 26, static_cast<uint16_t>(flush10 > 65535U ? 65535U : flush10));
-  const uint32_t decode10 = mediaStreamDecodeEmaUs / 10U;
-  MilestoneMedia::writeLe16(ack + 28, static_cast<uint16_t>(decode10 > 65535U ? 65535U : decode10));
+  uint8_t ack[30] = {};
+  fillMediaStreamAck(ack);
   server.setContentLength(sizeof(ack));
   server.send(200, "application/octet-stream", "");
   server.sendContent(reinterpret_cast<const char *>(ack), sizeof(ack));

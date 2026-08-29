@@ -1285,6 +1285,7 @@ void processMediaStreamNetworkOnly() {
   }
   portalStartedMs = millis();
   dnsServer.processNextRequest();
+  processMediaStreamWebSocket();
   server.handleClient();
 }
 

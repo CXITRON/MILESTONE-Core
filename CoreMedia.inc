@@ -35,6 +35,13 @@ constexpr uint8_t MEDIA_STREAM_REBUFFER_FRAMES = 12;
 constexpr size_t MEDIA_STREAM_PACKET_MAX_BYTES =
     static_cast<size_t>(MEDIA_STREAM_MAX_PUSH_FRAMES) *
     (MilestoneMedia::FRAME_HEADER_BYTES + MEDIA_STREAM_JPEG_MAX_BYTES);
+constexpr uint16_t MEDIA_STREAM_WS_PORT = 81;
+constexpr size_t MEDIA_STREAM_WS_MAX_PUSH_BYTES = 32U * 1024U;
+constexpr size_t MEDIA_STREAM_WS_MAX_MESSAGE_BYTES =
+    MilestoneMedia::LIVE_WS_PUSH_HEADER_BYTES + MEDIA_STREAM_WS_MAX_PUSH_BYTES;
+constexpr size_t MEDIA_STREAM_WS_HANDSHAKE_MAX_BYTES = 2048U;
+constexpr uint32_t MEDIA_STREAM_WS_HANDSHAKE_TIMEOUT_MS = 3000UL;
+constexpr size_t MEDIA_STREAM_WS_READ_BUDGET = 8192U;
 // Full-screen display flushes consume a meaningful part of a 20 fps frame period.
 // Reserve an explicit service window after each display transaction so the HTTP
 // server can drain incoming frame batches instead of being starved by display
@@ -157,6 +164,25 @@ uint16_t mediaStreamActualFpsX10 = 0;
 bool mediaStreamThermalWarning = false;
 bool mediaStreamSourceEnded = false;
 const char *mediaStreamLastStopReason = "idle";
+
+WiFiServer mediaStreamWsServer(MEDIA_STREAM_WS_PORT, 1);
+WiFiClient mediaStreamWsClient;
+bool mediaStreamWsListening = false;
+bool mediaStreamWsUpgraded = false;
+String mediaStreamWsHandshake;
+uint32_t mediaStreamWsConnectedMs = 0;
+uint32_t mediaStreamWsMessages = 0;
+uint32_t mediaStreamWsReconnects = 0;
+uint8_t mediaStreamWsHeader[14] = {};
+uint8_t mediaStreamWsHeaderRead = 0;
+uint8_t mediaStreamWsHeaderNeeded = 2;
+uint8_t mediaStreamWsMask[4] = {};
+uint8_t mediaStreamWsOpcode = 0;
+uint64_t mediaStreamWsPayloadBytes = 0;
+uint64_t mediaStreamWsPayloadRead = 0;
+uint8_t mediaStreamWsAppHeader[MilestoneMedia::LIVE_WS_PUSH_HEADER_BYTES] = {};
+uint8_t mediaStreamWsAppHeaderRead = 0;
+uint8_t mediaStreamWsControlPayload[125] = {};
 
 String mediaPath(uint32_t id) {
   char path[32];
@@ -966,6 +992,43 @@ void resetMediaStreamRawState() {
   mediaStreamRawSeq = 0;
 }
 
+void resetMediaStreamWsFrameState() {
+  memset(mediaStreamWsHeader, 0, sizeof(mediaStreamWsHeader));
+  mediaStreamWsHeaderRead = 0;
+  mediaStreamWsHeaderNeeded = 2;
+  memset(mediaStreamWsMask, 0, sizeof(mediaStreamWsMask));
+  mediaStreamWsOpcode = 0;
+  mediaStreamWsPayloadBytes = 0;
+  mediaStreamWsPayloadRead = 0;
+  memset(mediaStreamWsAppHeader, 0, sizeof(mediaStreamWsAppHeader));
+  mediaStreamWsAppHeaderRead = 0;
+  memset(mediaStreamWsControlPayload, 0, sizeof(mediaStreamWsControlPayload));
+}
+
+void closeMediaStreamWsClient() {
+  if (mediaStreamWsClient) mediaStreamWsClient.stop();
+  mediaStreamWsClient = WiFiClient();
+  mediaStreamWsUpgraded = false;
+  mediaStreamWsHandshake = "";
+  mediaStreamWsConnectedMs = 0;
+  resetMediaStreamWsFrameState();
+  if (mediaStreamRawActive) resetMediaStreamRawState();
+}
+
+void startMediaStreamWebSocketServer() {
+  if (mediaStreamWsListening) return;
+  mediaStreamWsServer.setNoDelay(true);
+  mediaStreamWsServer.begin();
+  mediaStreamWsListening = static_cast<bool>(mediaStreamWsServer);
+  if (!mediaStreamWsListening) logLine("STREAM_MODE WebSocket listen failed");
+}
+
+void stopMediaStreamWebSocketServer() {
+  closeMediaStreamWsClient();
+  if (mediaStreamWsListening) mediaStreamWsServer.stop();
+  mediaStreamWsListening = false;
+}
+
 void stopMediaStream() {
   const bool wasActive = mediaStreamActive;
   if (wasActive && Serial && Serial.availableForWrite() >= 192) {
@@ -981,6 +1044,7 @@ void stopMediaStream() {
   mediaStreamPhase = MediaStreamPhase::INACTIVE;
   mediaStreamThermalWarning = false;
   mediaStreamSourceEnded = false;
+  stopMediaStreamWebSocketServer();
   resetMediaStreamRawState();
   mediaStreamSessionId = 0;
   mediaStreamLastPushMs = 0;
@@ -1045,9 +1109,12 @@ bool startMediaStream(uint16_t fps) {
   mediaStreamThermalWarning = false;
   mediaStreamSourceEnded = false;
   mediaStreamLastStopReason = "active";
+  mediaStreamWsMessages = 0;
+  mediaStreamWsReconnects = 0;
   resetMediaStreamRawState();
   mediaStreamPhase = MediaStreamPhase::BUFFERING;
   mediaStreamActive = true;
+  startMediaStreamWebSocketServer();
   enterMediaStreamPerformanceMode();
   if (prefsReady) prefs.putBool("stream_open", true);
   logLine(String("STREAM_MODE start: fps=") + String(mediaStreamFps) +
@@ -1258,6 +1325,332 @@ bool finishMediaStreamSource(uint32_t session) {
     mediaStreamFpsWindowFrames = 0;
   }
   return true;
+}
+
+void fillMediaStreamAck(uint8_t ack[30]) {
+  const uint8_t prefix[8] = {'M', 'S', 'A', '1', 2,
+      static_cast<uint8_t>(mediaStreamPhase), mediaStreamQueueCount,
+      MEDIA_STREAM_QUEUE_FRAMES};
+  memcpy(ack, prefix, sizeof(prefix));
+  MilestoneMedia::writeLe32(ack + 8, mediaStreamReceivedFrames);
+  MilestoneMedia::writeLe32(ack + 12, mediaStreamDisplayedFrames);
+  MilestoneMedia::writeLe32(ack + 16, mediaStreamDroppedFrames);
+  MilestoneMedia::writeLe16(ack + 20, static_cast<uint16_t>(
+      mediaStreamUnderruns > 65535U ? 65535U : mediaStreamUnderruns));
+  const int16_t tempDeci = isnan(chipTemperatureC)
+      ? 0 : static_cast<int16_t>(chipTemperatureC * 10.0f);
+  MilestoneMedia::writeLe16(ack + 22, static_cast<uint16_t>(tempDeci));
+  MilestoneMedia::writeLe16(ack + 24, mediaStreamActualFpsX10);
+  const uint32_t flush10 = mediaStreamFlushEmaUs / 10U;
+  MilestoneMedia::writeLe16(ack + 26, static_cast<uint16_t>(
+      flush10 > 65535U ? 65535U : flush10));
+  const uint32_t decode10 = mediaStreamDecodeEmaUs / 10U;
+  MilestoneMedia::writeLe16(ack + 28, static_cast<uint16_t>(
+      decode10 > 65535U ? 65535U : decode10));
+}
+
+bool mediaStreamWsHeaderValue(const String &request, const char *name, String &value) {
+  int start = request.indexOf("\r\n") + 2;
+  if (start < 2) return false;
+  while (start < static_cast<int>(request.length())) {
+    const int end = request.indexOf("\r\n", start);
+    if (end < 0 || end == start) break;
+    const int colon = request.indexOf(':', start);
+    if (colon > start && colon < end) {
+      String key = request.substring(start, colon);
+      key.trim();
+      if (key.equalsIgnoreCase(name)) {
+        value = request.substring(colon + 1, end);
+        value.trim();
+        return true;
+      }
+    }
+    start = end + 2;
+  }
+  return false;
+}
+
+bool mediaStreamWsCookieValid(const String &cookies) {
+  const String expected = String("MILESTONE_TOKEN=") + sessionToken;
+  int start = 0;
+  while (start <= static_cast<int>(cookies.length())) {
+    int end = cookies.indexOf(';', start);
+    if (end < 0) end = cookies.length();
+    String cookie = cookies.substring(start, end);
+    cookie.trim();
+    if (cookie == expected) return true;
+    if (end == static_cast<int>(cookies.length())) break;
+    start = end + 1;
+  }
+  return false;
+}
+
+bool writeMediaStreamWsBytes(const uint8_t *data, size_t length) {
+  if (!mediaStreamWsClient || !data) return false;
+  size_t offset = 0;
+  while (offset < length && mediaStreamWsClient.connected()) {
+    const size_t written = mediaStreamWsClient.write(data + offset, length - offset);
+    if (written == 0) return false;
+    offset += written;
+  }
+  return offset == length;
+}
+
+bool sendMediaStreamWsFrame(uint8_t opcode, const uint8_t *payload, size_t length) {
+  if (!mediaStreamWsUpgraded || !mediaStreamWsClient || length > 65535U) return false;
+  uint8_t header[4] = {static_cast<uint8_t>(0x80U | (opcode & 0x0FU)), 0, 0, 0};
+  size_t headerBytes = 2;
+  if (length <= 125U) {
+    header[1] = static_cast<uint8_t>(length);
+  } else {
+    header[1] = 126;
+    header[2] = static_cast<uint8_t>((length >> 8U) & 0xFFU);
+    header[3] = static_cast<uint8_t>(length & 0xFFU);
+    headerBytes = 4;
+  }
+  return writeMediaStreamWsBytes(header, headerBytes) &&
+         (length == 0 || writeMediaStreamWsBytes(payload, length));
+}
+
+void rejectMediaStreamWs(uint16_t code, const char *reason) {
+  if (mediaStreamWsUpgraded && mediaStreamWsClient) {
+    uint8_t payload[125] = {static_cast<uint8_t>((code >> 8U) & 0xFFU),
+                            static_cast<uint8_t>(code & 0xFFU)};
+    size_t reasonBytes = reason ? strlen(reason) : 0;
+    if (reasonBytes > sizeof(payload) - 2U) reasonBytes = sizeof(payload) - 2U;
+    if (reasonBytes) memcpy(payload + 2, reason, reasonBytes);
+    sendMediaStreamWsFrame(0x08, payload, reasonBytes + 2U);
+  }
+  closeMediaStreamWsClient();
+}
+
+bool upgradeMediaStreamWsClient() {
+  if (!mediaStreamActive || !portalActive ||
+      mediaStreamWsClient.localIP() != WiFi.softAPIP()) return false;
+  const int firstEnd = mediaStreamWsHandshake.indexOf("\r\n");
+  if (firstEnd <= 0 ||
+      mediaStreamWsHandshake.substring(0, firstEnd) != "GET /stream-ws HTTP/1.1") {
+    return false;
+  }
+  String upgrade, connection, key, version, cookies;
+  if (!mediaStreamWsHeaderValue(mediaStreamWsHandshake, "Upgrade", upgrade) ||
+      !mediaStreamWsHeaderValue(mediaStreamWsHandshake, "Connection", connection) ||
+      !mediaStreamWsHeaderValue(mediaStreamWsHandshake, "Sec-WebSocket-Key", key) ||
+      !mediaStreamWsHeaderValue(mediaStreamWsHandshake, "Sec-WebSocket-Version", version) ||
+      !mediaStreamWsHeaderValue(mediaStreamWsHandshake, "Cookie", cookies)) {
+    return false;
+  }
+  upgrade.toLowerCase();
+  connection.toLowerCase();
+  if (upgrade != "websocket" || connection.indexOf("upgrade") < 0 ||
+      version != "13" || key.length() < 16U || key.length() > 64U ||
+      !mediaStreamWsCookieValid(cookies)) {
+    return false;
+  }
+  String acceptSource = key;
+  acceptSource += "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+  uint8_t digest[20] = {};
+  if (mbedtls_sha1(reinterpret_cast<const unsigned char *>(acceptSource.c_str()),
+                   acceptSource.length(), digest) != 0) return false;
+  const String accept = base64::encode(digest, sizeof(digest));
+  String response;
+  if (!response.reserve(160U + accept.length())) return false;
+  response = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ";
+  response += accept;
+  response += "\r\n\r\n";
+  if (mediaStreamWsClient.write(reinterpret_cast<const uint8_t *>(response.c_str()),
+                                response.length()) != response.length()) return false;
+  mediaStreamWsUpgraded = true;
+  mediaStreamWsHandshake = "";
+  resetMediaStreamWsFrameState();
+  ++mediaStreamWsReconnects;
+  portalStartedMs = millis();
+  return true;
+}
+
+bool finishMediaStreamWsFrame() {
+  if (mediaStreamWsOpcode == 0x02U) {
+    const size_t encodedBytes = static_cast<size_t>(mediaStreamWsPayloadBytes) -
+                                MilestoneMedia::LIVE_WS_PUSH_HEADER_BYTES;
+    if (mediaStreamWsAppHeaderRead != MilestoneMedia::LIVE_WS_PUSH_HEADER_BYTES ||
+        !finishMediaStreamRawWrite(encodedBytes) || !commitMediaStreamRawWrite()) {
+      rejectMediaStreamWs(1008, mediaStreamRawError ? mediaStreamRawError : "commit-failed");
+      return false;
+    }
+    uint8_t ack[30] = {};
+    fillMediaStreamAck(ack);
+    if (!sendMediaStreamWsFrame(0x02, ack, sizeof(ack))) {
+      closeMediaStreamWsClient();
+      return false;
+    }
+    ++mediaStreamWsMessages;
+    portalStartedMs = millis();
+  } else if (mediaStreamWsOpcode == 0x09U) {
+    if (!sendMediaStreamWsFrame(0x0A, mediaStreamWsControlPayload,
+                                static_cast<size_t>(mediaStreamWsPayloadBytes))) {
+      closeMediaStreamWsClient();
+      return false;
+    }
+  } else if (mediaStreamWsOpcode == 0x08U) {
+    sendMediaStreamWsFrame(0x08, mediaStreamWsControlPayload,
+                           static_cast<size_t>(mediaStreamWsPayloadBytes));
+    closeMediaStreamWsClient();
+    return false;
+  }
+  resetMediaStreamWsFrameState();
+  return true;
+}
+
+bool prepareMediaStreamWsPayload() {
+  const uint8_t first = mediaStreamWsHeader[0];
+  const uint8_t second = mediaStreamWsHeader[1];
+  const bool fin = (first & 0x80U) != 0;
+  const bool masked = (second & 0x80U) != 0;
+  if (!fin || (first & 0x70U) != 0 || !masked) return false;
+  mediaStreamWsOpcode = first & 0x0FU;
+  const uint8_t shortLength = second & 0x7FU;
+  size_t cursor = 2;
+  if (shortLength < 126U) {
+    mediaStreamWsPayloadBytes = shortLength;
+  } else if (shortLength == 126U) {
+    mediaStreamWsPayloadBytes =
+        (static_cast<uint16_t>(mediaStreamWsHeader[cursor]) << 8U) |
+        mediaStreamWsHeader[cursor + 1U];
+    cursor += 2U;
+  } else {
+    mediaStreamWsPayloadBytes = 0;
+    for (uint8_t i = 0; i < 8; ++i) {
+      mediaStreamWsPayloadBytes = (mediaStreamWsPayloadBytes << 8U) |
+                                  mediaStreamWsHeader[cursor + i];
+    }
+    cursor += 8U;
+  }
+  memcpy(mediaStreamWsMask, mediaStreamWsHeader + cursor, sizeof(mediaStreamWsMask));
+  if (mediaStreamWsOpcode == 0x02U) {
+    if (mediaStreamWsPayloadBytes < MilestoneMedia::LIVE_WS_PUSH_HEADER_BYTES ||
+        mediaStreamWsPayloadBytes > MEDIA_STREAM_WS_MAX_MESSAGE_BYTES ||
+        mediaStreamRawActive) return false;
+  } else if ((mediaStreamWsOpcode & 0x08U) != 0) {
+    if (mediaStreamWsPayloadBytes > sizeof(mediaStreamWsControlPayload) ||
+        (mediaStreamWsOpcode != 0x08U && mediaStreamWsOpcode != 0x09U &&
+         mediaStreamWsOpcode != 0x0AU)) return false;
+  } else {
+    return false;
+  }
+  return true;
+}
+
+void processMediaStreamWebSocket() {
+  if (!mediaStreamActive || !mediaStreamWsListening) return;
+  if (!mediaStreamWsClient || !mediaStreamWsClient.connected()) {
+    if (mediaStreamWsClient) closeMediaStreamWsClient();
+    WiFiClient incoming = mediaStreamWsServer.accept();
+    if (!incoming) return;
+    if (incoming.localIP() != WiFi.softAPIP()) {
+      incoming.stop();
+      return;
+    }
+    mediaStreamWsClient = incoming;
+    mediaStreamWsClient.setNoDelay(true);
+    mediaStreamWsConnectedMs = millis();
+    mediaStreamWsHandshake = "";
+    mediaStreamWsHandshake.reserve(MEDIA_STREAM_WS_HANDSHAKE_MAX_BYTES);
+    resetMediaStreamWsFrameState();
+  }
+
+  size_t budget = MEDIA_STREAM_WS_READ_BUDGET;
+  if (!mediaStreamWsUpgraded) {
+    while (budget-- > 0 && mediaStreamWsClient.available() > 0) {
+      const int value = mediaStreamWsClient.read();
+      if (value < 0) break;
+      if (mediaStreamWsHandshake.length() >= MEDIA_STREAM_WS_HANDSHAKE_MAX_BYTES) {
+        closeMediaStreamWsClient();
+        return;
+      }
+      mediaStreamWsHandshake += static_cast<char>(value);
+      if (mediaStreamWsHandshake.endsWith("\r\n\r\n")) {
+        if (!upgradeMediaStreamWsClient()) {
+          const char response[] = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+          mediaStreamWsClient.write(reinterpret_cast<const uint8_t *>(response),
+                                    sizeof(response) - 1U);
+          closeMediaStreamWsClient();
+        }
+        return;
+      }
+    }
+    if (elapsed(millis(), mediaStreamWsConnectedMs,
+                MEDIA_STREAM_WS_HANDSHAKE_TIMEOUT_MS)) closeMediaStreamWsClient();
+    return;
+  }
+
+  uint8_t chunk[1024];
+  while (budget > 0 && mediaStreamWsClient && mediaStreamWsClient.available() > 0) {
+    if (mediaStreamWsHeaderRead < mediaStreamWsHeaderNeeded) {
+      const int value = mediaStreamWsClient.read();
+      if (value < 0) break;
+      mediaStreamWsHeader[mediaStreamWsHeaderRead++] = static_cast<uint8_t>(value);
+      --budget;
+      if (mediaStreamWsHeaderRead == 2U) {
+        const uint8_t shortLength = mediaStreamWsHeader[1] & 0x7FU;
+        mediaStreamWsHeaderNeeded = static_cast<uint8_t>(
+            2U + (shortLength < 126U ? 0U : shortLength == 126U ? 2U : 8U) + 4U);
+      }
+      if (mediaStreamWsHeaderRead == mediaStreamWsHeaderNeeded) {
+        if (!prepareMediaStreamWsPayload()) {
+          rejectMediaStreamWs(1002, "invalid-frame");
+          return;
+        }
+        if (mediaStreamWsPayloadBytes == 0 && !finishMediaStreamWsFrame()) return;
+      }
+      continue;
+    }
+
+    const size_t remaining = static_cast<size_t>(
+        mediaStreamWsPayloadBytes - mediaStreamWsPayloadRead);
+    const size_t wanted = min(min(remaining, sizeof(chunk)), budget);
+    const int received = mediaStreamWsClient.read(chunk, wanted);
+    if (received <= 0) break;
+    for (int i = 0; i < received; ++i) {
+      chunk[i] ^= mediaStreamWsMask[(mediaStreamWsPayloadRead + i) & 3U];
+    }
+    if (mediaStreamWsOpcode == 0x02U) {
+      size_t offset = 0;
+      if (mediaStreamWsAppHeaderRead < MilestoneMedia::LIVE_WS_PUSH_HEADER_BYTES) {
+        const size_t copyBytes = min(
+            static_cast<size_t>(received),
+            MilestoneMedia::LIVE_WS_PUSH_HEADER_BYTES - mediaStreamWsAppHeaderRead);
+        memcpy(mediaStreamWsAppHeader + mediaStreamWsAppHeaderRead, chunk, copyBytes);
+        mediaStreamWsAppHeaderRead += copyBytes;
+        offset += copyBytes;
+        if (mediaStreamWsAppHeaderRead == MilestoneMedia::LIVE_WS_PUSH_HEADER_BYTES) {
+          uint32_t session = 0, sequence = 0;
+          uint8_t frameCount = 0;
+          size_t encodedBytes = 0;
+          if (!MilestoneMedia::parseLiveWebSocketPushHeader(
+                  mediaStreamWsAppHeader, static_cast<size_t>(mediaStreamWsPayloadBytes),
+                  MEDIA_STREAM_MAX_PUSH_FRAMES, MEDIA_STREAM_WS_MAX_PUSH_BYTES,
+                  session, sequence, frameCount, encodedBytes) ||
+              !beginMediaStreamRawWrite(session, sequence, frameCount, encodedBytes)) {
+            rejectMediaStreamWs(1008, mediaStreamRawError ? mediaStreamRawError : "invalid-push");
+            return;
+          }
+        }
+      }
+      if (offset < static_cast<size_t>(received) &&
+          !writeMediaStreamRawChunk(chunk + offset,
+                                   static_cast<size_t>(received) - offset)) {
+        rejectMediaStreamWs(1008, mediaStreamRawError);
+        return;
+      }
+    } else if (mediaStreamWsPayloadBytes > 0) {
+      memcpy(mediaStreamWsControlPayload + mediaStreamWsPayloadRead, chunk,
+             static_cast<size_t>(received));
+    }
+    mediaStreamWsPayloadRead += static_cast<uint64_t>(received);
+    budget -= static_cast<size_t>(received);
+    if (mediaStreamWsPayloadRead == mediaStreamWsPayloadBytes &&
+        !finishMediaStreamWsFrame()) return;
+  }
 }
 
 void processMediaStreamState(uint32_t now) {
