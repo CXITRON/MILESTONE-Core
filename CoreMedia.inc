@@ -32,6 +32,8 @@ constexpr size_t MEDIA_STREAM_JPEG_OUTPUT_BYTES =
 constexpr size_t MEDIA_STREAM_JPEG_WORK_BYTES = 4096U;
 constexpr uint8_t MEDIA_STREAM_PREBUFFER_FRAMES = 24;
 constexpr uint8_t MEDIA_STREAM_REBUFFER_FRAMES = 12;
+constexpr uint8_t MEDIA_STREAM_JPEG_PREBUFFER_FRAMES = 48;
+constexpr uint8_t MEDIA_STREAM_JPEG_REBUFFER_FRAMES = 24;
 constexpr size_t MEDIA_STREAM_PACKET_MAX_BYTES =
     static_cast<size_t>(MEDIA_STREAM_MAX_PUSH_FRAMES) *
     (MilestoneMedia::FRAME_HEADER_BYTES + MEDIA_STREAM_JPEG_MAX_BYTES);
@@ -1349,7 +1351,10 @@ bool commitMediaStreamRawWrite() {
   mediaStreamEncodedBytes += static_cast<uint32_t>(mediaStreamRawExpectedBytes);
   mediaStreamLastPushMs = millis();
   const uint8_t resumeThreshold = mediaStreamDisplayedFrames == 0
-      ? MEDIA_STREAM_PREBUFFER_FRAMES : MEDIA_STREAM_REBUFFER_FRAMES;
+      ? (mediaStreamJpegMode ? MEDIA_STREAM_JPEG_PREBUFFER_FRAMES
+                             : MEDIA_STREAM_PREBUFFER_FRAMES)
+      : (mediaStreamJpegMode ? MEDIA_STREAM_JPEG_REBUFFER_FRAMES
+                             : MEDIA_STREAM_REBUFFER_FRAMES);
   if (mediaStreamPhase == MediaStreamPhase::BUFFERING &&
       mediaStreamQueueCount >= resumeThreshold) {
     mediaStreamPhase = MediaStreamPhase::PLAYING;

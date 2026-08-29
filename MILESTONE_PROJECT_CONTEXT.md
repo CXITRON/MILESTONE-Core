@@ -1,6 +1,6 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v3.3.2
+> Current baseline: MILESTONE Core v3.3.3
 > Hardware: Waveshare ESP32-S3-Zero + ST7735-compatible 128×160 SPI TFT + three tactile switches
 > Repository: `CXITRON/MILESTONE-Core`
 
@@ -91,7 +91,7 @@ The `*.inc` runtime files are intentionally included into the sketch as one tran
 Firmware and persistent schema versions are separate concepts.
 
 ```cpp
-FIRMWARE_VERSION = "3.3.2"
+FIRMWARE_VERSION = "3.3.3"
 CONFIG_VERSION = 12
 ```
 
@@ -241,6 +241,8 @@ v3.1.3 keeps color-frame TFT flushes out of the WebServer raw-body receive loop 
 
 v3.3.2 replaces the unsuccessful v3.3.1 same-loop receive-slice adjustment after hardware still measured roughly 3.1-second ACKs and 0.8fps sending while display service remained 17.7fps. A dedicated core-0 FreeRTOS producer now owns WebSocket accept, handshake, masking, and socket reads into a separate bounded 32KiB PSRAM ingress buffer. The core-1 Arduino loop consumes only complete messages, runs the existing sequence/frame validation and PSRAM queue commit, and returns the ACK. Atomic ready publication and bounded task shutdown prevent partial messages or released buffers from crossing the task boundary. Display, buttons, thermal/resource safety, HTTP fallback, and schema 12 remain unchanged.
 
+v3.3.3 addresses the remaining ACK-serialized browser sender observed on v3.3.2 hardware as 19.3fps display service but only 9.8fps sustained delivery and 864ms ACK latency. The persistent WebSocket now keeps up to four ordered messages in flight, reserves queue credit for every unacknowledged frame, and maps ordered ACKs back to the corresponding sends without exceeding the 96-frame device queue. Color conversion exposes an 1.8/2.4/3.2/4.8KiB JPEG target selector and defaults to the 2.4KiB smooth-playback target. The browser initially aims for 72 frames, while JPEG playback starts at 48 and rebuffering resumes at 24; monochrome retains its existing 24/12 thresholds. HTTP fallback remains single-request paced. Schema 12 is unchanged.
+
 v3.3.1 fixes WebSocket receive-window starvation observed on v3.3.0 hardware as roughly 2.5-second ACKs despite 18.7fps display service. Once a WebSocket message has started, the receiver now yields to lwIP and continues draining newly arrived TCP segments for at most the existing 12ms network service slice, instead of leaving after the first momentary empty `available()` result and waiting through another JPEG decode plus TFT flush. The byte and message bounds, persistent connection, PSRAM-only storage, safety processing, and HTTP fallback remain unchanged. Schema 12 is unchanged.
 
 v3.3.0 makes a dedicated port-81 WebSocket the primary live-stream transport. One authenticated persistent connection carries bounded binary push messages containing session, sequence, frame count, and encoded frame records, with the existing 30-byte ACK returned as a binary WebSocket message. The non-blocking receiver reads at most 8KiB per STREAM_MODE loop so display, button, temperature, and resource safety keep running; frame data remains in PSRAM and never touches LittleFS/NVS. The previous raw HTTP endpoint remains a compatibility fallback. Schema 12 is unchanged.
@@ -265,19 +267,20 @@ Application-level rollback cannot recover a candidate that fails before the roll
 
 `CoreRuntime.inc` coordinates the main loop, previous/next/confirm and onboard BOOT behavior, screen cycling, temperature protection, and high-level state progression. Previous/next navigate CORE views, MEDIA items, or NOW layouts. Confirm and onboard BOOT share the existing short/hold confirmation path. Preserve cooperative/early-return semantics when modifying state processing.
 
-### Live streaming (v1.10.5+, buffering/render pacing revised in v1.10.8)
+### Live streaming (v1.10.5+, WebSocket/JPEG pipeline revised in v3.3.3)
 
-Live streaming is intentionally isolated from the normal cooperative runtime. `/stream` serves a dedicated lightweight browser page. The browser pre-converts the full source into 128×128 one-bit frames before playback, then sends paced `application/octet-stream` frame-record bodies. The first source frame is RAW and later frames use bounded XOR-RLE deltas only when smaller; the ESP32 reconstructs every accepted record into a raw PSRAM ring before playback. Live frames are never written to LittleFS.
+Live streaming is intentionally isolated from the normal cooperative runtime. `/stream` serves a dedicated lightweight browser page. The browser pre-converts the full source into independent 128×128 JPEG color frames or one-bit monochrome frames before playback. Port 81 carries bounded binary frame-record messages over one authenticated persistent WebSocket; raw `application/octet-stream` HTTP remains a compatibility fallback. Monochrome uses a first RAW frame and bounded XOR-RLE deltas only when smaller. Color frames stay as JPEG in the PSRAM queue and are decoded to RGB565 only when displayed. Live frames are never written to LittleFS or NVS.
 
 While `mediaStreamActive` is true, `loopFirmware()` enters `processMediaStreamMode()` and returns before normal OTA, diagnostics, cycle, display, LED, NTP/reconnect scheduling, or stored-media work can run. The stream loop services only captive-portal networking, the binary frame-record transport, PSRAM queue/TFT timing, confirm-or-BOOT stop input, resource guards, and low-rate thermal checks. A stream started inside `processNetwork()` is detected immediately and also returns before any normal background subsystem runs.
 
 Important stream contracts:
 
-- PSRAM is required; the live ring capacity is 240 raw frames (480 KiB).
-- Initial playback starts after 96 queued frames and recovers from underrun after 48 frames, giving the sender several seconds of jitter margin.
-- Pushes carry at most 8 RAW/XOR-RLE frame records and receive a compact binary ACK; the browser refills by queue watermarks, and transport-loss retries reuse the same idempotent sequence/header/body.
+- PSRAM is required; the live ring has 96 slots. Color slots have a fixed 12KiB JPEG ceiling and monochrome slots hold 2KiB reconstructed frames.
+- Color playback starts after 48 queued frames and resumes after rebuilding 24; monochrome retains the 24/12 thresholds. The browser's initial target is 72 frames.
+- Pushes carry at most 12 frame records and 32KiB. WebSocket mode keeps at most four ordered messages in flight, accounts every unacknowledged frame against queue capacity, and maps compact ACKs in transport order. HTTP fallback remains one-request paced and retains same-sequence/body retries.
+- Color conversion offers approximate 1.8/2.4/3.2/4.8KiB per-frame JPEG targets; 2.4KiB is the smooth-playback default. The hard device ceiling remains 12KiB.
 - On Arduino-ESP32 3.3.11, raw-body routes do not expose URL query metadata through `server.arg()` during `RAW_START`; live pushes therefore carry session, sequence, frame-count, and encoded-byte length in explicitly collected `X-MILESTONE-*` request headers. Do not move these fields back into the push URL.
-- Duplicate committed sequence numbers are consumed and ACKed without enqueueing frames twice.
+- Duplicate committed sequence numbers are consumed and ACKed without enqueueing frames twice. WebSocket session, sequence, frame-count, and encoded-length metadata use the fixed binary `MSW1` envelope.
 - 20fps is the normal source-timebase target; 24fps is experimental. The TFT service clock adapts to measured flush cost and reserves a network-service slice; stale source frames are dropped rather than accumulating latency.
 - The TFT path detects changed 8×8 tiles on both axes and converts row spans/bounding rectangles to RGB565 before falling back to a full centered 128×128 update.
 - Stream thermal policy is 75°C warning, 80°C controlled stream stop, 85°C emergency thermal-safe entry.
