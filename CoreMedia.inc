@@ -43,6 +43,7 @@ constexpr size_t MEDIA_STREAM_WS_HANDSHAKE_MAX_BYTES = 2048U;
 constexpr uint32_t MEDIA_STREAM_WS_HANDSHAKE_TIMEOUT_MS = 3000UL;
 constexpr size_t MEDIA_STREAM_WS_READ_BUDGET =
     MEDIA_STREAM_WS_MAX_MESSAGE_BYTES + 14U;
+constexpr size_t MEDIA_STREAM_WS_TASK_READ_BUDGET = 4096U;
 // Full-screen display flushes consume a meaningful part of a 20 fps frame period.
 // Reserve an explicit service window after each display transaction so the HTTP
 // server can drain incoming frame batches instead of being starved by display
@@ -115,6 +116,7 @@ String mediaUploadError;
 uint8_t *mediaStreamQueue = nullptr;
 uint8_t *mediaStreamRawPacket = nullptr;
 uint8_t *mediaStreamDecodeFrame = nullptr;
+uint8_t *mediaStreamWsIngress = nullptr;
 uint8_t *mediaStreamJpegWorkBuffer = nullptr;
 uint16_t mediaStreamJpegLengths[MEDIA_STREAM_QUEUE_FRAMES] = {};
 bool mediaStreamJpegMode = false;
@@ -184,6 +186,19 @@ uint64_t mediaStreamWsPayloadRead = 0;
 uint8_t mediaStreamWsAppHeader[MilestoneMedia::LIVE_WS_PUSH_HEADER_BYTES] = {};
 uint8_t mediaStreamWsAppHeaderRead = 0;
 uint8_t mediaStreamWsControlPayload[125] = {};
+TaskHandle_t mediaStreamWsTaskHandle = nullptr;
+volatile bool mediaStreamWsTaskStopRequested = false;
+volatile bool mediaStreamWsTaskRunning = false;
+volatile bool mediaStreamWsMessageReady = false;
+uint32_t mediaStreamWsCurrentSession = 0;
+uint32_t mediaStreamWsCurrentSequence = 0;
+uint8_t mediaStreamWsCurrentFrameCount = 0;
+size_t mediaStreamWsCurrentEncodedBytes = 0;
+size_t mediaStreamWsIngressWritten = 0;
+uint32_t mediaStreamWsReadySession = 0;
+uint32_t mediaStreamWsReadySequence = 0;
+uint8_t mediaStreamWsReadyFrameCount = 0;
+size_t mediaStreamWsReadyEncodedBytes = 0;
 
 String mediaPath(uint32_t id) {
   char path[32];
@@ -936,12 +951,14 @@ bool allocateMediaStreamBuffer() {
   const size_t decodeBytes = mediaStreamJpegMode
       ? MEDIA_STREAM_JPEG_OUTPUT_BYTES : MilestoneMedia::FRAME_BYTES;
   const size_t allocationBytes =
-      queueBytes + MEDIA_STREAM_PACKET_MAX_BYTES + decodeBytes;
+      queueBytes + MEDIA_STREAM_PACKET_MAX_BYTES + decodeBytes +
+      MEDIA_STREAM_WS_MAX_PUSH_BYTES;
   mediaStreamQueue = static_cast<uint8_t *>(heap_caps_malloc(
       allocationBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
   if (!mediaStreamQueue) return false;
   mediaStreamRawPacket = mediaStreamQueue + queueBytes;
   mediaStreamDecodeFrame = mediaStreamRawPacket + MEDIA_STREAM_PACKET_MAX_BYTES;
+  mediaStreamWsIngress = mediaStreamDecodeFrame + decodeBytes;
   memset(mediaStreamDecodeFrame, 0, decodeBytes);
   if (mediaStreamJpegMode) {
     mediaStreamJpegWorkBuffer = static_cast<uint8_t *>(heap_caps_malloc(
@@ -951,6 +968,7 @@ bool allocateMediaStreamBuffer() {
       mediaStreamQueue = nullptr;
       mediaStreamRawPacket = nullptr;
       mediaStreamDecodeFrame = nullptr;
+      mediaStreamWsIngress = nullptr;
       return false;
     }
   }
@@ -976,6 +994,7 @@ void releaseMediaStreamBuffer() {
   mediaStreamQueue = nullptr;
   mediaStreamRawPacket = nullptr;
   mediaStreamDecodeFrame = nullptr;
+  mediaStreamWsIngress = nullptr;
   mediaStreamJpegWorkBuffer = nullptr;
   memset(mediaStreamJpegLengths, 0, sizeof(mediaStreamJpegLengths));
 }
@@ -1004,7 +1023,14 @@ void resetMediaStreamWsFrameState() {
   memset(mediaStreamWsAppHeader, 0, sizeof(mediaStreamWsAppHeader));
   mediaStreamWsAppHeaderRead = 0;
   memset(mediaStreamWsControlPayload, 0, sizeof(mediaStreamWsControlPayload));
+  mediaStreamWsCurrentSession = 0;
+  mediaStreamWsCurrentSequence = 0;
+  mediaStreamWsCurrentFrameCount = 0;
+  mediaStreamWsCurrentEncodedBytes = 0;
+  mediaStreamWsIngressWritten = 0;
 }
+
+void mediaStreamWsTaskMain(void *);
 
 void closeMediaStreamWsClient() {
   if (mediaStreamWsClient) mediaStreamWsClient.stop();
@@ -1013,7 +1039,7 @@ void closeMediaStreamWsClient() {
   mediaStreamWsHandshake = "";
   mediaStreamWsConnectedMs = 0;
   resetMediaStreamWsFrameState();
-  if (mediaStreamRawActive) resetMediaStreamRawState();
+  __atomic_store_n(&mediaStreamWsMessageReady, false, __ATOMIC_RELEASE);
 }
 
 void startMediaStreamWebSocketServer() {
@@ -1022,12 +1048,39 @@ void startMediaStreamWebSocketServer() {
   mediaStreamWsServer.begin();
   mediaStreamWsListening = static_cast<bool>(mediaStreamWsServer);
   if (!mediaStreamWsListening) logLine("STREAM_MODE WebSocket listen failed");
+  mediaStreamWsTaskStopRequested = false;
+  if (mediaStreamWsListening && mediaStreamWsTaskHandle == nullptr) {
+    mediaStreamWsTaskRunning = true;
+    if (xTaskCreatePinnedToCore(mediaStreamWsTaskMain, "milestone-ws", 8192,
+                                nullptr, 2, &mediaStreamWsTaskHandle, 0) != pdPASS) {
+      mediaStreamWsTaskHandle = nullptr;
+      mediaStreamWsTaskRunning = false;
+      logLine("STREAM_MODE WebSocket task start failed");
+    }
+  }
 }
 
 void stopMediaStreamWebSocketServer() {
+  mediaStreamWsTaskStopRequested = true;
+  // Closing the descriptor wakes a task that may currently be inside a
+  // handshake/ACK socket write. The task owns no queue state, so wait for it
+  // to leave before releasing its PSRAM ingress buffer.
+  if (mediaStreamWsClient) mediaStreamWsClient.stop();
+  const uint32_t waitStartedMs = millis();
+  while (mediaStreamWsTaskRunning &&
+         !elapsed(millis(), waitStartedMs, 1200UL)) {
+    delay(1);
+  }
+  if (mediaStreamWsTaskRunning && mediaStreamWsTaskHandle != nullptr) {
+    logLine("STREAM_MODE WebSocket task forced stop");
+    vTaskDelete(mediaStreamWsTaskHandle);
+    mediaStreamWsTaskHandle = nullptr;
+    mediaStreamWsTaskRunning = false;
+  }
   closeMediaStreamWsClient();
   if (mediaStreamWsListening) mediaStreamWsServer.stop();
   mediaStreamWsListening = false;
+  mediaStreamWsMessageReady = false;
 }
 
 void stopMediaStream() {
@@ -1474,18 +1527,20 @@ bool finishMediaStreamWsFrame() {
     const size_t encodedBytes = static_cast<size_t>(mediaStreamWsPayloadBytes) -
                                 MilestoneMedia::LIVE_WS_PUSH_HEADER_BYTES;
     if (mediaStreamWsAppHeaderRead != MilestoneMedia::LIVE_WS_PUSH_HEADER_BYTES ||
-        !finishMediaStreamRawWrite(encodedBytes) || !commitMediaStreamRawWrite()) {
-      rejectMediaStreamWs(1008, mediaStreamRawError ? mediaStreamRawError : "commit-failed");
+        mediaStreamWsCurrentSession == 0 || mediaStreamWsCurrentSequence == 0 ||
+        mediaStreamWsCurrentFrameCount == 0 ||
+        mediaStreamWsCurrentEncodedBytes != encodedBytes ||
+        mediaStreamWsIngressWritten != encodedBytes) {
+      rejectMediaStreamWs(1008, "incomplete-push");
       return false;
     }
-    uint8_t ack[30] = {};
-    fillMediaStreamAck(ack);
-    if (!sendMediaStreamWsFrame(0x02, ack, sizeof(ack))) {
-      closeMediaStreamWsClient();
-      return false;
-    }
-    ++mediaStreamWsMessages;
-    portalStartedMs = millis();
+    mediaStreamWsReadySession = mediaStreamWsCurrentSession;
+    mediaStreamWsReadySequence = mediaStreamWsCurrentSequence;
+    mediaStreamWsReadyFrameCount = mediaStreamWsCurrentFrameCount;
+    mediaStreamWsReadyEncodedBytes = mediaStreamWsCurrentEncodedBytes;
+    resetMediaStreamWsFrameState();
+    __atomic_store_n(&mediaStreamWsMessageReady, true, __ATOMIC_RELEASE);
+    return true;
   } else if (mediaStreamWsOpcode == 0x09U) {
     if (!sendMediaStreamWsFrame(0x0A, mediaStreamWsControlPayload,
                                 static_cast<size_t>(mediaStreamWsPayloadBytes))) {
@@ -1541,7 +1596,7 @@ bool prepareMediaStreamWsPayload() {
   return true;
 }
 
-void processMediaStreamWebSocket() {
+void processMediaStreamWebSocketIo() {
   if (!mediaStreamActive || !mediaStreamWsListening) return;
   if (!mediaStreamWsClient || !mediaStreamWsClient.connected()) {
     if (mediaStreamWsClient) closeMediaStreamWsClient();
@@ -1559,7 +1614,7 @@ void processMediaStreamWebSocket() {
     resetMediaStreamWsFrameState();
   }
 
-  size_t budget = MEDIA_STREAM_WS_READ_BUDGET;
+  size_t budget = MEDIA_STREAM_WS_TASK_READ_BUDGET;
   if (!mediaStreamWsUpgraded) {
     while (budget-- > 0 && mediaStreamWsClient.available() > 0) {
       const int value = mediaStreamWsClient.read();
@@ -1584,23 +1639,8 @@ void processMediaStreamWebSocket() {
     return;
   }
 
-  const uint32_t serviceStartedUs = micros();
-  const uint32_t serviceBudgetUs =
-      static_cast<uint32_t>(MEDIA_STREAM_NETWORK_SLICE_MS) * 1000U;
   uint8_t chunk[1024];
-  while (budget > 0 && mediaStreamWsClient &&
-         static_cast<uint32_t>(micros() - serviceStartedUs) < serviceBudgetUs) {
-    if (mediaStreamWsClient.available() <= 0) {
-      // lwIP's small receive window is refilled by the Wi-Fi/TCP task after
-      // the current bytes are consumed. Once a message has started, yield
-      // briefly inside the reserved network slice instead of postponing every
-      // next TCP segment until after another JPEG decode + TFT flush.
-      const bool messageInProgress = mediaStreamWsHeaderRead > 0 ||
-                                     mediaStreamWsPayloadRead > 0;
-      if (!messageInProgress) break;
-      delay(1);
-      continue;
-    }
+  while (budget > 0 && mediaStreamWsClient && mediaStreamWsClient.available() > 0) {
     if (mediaStreamWsHeaderRead < mediaStreamWsHeaderNeeded) {
       const int value = mediaStreamWsClient.read();
       if (value < 0) break;
@@ -1646,17 +1686,27 @@ void processMediaStreamWebSocket() {
                   mediaStreamWsAppHeader, static_cast<size_t>(mediaStreamWsPayloadBytes),
                   MEDIA_STREAM_MAX_PUSH_FRAMES, MEDIA_STREAM_WS_MAX_PUSH_BYTES,
                   session, sequence, frameCount, encodedBytes) ||
-              !beginMediaStreamRawWrite(session, sequence, frameCount, encodedBytes)) {
-            rejectMediaStreamWs(1008, mediaStreamRawError ? mediaStreamRawError : "invalid-push");
+              session != mediaStreamSessionId || !mediaStreamWsIngress) {
+            rejectMediaStreamWs(1008, "invalid-push");
             return;
           }
+          mediaStreamWsCurrentSession = session;
+          mediaStreamWsCurrentSequence = sequence;
+          mediaStreamWsCurrentFrameCount = frameCount;
+          mediaStreamWsCurrentEncodedBytes = encodedBytes;
         }
       }
-      if (offset < static_cast<size_t>(received) &&
-          !writeMediaStreamRawChunk(chunk + offset,
-                                   static_cast<size_t>(received) - offset)) {
-        rejectMediaStreamWs(1008, mediaStreamRawError);
-        return;
+      if (offset < static_cast<size_t>(received)) {
+        const size_t copyBytes = static_cast<size_t>(received) - offset;
+        if (!mediaStreamWsIngress ||
+            mediaStreamWsIngressWritten + copyBytes > mediaStreamWsCurrentEncodedBytes ||
+            mediaStreamWsIngressWritten + copyBytes > MEDIA_STREAM_WS_MAX_PUSH_BYTES) {
+          rejectMediaStreamWs(1008, "push-overflow");
+          return;
+        }
+        memcpy(mediaStreamWsIngress + mediaStreamWsIngressWritten,
+               chunk + offset, copyBytes);
+        mediaStreamWsIngressWritten += copyBytes;
       }
     } else if (mediaStreamWsPayloadBytes > 0) {
       memcpy(mediaStreamWsControlPayload + mediaStreamWsPayloadRead, chunk,
@@ -1667,6 +1717,51 @@ void processMediaStreamWebSocket() {
     if (mediaStreamWsPayloadRead == mediaStreamWsPayloadBytes &&
         !finishMediaStreamWsFrame()) return;
   }
+}
+
+void mediaStreamWsTaskMain(void *) {
+  mediaStreamWsTaskRunning = true;
+  while (!mediaStreamWsTaskStopRequested && mediaStreamActive) {
+    if (__atomic_load_n(&mediaStreamWsMessageReady, __ATOMIC_ACQUIRE)) {
+      vTaskDelay(pdMS_TO_TICKS(1));
+      continue;
+    }
+    processMediaStreamWebSocketIo();
+    vTaskDelay(pdMS_TO_TICKS(1));
+  }
+  mediaStreamWsTaskRunning = false;
+  mediaStreamWsTaskHandle = nullptr;
+  vTaskDelete(nullptr);
+}
+
+void processMediaStreamWebSocket() {
+  if (!mediaStreamActive ||
+      !__atomic_load_n(&mediaStreamWsMessageReady, __ATOMIC_ACQUIRE)) return;
+  const bool committed = beginMediaStreamRawWrite(
+                             mediaStreamWsReadySession,
+                             mediaStreamWsReadySequence,
+                             mediaStreamWsReadyFrameCount,
+                             mediaStreamWsReadyEncodedBytes) &&
+                         writeMediaStreamRawChunk(mediaStreamWsIngress,
+                                                  mediaStreamWsReadyEncodedBytes) &&
+                         finishMediaStreamRawWrite(mediaStreamWsReadyEncodedBytes) &&
+                         commitMediaStreamRawWrite();
+  if (!committed) {
+    __atomic_store_n(&mediaStreamWsMessageReady, false, __ATOMIC_RELEASE);
+    rejectMediaStreamWs(1008,
+                        mediaStreamRawError ? mediaStreamRawError : "commit-failed");
+    return;
+  }
+  uint8_t ack[30] = {};
+  fillMediaStreamAck(ack);
+  if (!sendMediaStreamWsFrame(0x02, ack, sizeof(ack))) {
+    __atomic_store_n(&mediaStreamWsMessageReady, false, __ATOMIC_RELEASE);
+    closeMediaStreamWsClient();
+    return;
+  }
+  ++mediaStreamWsMessages;
+  portalStartedMs = millis();
+  __atomic_store_n(&mediaStreamWsMessageReady, false, __ATOMIC_RELEASE);
 }
 
 void processMediaStreamState(uint32_t now) {
