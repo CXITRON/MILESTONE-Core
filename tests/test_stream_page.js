@@ -23,6 +23,7 @@ assert.strictEqual(parsed.queue,6);assert.strictEqual(parsed.capacity,240);asser
 assert.strictEqual(parsed.decodeUs,6400);
 run("var savedChunks=state.chunks,savedCount=state.frameCount;JPEG_MODE=true;FRAME_BYTES=16384;state.jpegFrames=[new Uint8Array([255,216,1,2,255,217]),new Uint8Array([255,216,3,4,255,217])];state.frameCount=2");
 const jpegRecords=run('encodeBatch(0,2)');assert.strictEqual(jpegRecords.length,22);assert.strictEqual(jpegRecords[0],2,'live JPEG record needs encoding 2');assert.strictEqual(new DataView(jpegRecords.buffer).getUint16(3,true),6);assert.strictEqual(jpegRecords[11],2,'each color frame must be an independent JPEG record');
+assert.strictEqual(run('boundedPushCount(0,12)'),1,'color transport must alternate one JPEG request with one render opportunity');
 run('JPEG_MODE=false;FRAME_BYTES=2048;state.chunks=savedChunks;state.frameCount=savedCount;state.jpegFrames=[]');
 assert(/INITIAL_FILL_FRAMES=24/.test(source));assert(/LOW_WATERMARK=48/.test(source));assert(/REFILL_TARGET=88/.test(source));assert(/REFILL_FLOOR=72/.test(source));assert(/QUEUE_SAFETY_FRAMES=4/.test(source));assert(/MAX_PUSH_FRAMES=12/.test(source));assert(/PUSH_TIMEOUT_MS=10000/.test(source));assert(!/LEAD_FRAMES|STEADY_PUSH_FRAMES/.test(source));
 run('state.fps=20;state.lastAck={queue:96,phase:2,actualFps:.7};state.lastAckAt=500');assert.strictEqual(run('estimatedQueue()'),86,'queue consumption follows the source timeline even when displayed FPS is temporarily low');

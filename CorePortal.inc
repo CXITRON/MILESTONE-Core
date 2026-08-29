@@ -420,10 +420,10 @@ void handleMediaStreamPushRaw() {
   if (raw.status == RAW_WRITE) {
     if (!mediaStreamRawFailed) {
       writeMediaStreamRawChunk(raw.buf, raw.currentSize);
-      // JPEG keeps color requests bounded, so service due frames while the
-      // synchronous WebServer drains a body instead of exposing its receive
-      // time as a visible screen freeze.
-      if (mediaStreamPhase == MediaStreamPhase::PLAYING) {
+      // Monochrome batches can still be large enough to justify servicing the
+      // display while WebServer drains them. Color uses one JPEG per request:
+      // rendering here would stall TCP receive and inflate every POST RTT.
+      if (!mediaStreamJpegMode && mediaStreamPhase == MediaStreamPhase::PLAYING) {
         renderMediaStreamFrameIfDue(millis());
       }
     }
