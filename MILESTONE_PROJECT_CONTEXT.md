@@ -1,6 +1,6 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v3.2.1
+> Current baseline: MILESTONE Core v3.3.0
 > Hardware: Waveshare ESP32-S3-Zero + ST7735-compatible 128×160 SPI TFT + three tactile switches
 > Repository: `CXITRON/MILESTONE-Core`
 
@@ -91,7 +91,7 @@ The `*.inc` runtime files are intentionally included into the sketch as one tran
 Firmware and persistent schema versions are separate concepts.
 
 ```cpp
-FIRMWARE_VERSION = "3.2.1"
+FIRMWARE_VERSION = "3.3.0"
 CONFIG_VERSION = 12
 ```
 
@@ -238,6 +238,8 @@ v3.1.0 adds the PSRAM RGB565 display layer, semantic CORE colors, colored status
 v3.1.2 makes the low-cost global TFT tone LUT configurable from every profile's setup portal. Schema 12 stores 50–100% luminance and -20–+20% contrast values, migrates schema 11 to the existing 92%/+8% appearance, and recalculates the 96-byte LUT only at boot or after a successful settings save. The adjustment remains common to CORE graphics, stored/live MEDIA, NOW artwork, status icons, and frame chrome.
 
 v3.1.3 keeps color-frame TFT flushes out of the WebServer raw-body receive loop so full-screen SPI work no longer competes with SoftAP transport for every incoming chunk. The browser abandons unprofitable XOR-RLE encoding early, reports encoder latency, and offers a 48MiB mobile-safe or 96MiB expanded preconversion ceiling calculated from the active mono/color frame size. Explicit setup-portal exit now cancels portal-only scan and time-sync work instead of remaining blocked behind it. Stored MEDIA catalog selection is manual through the previous/next buttons; only playback-failure recovery may skip a broken item. Schema 12 is unchanged.
+
+v3.3.0 makes a dedicated port-81 WebSocket the primary live-stream transport. One authenticated persistent connection carries bounded binary push messages containing session, sequence, frame count, and encoded frame records, with the existing 30-byte ACK returned as a binary WebSocket message. The non-blocking receiver reads at most 8KiB per STREAM_MODE loop so display, button, temperature, and resource safety keep running; frame data remains in PSRAM and never touches LittleFS/NVS. The previous raw HTTP endpoint remains a compatibility fallback. Schema 12 is unchanged.
 
 v3.2.1 changes live color refill to one JPEG per HTTP request and never decodes or flushes a color frame from inside the synchronous raw-body callback. The main STREAM_MODE loop therefore alternates a bounded receive with a display opportunity instead of repeatedly blocking the small TCP receive window during a multi-frame request. Monochrome batching and its in-request display servicing remain unchanged. Schema 12 is unchanged.
 
