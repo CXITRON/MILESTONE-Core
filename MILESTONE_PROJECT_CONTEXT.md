@@ -1,6 +1,6 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v3.1.2
+> Current baseline: MILESTONE Core v3.1.3
 > Hardware: Waveshare ESP32-S3-Zero + ST7735-compatible 128×160 SPI TFT + three tactile switches
 > Repository: `CXITRON/MILESTONE-Core`
 
@@ -91,7 +91,7 @@ The `*.inc` runtime files are intentionally included into the sketch as one tran
 Firmware and persistent schema versions are separate concepts.
 
 ```cpp
-FIRMWARE_VERSION = "3.1.2"
+FIRMWARE_VERSION = "3.1.3"
 CONFIG_VERSION = 12
 ```
 
@@ -236,6 +236,8 @@ v3.0.0 replaces the required SH1107 I2C display with the physically verified ST7
 v3.1.0 adds the PSRAM RGB565 display layer, semantic CORE colors, colored status glyphs, a six-page confirm-driven device information view with PSRAM metrics, and the 1–3 second confirm-button profile selector. MEDIA extends MSM1 records with a reserved RGB332 pixel-format value while preserving old one-bit files; both stored and isolated live paths use bounded PSRAM buffers and the portal selects color or monochrome. NOW consumes the Worker `/v3/artwork` fixed `MAC1` RGB565 packet and retains `/v1` and `/v2` only for old firmware. Schema 11 persists the six CORE colors and MEDIA monochrome preference without allowing MEDIA/NOW to rewrite CORE view state.
 
 v3.1.2 makes the low-cost global TFT tone LUT configurable from every profile's setup portal. Schema 12 stores 50–100% luminance and -20–+20% contrast values, migrates schema 11 to the existing 92%/+8% appearance, and recalculates the 96-byte LUT only at boot or after a successful settings save. The adjustment remains common to CORE graphics, stored/live MEDIA, NOW artwork, status icons, and frame chrome.
+
+v3.1.3 keeps color-frame TFT flushes out of the WebServer raw-body receive loop so full-screen SPI work no longer competes with SoftAP transport for every incoming chunk. The browser abandons unprofitable XOR-RLE encoding early, reports encoder latency, and offers a 48MiB mobile-safe or 96MiB expanded preconversion ceiling calculated from the active mono/color frame size. Explicit setup-portal exit now cancels portal-only scan and time-sync work instead of remaining blocked behind it. Stored MEDIA catalog selection is manual through the previous/next buttons; only playback-failure recovery may skip a broken item. Schema 12 is unchanged.
 
 v3.1.1 fixes an old-session GAP disconnect race in NOW by retaining separate connect, encryption, and disconnect handles and applying a disconnect only to the matching active connection. MEDIA color streaming increases each bounded PSRAM request batch from 4 to 12 frames and refills proactively before the 96-frame queue approaches underrun. CORE exposes the exact selected color values beside each picker. The 1–3 second button menu adds a device restart entry and exits immediately when the already-active profile is confirmed. Wi-Fi sleep and parked-retry waiting share an empty-circle glyph, and a fixed low-cost RGB LUT slightly raises contrast while reducing luminance for every CORE, MEDIA, NOW, artwork, status, and frame-chrome pixel. Schema 11 is unchanged.
 

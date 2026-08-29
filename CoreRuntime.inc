@@ -949,23 +949,11 @@ void processCycle() {
       }
       return;
     }
-    const size_t enabledItems = mediaEnabledItemCount();
-    if (enabledItems <= 1U) {
-      mediaPlaybackRotationPending = false;
-      mediaPlaybackLoopBoundary = false;
-      return;
-    }
-    if (elapsed(now, lastCycleMs,
-                static_cast<uint32_t>(currentMediaDisplaySeconds()) * 1000UL)) {
-      mediaPlaybackRotationPending = true;
-    }
-    const bool animated = mediaPlaybackHeader.frameCount > 1;
-    if (MilestoneMedia::shouldRotateStoredItem(
-            enabledItems, mediaPlaybackRotationPending, animated,
-            mediaPlaybackFinished, mediaPlaybackLoopBoundary)) {
-      selectNextMediaItem();
-      lastCycleMs = now;
-    }
+    // Stored MEDIA selection is physical-button only. An animation may loop
+    // internally, but elapsed display time must never choose another catalog
+    // item; GPIO1/GPIO2 previous/next perform that transition explicitly.
+    mediaPlaybackRotationPending = false;
+    mediaPlaybackLoopBoundary = false;
     return;
   }
 #endif

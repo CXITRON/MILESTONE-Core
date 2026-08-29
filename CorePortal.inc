@@ -416,9 +416,12 @@ void handleMediaStreamPushRaw() {
   if (raw.status == RAW_WRITE) {
     if (!mediaStreamRawFailed) {
       writeMediaStreamRawChunk(raw.buf, raw.currentSize);
-      // WebServer services a complete raw request inside handleClient(). A
-      // large refill must not freeze OLED pacing until the whole POST returns.
-      if (mediaStreamPhase == MediaStreamPhase::PLAYING) {
+      // WebServer services a complete raw request inside handleClient(). Keep
+      // monochrome partial updates responsive, but drain large color bodies
+      // before spending a full-frame SPI flush on display work. Interleaving
+      // those flushes with every color POST can collapse SoftAP throughput.
+      if (mediaStreamPhase == MediaStreamPhase::PLAYING &&
+          mediaStreamFrameBytes != MilestoneMedia::COLOR_FRAME_BYTES) {
         renderMediaStreamFrameIfDue(millis());
       }
     }
@@ -744,11 +747,19 @@ void handlePostNowConfig() {
 
 void handlePortalClose() {
   if (!authorizePortalRequest()) return;
-  if (mediaStreamActive || firmwareUpdateBusy() || ntpRequestActive ||
-      wifiTestState == WifiTestState::CONNECTING ||
-      wifiTestState == WifiTestState::TIME_SYNCING || portalWifiScanActive) {
-    return sendJson(409, "{\"error\":\"진행 중인 네트워크 작업이 끝난 뒤 설정을 종료하세요.\"}");
+  if (mediaStreamActive || firmwareUpdateBusy()) {
+    return sendJson(409, "{\"error\":\"스트리밍 또는 펌웨어 작업을 먼저 종료하세요.\"}");
   }
+  // Explicit exit owns the portal session. Cancel bounded portal-only work
+  // instead of making the close button appear broken until a scan/NTP timeout.
+  cancelPortalWifiScan();
+  if (ntpRequestActive) stopNtpService();
+  if (wifiTestState == WifiTestState::CONNECTING ||
+      wifiTestState == WifiTestState::TIME_SYNCING) {
+    wifiTestState = WifiTestState::IDLE;
+    wifiTestError = "";
+  }
+  finishPortalTimeSyncTracking(false, "설정 화면을 종료했습니다.");
   portalCloseRequested = true;
   portalCloseNotBeforeMs = millis() + PORTAL_CLOSE_RESPONSE_HOLD_MS;
   sendJson(202, "{\"ok\":true,\"closing\":true}");

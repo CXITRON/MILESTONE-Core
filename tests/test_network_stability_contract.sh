@@ -18,7 +18,7 @@ reject() {
   fi
 }
 
-require 'FIRMWARE_VERSION\[\] = "3\.1\.2"' MILESTONE_Core.ino 'firmware version is not 3.1.2'
+require 'FIRMWARE_VERSION\[\] = "3\.1\.3"' MILESTONE_Core.ino 'firmware version is not 3.1.3'
 require 'if \(oledReady && !portalActive && !updateCheckIndicatorRendered\) return;' CoreRuntime.inc 'portal manifest checks can deadlock waiting for the non-portal U icon'
 require 'UPDATE_PORTAL_HTTP_CONNECT_TIMEOUT_MS' CoreUpdate.inc 'portal manifest checks need a bounded connect timeout'
 require 'UPDATE_PORTAL_TLS_HANDSHAKE_TIMEOUT_SEC' CoreUpdate.inc 'portal manifest checks need a bounded TLS timeout'
@@ -135,7 +135,11 @@ require 'portalManifestWorker' CoreRuntime.inc 'portal manifest HTTPS must not b
 require 'BoundedStringWriter writer\(body, UPDATE_MANIFEST_MAX_BYTES\)' CoreUpdate.inc 'unknown-length release responses need a pre-allocation body limit'
 reject 'body = http\.getString\(\)' CoreUpdate.inc 'release body must not be fully allocated before its size limit is enforced'
 require 'AbortController' PortalPage.h 'portal API requests need bounded browser recovery'
-require 'onclick="closePortal\(\)"' PortalPage.h 'setup portal needs an explicit close button'
+require 'id="close_portal" type="button"' PortalPage.h 'setup portal needs an explicit close button'
+require "close_portal.*addEventListener\('click',closePortal\)" PortalPage.h 'setup portal close button needs an explicit event binding'
+reject 'closePortal\(\).*confirm' PortalPage.h 'setup portal close must not depend on captive-browser confirm dialogs'
+require 'cancelPortalWifiScan\(\)' CorePortal.inc 'explicit portal close must cancel an active scan'
+require 'if \(ntpRequestActive\) stopNtpService\(\)' CorePortal.inc 'explicit portal close must cancel active time synchronization'
 python3 - <<'PY_BLUETOOTH_UPDATE_DEFER'
 from pathlib import Path
 s = Path('CoreRuntime.inc').read_text()
