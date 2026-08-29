@@ -1,6 +1,6 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v3.3.1
+> Current baseline: MILESTONE Core v3.3.2
 > Hardware: Waveshare ESP32-S3-Zero + ST7735-compatible 128×160 SPI TFT + three tactile switches
 > Repository: `CXITRON/MILESTONE-Core`
 
@@ -91,7 +91,7 @@ The `*.inc` runtime files are intentionally included into the sketch as one tran
 Firmware and persistent schema versions are separate concepts.
 
 ```cpp
-FIRMWARE_VERSION = "3.3.1"
+FIRMWARE_VERSION = "3.3.2"
 CONFIG_VERSION = 12
 ```
 
@@ -238,6 +238,8 @@ v3.1.0 adds the PSRAM RGB565 display layer, semantic CORE colors, colored status
 v3.1.2 makes the low-cost global TFT tone LUT configurable from every profile's setup portal. Schema 12 stores 50–100% luminance and -20–+20% contrast values, migrates schema 11 to the existing 92%/+8% appearance, and recalculates the 96-byte LUT only at boot or after a successful settings save. The adjustment remains common to CORE graphics, stored/live MEDIA, NOW artwork, status icons, and frame chrome.
 
 v3.1.3 keeps color-frame TFT flushes out of the WebServer raw-body receive loop so full-screen SPI work no longer competes with SoftAP transport for every incoming chunk. The browser abandons unprofitable XOR-RLE encoding early, reports encoder latency, and offers a 48MiB mobile-safe or 96MiB expanded preconversion ceiling calculated from the active mono/color frame size. Explicit setup-portal exit now cancels portal-only scan and time-sync work instead of remaining blocked behind it. Stored MEDIA catalog selection is manual through the previous/next buttons; only playback-failure recovery may skip a broken item. Schema 12 is unchanged.
+
+v3.3.2 replaces the unsuccessful v3.3.1 same-loop receive-slice adjustment after hardware still measured roughly 3.1-second ACKs and 0.8fps sending while display service remained 17.7fps. A dedicated core-0 FreeRTOS producer now owns WebSocket accept, handshake, masking, and socket reads into a separate bounded 32KiB PSRAM ingress buffer. The core-1 Arduino loop consumes only complete messages, runs the existing sequence/frame validation and PSRAM queue commit, and returns the ACK. Atomic ready publication and bounded task shutdown prevent partial messages or released buffers from crossing the task boundary. Display, buttons, thermal/resource safety, HTTP fallback, and schema 12 remain unchanged.
 
 v3.3.1 fixes WebSocket receive-window starvation observed on v3.3.0 hardware as roughly 2.5-second ACKs despite 18.7fps display service. Once a WebSocket message has started, the receiver now yields to lwIP and continues draining newly arrived TCP segments for at most the existing 12ms network service slice, instead of leaving after the first momentary empty `available()` result and waiting through another JPEG decode plus TFT flush. The byte and message bounds, persistent connection, PSRAM-only storage, safety processing, and HTTP fallback remain unchanged. Schema 12 is unchanged.
 

@@ -41,8 +41,6 @@ constexpr size_t MEDIA_STREAM_WS_MAX_MESSAGE_BYTES =
     MilestoneMedia::LIVE_WS_PUSH_HEADER_BYTES + MEDIA_STREAM_WS_MAX_PUSH_BYTES;
 constexpr size_t MEDIA_STREAM_WS_HANDSHAKE_MAX_BYTES = 2048U;
 constexpr uint32_t MEDIA_STREAM_WS_HANDSHAKE_TIMEOUT_MS = 3000UL;
-constexpr size_t MEDIA_STREAM_WS_READ_BUDGET =
-    MEDIA_STREAM_WS_MAX_MESSAGE_BYTES + 14U;
 constexpr size_t MEDIA_STREAM_WS_TASK_READ_BUDGET = 4096U;
 // Full-screen display flushes consume a meaningful part of a 20 fps frame period.
 // Reserve an explicit service window after each display transaction so the HTTP
