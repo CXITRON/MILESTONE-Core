@@ -74,6 +74,7 @@ uint32_t lastZeroStatusMs = 0;
 bool zeroTemperatureKnown = false;
 MilestoneV5::ModeMenu modeMenu;
 bool safeModeActive = false;
+const char *profileName(MilestoneV5::Profile profile);
 const char *menuItemName(MilestoneV5::ModeMenuItem item);
 
 void drawNowProgress(uint8_t frameY, uint8_t footerY) {
@@ -89,6 +90,15 @@ void drawNowProgress(uint8_t frameY, uint8_t footerY) {
            (unsigned long)elapsed % 60, (unsigned long)duration / 60,
            (unsigned long)duration % 60);
   hardware.legacyText(footer, footerY, u8g2_font_6x10_tf);
+}
+
+void renderBootSplash() {
+  hardware.display.fillScreen(0);
+  hardware.legacyText("CYTRON//MILESTONE", 52, u8g2_font_6x10_tf, 0xFFFF);
+  hardware.legacyText("MILESTONE D1", 72, u8g2_font_6x10_tf, 0xFFFF);
+  hardware.legacyText(String(MilestoneV5::FIRMWARE_VERSION) + " @ " +
+                          profileName(profiles.active()),
+                      94, u8g2_font_5x8_tf, 0xBDF7);
 }
 
 void renderPortalScreen() {
@@ -112,8 +122,8 @@ void renderModeMenu() {
                        item == MilestoneV5::ModeMenuItem::kMedia ||
                        item == MilestoneV5::ModeMenuItem::kNow;
   uint16_t color = item == MilestoneV5::ModeMenuItem::kCore    ? 0x36DF
-                   : item == MilestoneV5::ModeMenuItem::kMedia ? 0xFADF
-                   : item == MilestoneV5::ModeMenuItem::kNow   ? 0x57F1
+                   : item == MilestoneV5::ModeMenuItem::kMedia ? 0xFAD8
+                   : item == MilestoneV5::ModeMenuItem::kNow   ? 0x5710
                    : item == MilestoneV5::ModeMenuItem::kSetup ? 0x07FF
                    : item == MilestoneV5::ModeMenuItem::kSafeMode
                        ? 0xF800
@@ -144,7 +154,9 @@ void renderModeMenu() {
 }
 
 void renderBody() {
-  if (portal.bundleRequested) {
+  if (millis() - bootStartedMs < 3000) {
+    renderBootSplash();
+  } else if (portal.bundleRequested) {
     hardware.body("업데이트 묶음", "서명된 SD 업데이트", "15초 안에 OK 확인",
                   "BACK 취소");
   } else if (bundleUpdate.phase == V5BundleUpdate::Phase::Copying ||
@@ -187,7 +199,15 @@ void renderBody() {
   } else if (profiles.active() == MilestoneV5::Profile::kCore) {
     coreViews.render(hardware);
   } else if (profiles.active() == MilestoneV5::Profile::kMedia) {
-    if (!photoVisible && !video.playing) {
+    if (portal.media.hasEnabled()) {
+      if (!portal.media.displayEnabled) {
+        hardware.legacyClear();
+        hardware.legacyText("MEDIA", 34, u8g2_font_logisoso20_tf, 0xF81F);
+        hardware.legacyAutoText("BACK으로 재생 종료", 70);
+        hardware.legacyText("PREV/NEXT로 다시 선택", 104,
+                            u8g2_font_5x8_tf, 0xBDF7);
+      }
+    } else if (!photoVisible && !video.playing) {
       hardware.legacyClear();
       hardware.legacyText(videoCategory ? "MEDIA · VIDEO" : "MEDIA · PHOTO",
                           12, u8g2_font_6x10_tf, 0xF81F);
@@ -311,6 +331,32 @@ const char *menuItemName(MilestoneV5::ModeMenuItem item) {
   return "?";
 }
 
+bool switchActiveProfile(MilestoneV5::Profile target) {
+  if (temperatureSafe)
+    return false;
+  safeModeActive = false;
+  if (target == profiles.active())
+    return true;
+  if (!profiles.request(target))
+    return false;
+  if (target != MilestoneV5::Profile::kNow && !artwork.manual)
+    artwork.invalidate();
+  video.stop();
+  photoVisible = false;
+  profiles.notifyQuiesced();
+  if (target == MilestoneV5::Profile::kMedia) {
+    portal.media.displayEnabled = true;
+    hardware.scanPhotos(videoCategory);
+    selectedPhoto = 0;
+  }
+  profiles.notifyStarted(true);
+  if (hardware.saveProfile(static_cast<uint8_t>(target)))
+    profiles.acknowledgePersisted();
+  redraw = true;
+  Serial.printf("active profile: %s\n", profileName(profiles.active()));
+  return profiles.active() == target;
+}
+
 void activateMenuSelection() {
   const MilestoneV5::ModeMenuItem item = modeMenu.selected();
   if (item == MilestoneV5::ModeMenuItem::kExit) {
@@ -350,32 +396,8 @@ void activateMenuSelection() {
     return;
   }
   const MilestoneV5::Profile target = static_cast<MilestoneV5::Profile>(item);
-  if (temperatureSafe) {
-    modeMenu.close();
-    redraw = true;
-    return;
-  }
-  safeModeActive = false;
-  if (target == profiles.active()) {
-    modeMenu.close();
-    return;
-  }
-  if (profiles.request(target)) {
-    if (target != MilestoneV5::Profile::kNow && !artwork.manual)
-      artwork.invalidate();
-    video.stop();
-    photoVisible = false;
-    profiles.notifyQuiesced();
-    if (target == MilestoneV5::Profile::kMedia) {
-      hardware.scanPhotos(videoCategory);
-      selectedPhoto = 0;
-    }
-    profiles.notifyStarted(true);
-    if (hardware.saveProfile(static_cast<uint8_t>(target)))
-      profiles.acknowledgePersisted();
-    modeMenu.close();
-    Serial.printf("active profile: %s\n", profileName(profiles.active()));
-  }
+  switchActiveProfile(target);
+  modeMenu.close();
 }
 
 void serviceButtons(uint32_t now) {
@@ -407,6 +429,8 @@ void serviceButtons(uint32_t now) {
     }
   }
   if (updating)
+    return;
+  if (now - bootStartedMs < 3000)
     return;
   if (portal.bundleRequested) {
     if (back || boot) {
@@ -486,6 +510,17 @@ void serviceButtons(uint32_t now) {
       coreViews.save();
     }
     if (profiles.active() == MilestoneV5::Profile::kMedia) {
+      if (portal.media.hasEnabled()) {
+        if (back)
+          portal.media.hide();
+        if (prev)
+          portal.media.selectRelative(-1);
+        if (next)
+          portal.media.selectRelative(1);
+        if (ok)
+          portal.media.toggle();
+        return;
+      }
       if (back) {
         if (video.playing)
           video.stop();
@@ -807,6 +842,9 @@ void setup() {
   Serial.begin(115200);
   Serial.setTxTimeoutMs(0);
   hardware.begin();
+  bootStartedMs = millis();
+  renderBootSplash();
+  hardware.display.flush();
   coreViews.begin();
   portal.begin(hardware, coreViews, artwork);
   portal.note(6, hardware.sdMounted ? 1 : 0);
@@ -844,13 +882,13 @@ void setup() {
       MilestoneV5::MainPins::kLinkSck, MilestoneV5::MainPins::kLinkMiso,
       MilestoneV5::MainPins::kLinkMosi, MilestoneV5::MainPins::kLinkCs);
   mainBootId = esp_random();
-  bootStartedMs = millis();
   Serial.println("MILESTONE_V5_MAIN_RUNTIME");
   Serial.println(MilestoneV5::FIRMWARE_VERSION);
 }
 
 void loop() {
   const uint32_t now = millis();
+  portal.profile = profiles.active();
   if (!bootValidated && now - bootStartedMs >= 10000 &&
       (bundleUpdate.candidateReady || bundleUpdate.candidateRejected ||
        now - bootStartedMs >= 60000)) {
@@ -861,6 +899,11 @@ void loop() {
       portal.note(2);
   }
   serviceButtons(now);
+  if (portal.profilePending) {
+    switchActiveProfile(portal.requestedProfile);
+    portal.profilePending = false;
+    portal.profile = profiles.active();
+  }
   coreViews.service(now);
   if (coreViews.advance(now, profiles.active() == MilestoneV5::Profile::kCore &&
                                  !safeModeActive && !portal.active &&
@@ -921,6 +964,7 @@ void loop() {
   if (portal.downloadBusy && !bundleDownload.active)
     portal.note(8, bundleDownload.ready ? 0 : 1);
   portal.downloadBusy = bundleDownload.active;
+  portal.downloadReady = bundleDownload.ready;
   portal.downloadStatus =
       bundleDownload.active ? String("다운로드 ") + bundleDownload.received +
                                   " / " + bundleDownload.total
@@ -1014,6 +1058,10 @@ void loop() {
       hardware.body("미디어 오류", video.error, "BACK 목록으로");
     }
   }
+  if (!safeModeActive && !bundleUpdate.critical() && !modeMenu.isOpen() &&
+      !portal.active && profiles.active() == MilestoneV5::Profile::kMedia &&
+      portal.media.hasEnabled())
+    portal.media.service(hardware.display, now);
   static uint32_t lastHeartbeatMs = 0;
   hardware.display.flush();
   const bool transferringZero =

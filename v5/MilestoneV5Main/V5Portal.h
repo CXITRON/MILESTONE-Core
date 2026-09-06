@@ -2,13 +2,28 @@
 #include "V5ArtworkPortal.h"
 #include "V5CoreViews.h"
 #include "V5Hardware.h"
+#include "V5LegacyMedia.h"
 #include <DNSServer.h>
 #include <MilestoneV5Diagnostics.h>
 #include <MilestoneV5Features.h>
 #include <MilestoneV5SystemSettings.h>
+#include <MilestoneV5Version.h>
 #include <MilestoneV5WifiStore.h>
 #include <WebServer.h>
 #include <WiFi.h>
+#include <nvs_flash.h>
+
+#define MILESTONE_HAS_MEDIA 1
+#define MILESTONE_HAS_NOW_VIEW 1
+#define MILESTONE_HAS_GENERAL_VIEWS 1
+#define MILESTONE_HAS_STREAM 0
+#define MILESTONE_HAS_ARTWORK_MANAGER 1
+#include "../../PortalPage.h"
+#undef MILESTONE_HAS_ARTWORK_MANAGER
+#undef MILESTONE_HAS_STREAM
+#undef MILESTONE_HAS_GENERAL_VIEWS
+#undef MILESTONE_HAS_NOW_VIEW
+#undef MILESTONE_HAS_MEDIA
 
 // Opened only through a local BOOT press; AP password is freshly generated.
 // Every write requires an unpredictable token, including from another website.
@@ -18,15 +33,20 @@ public:
   MilestoneV5::SystemSettings system;
   bool systemPending = false;
   MilestoneV5::Diagnostics diagnostics;
+  V5LegacyMedia media;
   void note(uint32_t code, uint32_t value = 0) {
     diagnostics.note(code, value, millis(), time(nullptr));
   }
   String password;
+  MilestoneV5::Profile profile = MilestoneV5::Profile::kCore;
   bool rescanRequested = false;
   uint8_t luminance = 92;
   int8_t contrast = 8;
   bool environmentLogging = false;
   bool wifiPending = false, wifiReplicate = false;
+  bool timeSyncRequested = false, timeSyncSuccess = false;
+  bool profilePending = false, closeRequested = false;
+  MilestoneV5::Profile requestedProfile = MilestoneV5::Profile::kCore;
   MilestoneV5::WifiCredentials wifi;
   String wifiResult = "";
   float offsets[3] = {0, 0, 0};
@@ -34,12 +54,14 @@ public:
   bool bundleRequested = false, bundleBusy = false;
   uint32_t bundleRequestedMs = 0;
   String bundleStatus = "idle", bundleError;
-  bool downloadRequested = false, downloadBusy = false;
+  bool downloadRequested = false, downloadBusy = false, downloadReady = false;
   String downloadVersion = "latest", downloadStatus,
          bundleSource = "/firmware/incoming";
 
   void begin(V5Hardware &h, V5CoreViews &views, V5Artwork &art) {
     hardware = &h;
+    artwork = &art;
+    media.begin(h.sdMounted);
     system.begin();
     diagnostics.begin();
     note(1);
@@ -108,7 +130,7 @@ public:
       prefs.end();
     }
     h.display.setTone(luminance, contrast);
-    server.on("/", HTTP_GET, [this] {
+    server.on("/v5-debug", HTTP_GET, [this] {
       touch();
       String page =
           F("<!doctype html><html lang='ko'><meta charset='utf-8'><meta "
@@ -344,6 +366,11 @@ public:
           "승격합니다.</p><button>기기에서 확인 후 설치</button></form></html>";
       server.sendHeader("Cache-Control", "no-store");
       server.send(200, "text/html; charset=utf-8", page);
+    });
+    server.on("/", HTTP_GET, [this] {
+      touch();
+      server.sendHeader("Cache-Control", "no-store");
+      server.send_P(200, "text/html; charset=utf-8", MILESTONE_PORTAL_HTML);
     });
     server.on("/status", HTTP_GET, [this] {
       touch();
@@ -741,6 +768,7 @@ public:
       server.sendHeader("Location", "/");
       server.send(303);
     });
+    registerLegacyApi();
     server.onNotFound([this] {
       server.sendHeader("Location", "http://192.168.4.1/");
       server.send(302);
@@ -750,8 +778,11 @@ public:
   bool open() {
     if (active)
       return true;
+    static const char alphabet[] = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
     char secret[9], csrf[33];
-    snprintf(secret, sizeof(secret), "%08lx", (unsigned long)esp_random());
+    for (unsigned i = 0; i < 8; ++i)
+      secret[i] = alphabet[esp_random() % (sizeof(alphabet) - 1)];
+    secret[8] = 0;
     snprintf(csrf, sizeof(csrf), "%08lx%08lx%08lx%08lx",
              (unsigned long)esp_random(), (unsigned long)esp_random(),
              (unsigned long)esp_random(), (unsigned long)esp_random());
@@ -815,12 +846,25 @@ public:
     active = false;
     password = "";
     token = "";
+    closeRequested = false;
   }
   void service() {
     if (!active)
       return;
     dns.processNextRequest();
     server.handleClient();
+    if (resetRequestedMs && millis() - resetRequestedMs >= 500) {
+      media.clear();
+      clearArtworkStorage();
+      close();
+      nvs_flash_erase();
+      ESP.restart();
+      return;
+    }
+    if (closeRequested) {
+      close();
+      return;
+    }
     if (millis() - lastActivity >= 600000)
       close();
   }
@@ -828,11 +872,15 @@ public:
 private:
   V5Hardware *hardware = nullptr;
   V5CoreViews *core = nullptr;
+  V5Artwork *artwork = nullptr;
   WebServer server{80};
   DNSServer dns;
   V5ArtworkPortal artworkPortal;
   String token;
   uint32_t lastActivity = 0, openedMs = 0;
+  bool wifiScanRunning = false;
+  bool mediaUploadRejected = false;
+  uint32_t resetRequestedMs = 0;
   void touch() { lastActivity = millis(); }
   static String escape(String value) {
     value.replace("&", "&amp;");
@@ -842,8 +890,756 @@ private:
     value.replace("'", "&#39;");
     return value;
   }
+  static String jsonEscape(String value) {
+    value.replace("\\", "\\\\");
+    value.replace("\"", "\\\"");
+    value.replace("\n", "\\n");
+    value.replace("\r", "\\r");
+    value.replace("\t", "\\t");
+    return value;
+  }
+  static const char *profileId(MilestoneV5::Profile value) {
+    switch (value) {
+    case MilestoneV5::Profile::kMedia:
+      return "media";
+    case MilestoneV5::Profile::kNow:
+      return "now";
+    default:
+      return "core";
+    }
+  }
+  static String rgbHex(uint16_t color) {
+    char value[8];
+    snprintf(value, sizeof(value), "#%02X%02X%02X",
+             ((color >> 11) & 31) * 255 / 31,
+             ((color >> 5) & 63) * 255 / 63, (color & 31) * 255 / 31);
+    return value;
+  }
+  static bool parseColor(const String &text, uint16_t &color) {
+    if (text.length() != 7 || text[0] != '#')
+      return false;
+    uint32_t rgb = 0;
+    for (unsigned i = 1; i < 7; ++i) {
+      const char c = text[i];
+      const int value = c >= '0' && c <= '9'   ? c - '0'
+                        : c >= 'a' && c <= 'f' ? c - 'a' + 10
+                        : c >= 'A' && c <= 'F' ? c - 'A' + 10
+                                               : -1;
+      if (value < 0)
+        return false;
+      rgb = (rgb << 4) | value;
+    }
+    color = ((rgb >> 8) & 0xF800) | ((rgb >> 5) & 0x07E0) |
+            ((rgb >> 3) & 0x001F);
+    return true;
+  }
+  void sendJson(int status, const String &body) {
+    server.sendHeader("Cache-Control", "no-store");
+    server.send(status, "application/json; charset=utf-8", body);
+  }
+  void registerLegacyApi() {
+    server.on("/api/status", HTTP_GET, [this] {
+      touch();
+      const bool connected = WiFi.status() == WL_CONNECTED;
+      const char *id = profileId(profile);
+      String body = "{\"firmware\":\"" +
+                    String(MilestoneV5::FIRMWARE_VERSION) +
+                    "\",\"profile\":\"" + String(id) + "\",\"state\":\"" +
+                    (active ? "설정 AP" : "정상 동작") + "\"";
+      body += ",\"reset_reason\":\"ESP reset\",\"reset_reason_code\":" +
+              String(int(esp_reset_reason()));
+      body += ",\"uptime_sec\":" + String(millis() / 1000UL) +
+              ",\"cpu_mhz\":" + String(getCpuFrequencyMhz());
+      body += ",\"temperature_c\":" + String(temperatureRead(), 1) +
+              ",\"heap_free\":" + String(ESP.getFreeHeap()) +
+              ",\"heap_total\":" + String(ESP.getHeapSize()) +
+              ",\"heap_min\":" + String(ESP.getMinFreeHeap()) +
+              ",\"heap_largest\":" + String(ESP.getMaxAllocHeap());
+      body += ",\"stack_free\":" +
+              String(uxTaskGetStackHighWaterMark(nullptr)) +
+              ",\"flash_total\":" + String(ESP.getFlashChipSize()) +
+              ",\"sketch_size\":" + String(ESP.getSketchSize()) +
+              ",\"ota_free\":" + String(ESP.getFreeSketchSpace());
+      body += ",\"nvs_ready\":true,\"nvs_free_entries\":0";
+      body += ",\"wifi\":\"" +
+              jsonEscape(connected ? WiFi.SSID() : String("설정 AP")) +
+              "\",\"ip\":\"" +
+              jsonEscape(connected ? WiFi.localIP().toString()
+                                   : WiFi.softAPIP().toString()) +
+              "\"";
+      body += ",\"time_valid\":" +
+              String(time(nullptr) >= 1704067200 ? "true" : "false") +
+              ",\"last_sync\":\"-\",\"ntp_active\":" +
+              String(timeSyncRequested ? "true" : "false") +
+              ",\"ntp_failed\":false,\"time_sync_pending\":" +
+              String(timeSyncRequested ? "true" : "false") +
+              ",\"time_sync_success\":" +
+              String(timeSyncSuccess ? "true" : "false");
+      body += ",\"wifi_test\":\"" +
+              String(wifiPending ? "testing"
+                                 : wifiResult.indexOf("완료") >= 0 ? "success"
+                                                                    : "idle") +
+              "\",\"wifi_error\":\"" + jsonEscape(wifiResult) + "\"";
+      body += ",\"bluetooth_enabled\":" +
+              String(profile == MilestoneV5::Profile::kNow ? "true" : "false") +
+              ",\"bluetooth_active\":" +
+              String(profile == MilestoneV5::Profile::kNow ? "true" : "false") +
+              ",\"bluetooth_stage\":\"" +
+              String(profile == MilestoneV5::Profile::kNow ? "advertising"
+                                                            : "unsupported") +
+              "\"";
+      body += ",\"media_supported\":true,\"general_views_supported\":true";
+      body += ",\"latest_firmware\":\"" +
+              String(MilestoneV5::FIRMWARE_VERSION) +
+              "\",\"latest_profile\":\"" + String(id) +
+              "\",\"update_state\":\"" +
+              String(downloadBusy ? "checking" : downloadReady ? "available"
+                                                              : "current") +
+              "\",\"update_available\":" +
+              String(downloadReady ? "true" : "false") +
+              ",\"update_install_ready\":" +
+              String(downloadReady ? "true" : "false") +
+              ",\"update_check_pending\":" +
+              String(downloadBusy ? "true" : "false") + "}"
+              ;
+      sendJson(200, body);
+    });
+    server.on("/api/diagnostics", HTTP_GET, [this] {
+      String body = "{\"last_boot\":\"ESP reset\",\"boot_validated\":true,"
+                    "\"last_validated_uptime_sec\":" +
+                    String(millis() / 1000UL) +
+                    ",\"max_temperature_c\":" + String(temperatureRead(), 1) +
+                    ",\"last_ota_result\":\"-\",\"rollback_last\":\"-\","
+                    "\"rollback_reason\":\"\",\"history_count\":" +
+                    String(diagnostics.count) + ",\"events\":[";
+      for (unsigned i = 0; i < diagnostics.count; ++i) {
+        const auto &event =
+            diagnostics.events[(diagnostics.head + 15 - i) % 16];
+        if (i)
+          body += ',';
+        body += "{\"event\":\"event_" + String(event.code) +
+                "\",\"detail\":\"value " + String(event.value) +
+                "\",\"uptime_sec\":" + String(event.uptime / 1000UL) + "}";
+      }
+      body += "]}";
+      sendJson(200, body);
+    });
+    server.on("/api/diagnostics/clear", HTTP_POST, [this] {
+      if (!authorize())
+        return;
+      sendJson(diagnostics.clear() ? 200 : 500,
+               diagnostics.count ? "{\"error\":\"삭제 실패\"}"
+                                 : "{\"ok\":true}");
+    });
+    server.on("/api/config", HTTP_GET, [this] { sendLegacyConfig(); });
+    server.on("/api/config", HTTP_POST, [this] { saveLegacyConfig(); });
+    server.on("/api/radio-config", HTTP_GET, [this] {
+      sendJson(200, "{\"fixed_ap\":" +
+                        String(system.fixedAp ? "true" : "false") +
+                        ",\"ap_password_set\":" +
+                        String(!system.apPassword.isEmpty() ? "true" : "false") +
+                        ",\"bluetooth_now_playing\":true,"
+                        "\"bluetooth_supported\":true,"
+                        "\"bluetooth_configurable\":false}");
+    });
+    server.on("/api/radio-config", HTTP_POST, [this] {
+      if (!authorize())
+        return;
+      auto next = system;
+      next.fixedAp = server.arg("fixed_ap") == "1";
+      const String pass = server.arg("ap_password");
+      if (pass.length() > 63 || (pass.length() && pass.length() < 8)) {
+        sendJson(400, "{\"error\":\"AP 비밀번호는 비워 두거나 8~63자로 입력하세요.\"}");
+        return;
+      }
+      next.apPassword = pass;
+      if (!next.save()) {
+        sendJson(500, "{\"error\":\"AP 설정 저장 실패\"}");
+        return;
+      }
+      system = next;
+      systemPending = true;
+      sendJson(200, "{\"ok\":true}");
+    });
+    server.on("/api/now-config", HTTP_GET, [this] {
+      static const char *names[] = {"곡명만", "곡명 + 아티스트",
+                                    "곡명 + 앨범 표지", "앨범 표지 중심"};
+      unsigned layout = min(unsigned(core->nowLayout), 3U);
+      sendJson(200, "{\"layout\":" + String(layout == 2 ? 3 : layout == 3 ? 4 : layout) +
+                        ",\"layout_name\":\"" + names[layout] +
+                        "\",\"artwork_available\":" +
+                        String(artwork && artwork->visible ? "true" : "false") +
+                        ",\"artwork_status\":\"" +
+                        jsonEscape(!artwork ? String("대기")
+                                   : artwork->visible ? String("표시 중")
+                                   : artwork->stage ? String("다운로드 중")
+                                   : artwork->lastError.isEmpty()
+                                       ? String("대기")
+                                       : artwork->lastError) + "\"}");
+    });
+    server.on("/api/now-config", HTTP_POST, [this] {
+      if (!authorize())
+        return;
+      int layout;
+      if (!integer(server.arg("layout"), 0, 4, layout) || layout == 2) {
+        sendJson(400, "{\"error\":\"NOW 표시 구성이 올바르지 않습니다.\"}");
+        return;
+      }
+      core->nowLayout = layout == 3 ? 2 : layout == 4 ? 3 : layout;
+      const bool saved = core->save();
+      sendJson(saved ? 200 : 500,
+               saved ? "{\"ok\":true}"
+                     : "{\"error\":\"저장 실패\"}");
+    });
+    server.on("/api/wifi/scan", HTTP_GET, [this] { handleWifiScan(); });
+    server.on("/api/wifi/test", HTTP_POST, [this] { handleWifiTest(); });
+    server.on("/api/wifi/delete", HTTP_POST, [this] {
+      if (!authorize())
+        return;
+      String ssid = server.arg("ssid");
+      MilestoneV5::WifiStore store;
+      const bool removed = !ssid.isEmpty() && store.remove(ssid.c_str());
+      sendJson(removed ? 200 : 400,
+               removed ? "{\"ok\":true}"
+                       : "{\"error\":\"저장된 Wi-Fi를 삭제하지 못했습니다.\"}");
+    });
+    server.on("/api/time/sync", HTTP_POST, [this] {
+      if (!authorize())
+        return;
+      timeSyncRequested = true;
+      timeSyncSuccess = false;
+      sendJson(202, "{\"ok\":true,\"state\":\"connecting\"}");
+    });
+    server.on("/api/profile/switch", HTTP_POST, [this] {
+      if (!authorize())
+        return;
+      String target = server.arg("profile");
+      if (target == "core")
+        requestedProfile = MilestoneV5::Profile::kCore;
+      else if (target == "media")
+        requestedProfile = MilestoneV5::Profile::kMedia;
+      else if (target == "now")
+        requestedProfile = MilestoneV5::Profile::kNow;
+      else {
+        sendJson(400, "{\"error\":\"프로필이 올바르지 않습니다.\"}");
+        return;
+      }
+      profilePending = true;
+      sendJson(202, "{\"ok\":true,\"state\":\"switching\"}");
+    });
+    server.on("/api/media/status", HTTP_GET, [this] {
+      sendJson(200, "{\"ready\":" + String(media.ready ? "true" : "false") +
+                        ",\"item_count\":" + String(media.catalog.count) +
+                        ",\"max_items\":" + String(V5LegacyMedia::kMaxItems) +
+                        ",\"media_used_bytes\":" + String(media.usedBytes()) +
+                        ",\"media_limit_bytes\":8388608,\"psram\":true}");
+    });
+    server.on("/api/media/list", HTTP_GET, [this] {
+      String body = "{\"items\":[";
+      for (unsigned i = 0; i < media.catalog.count; ++i) {
+        const auto &entry = media.catalog.entries[i];
+        if (i)
+          body += ',';
+        body += "{\"id\":" + String(entry.id) + ",\"name\":\"" +
+                jsonEscape(entry.name) + "\",\"display_seconds\":" +
+                String(entry.displaySeconds) + ",\"enabled\":" +
+                String(entry.flags & V5LegacyMedia::kEnabled ? "true" : "false") +
+                ",\"animated\":" +
+                String(entry.flags & V5LegacyMedia::kAnimated ? "true" : "false") +
+                ",\"frames\":" + String(entry.frames) +
+                ",\"size\":" + String(entry.size) +
+                ",\"duration_ms\":" + String(entry.duration) + "}";
+      }
+      body += "]}";
+      sendJson(200, body);
+    });
+    server.on(
+        "/api/media/upload", HTTP_POST,
+        [this] {
+          if (!localRequest())
+            return server.send(403, "text/plain", "Forbidden");
+          V5LegacyMedia::Entry entry;
+          const bool saved = !mediaUploadRejected && media.finishUpload(entry);
+          mediaUploadRejected = false;
+          if (!saved) {
+            sendJson(400, "{\"error\":\"" + jsonEscape(media.error) + "\"}");
+            return;
+          }
+          sendJson(200, "{\"ok\":true,\"id\":" + String(entry.id) +
+                            ",\"frames\":" + String(entry.frames) + "}");
+        },
+        [this] {
+          HTTPUpload &part = server.upload();
+          if (part.status == UPLOAD_FILE_START) {
+            mediaUploadRejected = !localRequest();
+            String sizeText = server.arg("size"), displayText = server.arg("display");
+            size_t expected = 0;
+            bool valid = !sizeText.isEmpty() && sizeText.length() <= 9;
+            for (unsigned i = 0; i < sizeText.length(); ++i) {
+              valid = valid && sizeText[i] >= '0' && sizeText[i] <= '9';
+              expected = expected * 10 + (sizeText[i] - '0');
+            }
+            int display = 0;
+            valid = integer(displayText, 3, 60, display) && valid;
+            if (!valid ||
+                !media.beginUpload(server.arg("name"), expected, display))
+              mediaUploadRejected = true;
+          } else if (part.status == UPLOAD_FILE_WRITE) {
+            if (!mediaUploadRejected && !media.writeUpload(part.buf, part.currentSize))
+              mediaUploadRejected = true;
+          } else if (part.status == UPLOAD_FILE_ABORTED) {
+            media.abortUpload();
+            mediaUploadRejected = true;
+          }
+        });
+    server.on("/api/media/update", HTTP_POST, [this] {
+      if (!authorize())
+        return;
+      uint32_t id;
+      int display;
+      if (!unsignedInteger(server.arg("id"), id) ||
+          !integer(server.arg("display"), 3, 60, display) ||
+          !media.update(id, server.arg("name"), display,
+                        server.arg("enabled") == "1")) {
+        sendJson(400, "{\"error\":\"미디어 설정 저장 실패\"}");
+        return;
+      }
+      sendJson(200, "{\"ok\":true}");
+    });
+    server.on("/api/media/order", HTTP_POST, [this] {
+      if (!authorize())
+        return;
+      uint32_t id;
+      const String direction = server.arg("direction");
+      if (!unsignedInteger(server.arg("id"), id) ||
+          (direction != "up" && direction != "down") ||
+          !media.move(id, direction == "up")) {
+        sendJson(400, "{\"error\":\"미디어 순서 변경 실패\"}");
+        return;
+      }
+      sendJson(200, "{\"ok\":true}");
+    });
+    server.on("/api/media/delete", HTTP_POST, [this] {
+      if (!authorize())
+        return;
+      uint32_t id;
+      if (!unsignedInteger(server.arg("id"), id) || !media.remove(id)) {
+        sendJson(400, "{\"error\":\"미디어 삭제 실패\",\"stage\":\"commit\"}");
+        return;
+      }
+      sendJson(200, "{\"ok\":true,\"stage\":\"committed\"}");
+    });
+    server.on("/api/media/clear", HTTP_POST, [this] {
+      if (!authorize())
+        return;
+      const bool cleared = server.arg("confirm") == "MEDIA" && media.clear();
+      sendJson(cleared ? 200 : 400,
+               cleared ? "{\"ok\":true}"
+                       : "{\"error\":\"미디어 전체 삭제 실패\"}");
+    });
+    server.on("/api/media/repair", HTTP_POST, [this] {
+      if (!authorize())
+        return;
+      const bool repaired = server.arg("confirm") == "REPAIR" && media.repair();
+      sendJson(repaired ? 200 : 400,
+               repaired ? "{\"ok\":true}"
+                        : "{\"error\":\"미디어 저장소 복구 실패\"}");
+    });
+    server.on("/api/portal/close", HTTP_POST, [this] {
+      if (!authorize())
+        return;
+      closeRequested = true;
+      sendJson(200, "{\"ok\":true}");
+    });
+    server.on("/api/update/check", HTTP_POST, [this] {
+      if (!authorize())
+        return;
+      if (downloadBusy || downloadRequested || bundleBusy) {
+        sendJson(409, "{\"error\":\"업데이트 작업이 이미 진행 중입니다.\"}");
+        return;
+      }
+      downloadVersion = "latest";
+      downloadRequested = true;
+      downloadReady = false;
+      sendJson(202, "{\"ok\":true,\"state\":\"checking\"}");
+    });
+    server.on("/api/update/install", HTTP_POST, [this] {
+      if (!authorize())
+        return;
+      if (!downloadReady || bundleBusy || bundleRequested) {
+        sendJson(409, "{\"error\":\"먼저 서명된 업데이트 묶음을 확인하세요.\"}");
+        return;
+      }
+      bundleRequested = true;
+      bundleRequestedMs = millis();
+      sendJson(202, "{\"ok\":true,\"state\":\"physical-confirmation\"}");
+    });
+    server.on("/api/settings/reset", HTTP_POST, [this] {
+      if (!authorize())
+        return;
+      if (server.arg("confirm") != "DEFAULTS") {
+        sendJson(400, "{\"error\":\"확인값이 올바르지 않습니다.\"}");
+        return;
+      }
+      V5CoreViews defaults;
+      MilestoneV5::SystemSettings defaultsSystem;
+      if (!defaults.save() || !defaultsSystem.save()) {
+        sendJson(500, "{\"error\":\"기본값 저장 실패\"}");
+        return;
+      }
+      *core = defaults;
+      system = defaultsSystem;
+      systemPending = true;
+      luminance = system.luminance;
+      contrast = system.contrast;
+      hardware->display.setTone(luminance, contrast);
+      sendJson(200, "{\"ok\":true}");
+    });
+    server.on("/api/reset", HTTP_POST, [this] {
+      if (!authorize())
+        return;
+      if (server.arg("confirm") != "RESET") {
+        sendJson(400, "{\"error\":\"확인값이 올바르지 않습니다.\"}");
+        return;
+      }
+      resetRequestedMs = millis();
+      sendJson(200, "{\"ok\":true}");
+    });
+  }
+  bool localRequest() {
+    return active && server.client().localIP() == WiFi.softAPIP();
+  }
+  static bool unsignedInteger(const String &text, uint32_t &value) {
+    if (text.isEmpty() || text.length() > 10)
+      return false;
+    uint64_t parsed = 0;
+    for (unsigned i = 0; i < text.length(); ++i) {
+      if (text[i] < '0' || text[i] > '9')
+        return false;
+      parsed = parsed * 10 + (text[i] - '0');
+      if (parsed > UINT32_MAX)
+        return false;
+    }
+    value = parsed;
+    return true;
+  }
+  static void clearArtworkStorage() {
+    for (unsigned removed = 0; removed < 4096; ++removed) {
+      File directory = SD.open("/now/art-cache");
+      if (!directory)
+        break;
+      File file = directory.openNextFile();
+      if (!file) {
+        directory.close();
+        break;
+      }
+      String name = file.name();
+      const bool isFile = !file.isDirectory();
+      file.close();
+      directory.close();
+      if (!isFile)
+        break;
+      if (!name.startsWith("/"))
+        name = String("/now/art-cache/") + name;
+      if (!SD.remove(name))
+        break;
+    }
+    SD.remove("/now/art-index-a");
+    SD.remove("/now/art-index-b");
+    SD.remove("/now/art-index.tmp");
+  }
+  void sendLegacyConfig() {
+    touch();
+    char target[16];
+    snprintf(target, sizeof(target), "%04u-%02u-%02u", core->year,
+             core->month, core->day);
+    const unsigned mode = core->cycle ? 6U : core->view == 6 ? 7U : core->view;
+    String order;
+    for (unsigned i = 0; i < 7; ++i) {
+      if (i)
+        order += ',';
+      order += String(core->order[i]);
+    }
+    order += ",7";
+    MilestoneV5::WifiStore store;
+    MilestoneV5::WifiCredentials networks[MilestoneV5::kWifiMaxNetworks];
+    uint8_t count = 0;
+    store.loadAll(networks, count);
+    String body = "{\"title\":\"" + jsonEscape(core->label) +
+                  "\",\"target\":\"" + target +
+                  "\",\"message\":\"" + jsonEscape(core->message) +
+                  "\",\"mode\":" + String(mode) +
+                  ",\"cycle_mask\":" + String(core->cycleMask) +
+                  ",\"cycle_order\":\"" + order +
+                  "\",\"cycle_interval\":" + String(core->cycleSeconds);
+    body += ",\"dday_style\":" + String(core->ddayText ? 1 : 0) +
+            ",\"after_mode\":" + String(core->afterComplete ? 1 : 0) +
+            ",\"msg_align\":" + String(core->left ? 1 : 0) +
+            ",\"msg_scroll\":" + String(core->scroll ? "true" : "false") +
+            ",\"scroll_speed\":" + String(core->speed) +
+            ",\"hour24\":" + String(core->hour24 ? 1 : 0) +
+            ",\"show_seconds\":" + String(core->seconds ? 1 : 0);
+    body += ",\"show_temp\":false,\"boot_sync\":" +
+            String(system.bootSync ? "true" : "false") +
+            ",\"wifi_sleep\":" + String(system.wifiSleep ? "true" : "false") +
+            ",\"burnin\":" + String(core->burnin ? "true" : "false") +
+            ",\"led_enabled\":" + String(system.ledEnabled ? "true" : "false");
+    body += ",\"ntp_period\":" + String(system.ntpSeconds) +
+            ",\"dday_period\":0,\"retry_period\":" +
+            String(system.retrySeconds) + ",\"led_brightness\":" +
+            String(system.ledDay) + ",\"led_night_level\":" +
+            String(system.ledNight) + ",\"night_start\":" +
+            String(system.nightStart) + ",\"night_end\":" +
+            String(system.nightEnd) + ",\"screen_off\":" +
+            String(core->screenOffMinutes) + ",\"display_luminance\":" +
+            String(system.luminance) + ",\"display_contrast\":" +
+            String(system.contrast);
+    body += ",\"color_title\":\"" + rgbHex(core->colors[4]) +
+            "\",\"color_date\":\"" + rgbHex(core->colors[1]) +
+            "\",\"color_time\":\"" + rgbHex(core->colors[0]) +
+            "\",\"color_dday\":\"" + rgbHex(core->colors[3]) +
+            "\",\"color_message\":\"" + rgbHex(core->colors[2]) +
+            "\",\"color_info\":\"" + rgbHex(core->colors[5]) + "\"";
+    body += ",\"media_monochrome\":" +
+            String(system.monochrome ? "true" : "false") +
+            ",\"enterprise_supported\":true";
+    if (count) {
+      body += ",\"wifi_ssid\":\"" + jsonEscape(networks[0].ssid) +
+              "\",\"wifi_security\":\"" +
+              String(networks[0].security ? "enterprise_peap" : "personal") +
+              "\",\"wifi_username\":\"" +
+              jsonEscape(networks[0].username) +
+              "\",\"wifi_identity\":\"" +
+              jsonEscape(networks[0].identity) + "\"";
+    } else {
+      body += ",\"wifi_ssid\":\"\",\"wifi_security\":\"personal\","
+              "\"wifi_username\":\"\",\"wifi_identity\":\"\"";
+    }
+    body += ",\"saved_networks\":[";
+    for (unsigned i = 0; i < count; ++i) {
+      if (i)
+        body += ',';
+      body += "{\"ssid\":\"" + jsonEscape(networks[i].ssid) +
+              "\",\"security\":\"" +
+              String(networks[i].security ? "enterprise_peap" : "personal") +
+              "\",\"preferred\":" + String(i ? "false" : "true") + "}";
+    }
+    body += "]}";
+    sendJson(200, body);
+  }
+  void saveLegacyConfig() {
+    if (!authorize())
+      return;
+    String target = server.arg("target"), label = server.arg("title"),
+           messageText = server.arg("message");
+    int year, month, day, mode, cycleSeconds, speed, hour24, seconds,
+        ddayStyle, afterMode, alignment, ntp, retry, ledDay, ledNight,
+        nightStart, nightEnd, screenOff, displayLuminance, displayContrast;
+    bool valid = target.length() == 10 && target[4] == '-' && target[7] == '-' &&
+                 integer(target.substring(0, 4), 2000, 2099, year) &&
+                 integer(target.substring(5, 7), 1, 12, month) &&
+                 integer(target.substring(8, 10), 1, 31, day) &&
+                 MilestoneV5::validDate(year, month, day) &&
+                 label.length() <= 64 && messageText.length() <= 144 &&
+                 integer(server.arg("mode"), 0, 8, mode) &&
+                 integer(server.arg("cycle_interval"), 0, 60, cycleSeconds) &&
+                 (cycleSeconds == 0 || cycleSeconds >= 3) &&
+                 integer(server.arg("scroll_speed"), 5, 80, speed) &&
+                 integer(server.arg("hour24"), 0, 1, hour24) &&
+                 integer(server.arg("show_seconds"), 0, 1, seconds) &&
+                 integer(server.arg("dday_style"), 0, 1, ddayStyle) &&
+                 integer(server.arg("after_mode"), 0, 1, afterMode) &&
+                 integer(server.arg("msg_align"), 0, 1, alignment) &&
+                 integer(server.arg("ntp_period"), 0, 604800, ntp) &&
+                 integer(server.arg("retry_period"), 15, 86400, retry) &&
+                 integer(server.arg("led_brightness"), 1, 64, ledDay) &&
+                 integer(server.arg("led_night_level"), 1, 32, ledNight) &&
+                 integer(server.arg("night_start"), 0, 1439, nightStart) &&
+                 integer(server.arg("night_end"), 0, 1439, nightEnd) &&
+                 integer(server.arg("screen_off"), 0, 1440, screenOff) &&
+                 integer(server.arg("display_luminance"), 50, 100,
+                         displayLuminance) &&
+                 integer(server.arg("display_contrast"), -20, 20,
+                         displayContrast);
+    uint16_t colors[6];
+    const char *keys[] = {"color_time", "color_date", "color_message",
+                          "color_dday", "color_title", "color_info"};
+    for (unsigned i = 0; i < 6; ++i)
+      valid = parseColor(server.arg(keys[i]), colors[i]) && valid;
+    uint8_t order[7];
+    valid = parseLegacyOrder(server.arg("cycle_order"), order) && valid;
+    int cycleMask;
+    valid = integer(server.arg("cycle_mask"), 1, 255, cycleMask) && valid;
+    if (!valid) {
+      sendJson(400, "{\"error\":\"설정값을 확인하세요.\"}");
+      return;
+    }
+    V5CoreViews previousCore = *core;
+    auto previousSystem = system;
+    core->year = year;
+    core->month = month;
+    core->day = day;
+    core->dateSet = true;
+    core->label = label;
+    core->message = messageText;
+    core->cycle = mode == 6;
+    if (mode <= 5)
+      core->view = mode;
+    else if (mode == 7)
+      core->view = 6;
+    else if (mode == 8) {
+      requestedProfile = MilestoneV5::Profile::kMedia;
+      profilePending = true;
+    }
+    core->cycleSeconds = cycleSeconds ? cycleSeconds : 8;
+    core->speed = speed;
+    core->hour24 = hour24;
+    core->seconds = seconds;
+    core->ddayText = ddayStyle;
+    core->afterComplete = afterMode;
+    core->left = alignment;
+    core->scroll = server.arg("msg_scroll") == "1";
+    core->burnin = server.arg("burnin") == "1";
+    core->cycleMask = cycleMask & 0x7F;
+    memcpy(core->order, order, sizeof(order));
+    core->screenOffMinutes = screenOff;
+    memcpy(core->colors, colors, sizeof(colors));
+    system.luminance = displayLuminance;
+    system.contrast = displayContrast;
+    system.monochrome = server.arg("media_monochrome") == "1";
+    system.ledEnabled = server.arg("led_enabled") == "1";
+    system.ledDay = ledDay;
+    system.ledNight = ledNight;
+    system.nightStart = nightStart;
+    system.nightEnd = nightEnd;
+    system.ntpSeconds = ntp;
+    system.retrySeconds = retry;
+    system.wifiSleep = server.arg("wifi_sleep") == "1";
+    system.bootSync = server.arg("boot_sync") == "1";
+    if (!core->save() || !system.save()) {
+      *core = previousCore;
+      system = previousSystem;
+      sendJson(500, "{\"error\":\"설정 저장에 실패했습니다.\"}");
+      return;
+    }
+    luminance = system.luminance;
+    contrast = system.contrast;
+    hardware->monochrome = system.monochrome;
+    hardware->display.setTone(luminance, contrast);
+    systemPending = true;
+    sendJson(200, "{\"ok\":true}");
+  }
+  static bool parseLegacyOrder(const String &value, uint8_t *order) {
+    bool seen[7]{};
+    bool mediaSeen = false;
+    unsigned count = 0, start = 0;
+    while (start <= value.length()) {
+      int comma = value.indexOf(',', start);
+      String part = comma < 0 ? value.substring(start)
+                              : value.substring(start, comma);
+      part.trim();
+      if (part.length() == 1 && part[0] >= '0' && part[0] <= '6') {
+        unsigned item = part[0] - '0';
+        if (seen[item] || count >= 7)
+          return false;
+        seen[item] = true;
+        order[count++] = item;
+      } else if (part == "7" && !mediaSeen)
+        mediaSeen = true;
+      else
+        return false;
+      if (comma < 0)
+        break;
+      start = comma + 1;
+    }
+    return count == 7 && mediaSeen;
+  }
+  void handleWifiScan() {
+    if (!authorize())
+      return;
+    int result = WiFi.scanComplete();
+    if (result == WIFI_SCAN_FAILED) {
+      WiFi.mode(WIFI_AP_STA);
+      if (WiFi.scanNetworks(true, true, false, 120) == WIFI_SCAN_FAILED) {
+        sendJson(500, "{\"error\":\"Wi-Fi 검색을 시작하지 못했습니다.\"}");
+        return;
+      }
+      wifiScanRunning = true;
+      sendJson(202, "{\"state\":\"scanning\"}");
+      return;
+    }
+    if (result == WIFI_SCAN_RUNNING) {
+      sendJson(202, "{\"state\":\"scanning\"}");
+      return;
+    }
+    String body = "{\"state\":\"done\",\"networks\":[";
+    bool first = true;
+    for (int i = 0; i < result; ++i) {
+      String ssid = WiFi.SSID(i);
+      if (ssid.isEmpty())
+        continue;
+      bool duplicate = false;
+      for (int j = 0; j < i; ++j)
+        if (WiFi.SSID(j) == ssid)
+          duplicate = true;
+      if (duplicate)
+        continue;
+      const wifi_auth_mode_t auth = WiFi.encryptionType(i);
+      if (!first)
+        body += ',';
+      first = false;
+      body += "{\"ssid\":\"" + jsonEscape(ssid) + "\",\"rssi\":" +
+              String(WiFi.RSSI(i)) + ",\"open\":" +
+              String(auth == WIFI_AUTH_OPEN ? "true" : "false") +
+              ",\"enterprise\":" +
+              String(auth == WIFI_AUTH_WPA2_ENTERPRISE ? "true" : "false") +
+              ",\"enterprise_ca_required\":false}";
+    }
+    body += "]}";
+    WiFi.scanDelete();
+    wifiScanRunning = false;
+    WiFi.mode(WIFI_AP);
+    sendJson(200, body);
+  }
+  void handleWifiTest() {
+    if (!authorize())
+      return;
+    if (wifiPending || downloadBusy || bundleBusy) {
+      sendJson(409, "{\"error\":\"다른 네트워크 작업이 진행 중입니다.\"}");
+      return;
+    }
+    MilestoneV5::WifiCredentials next;
+    String ssid = server.arg("ssid"), pass = server.arg("pass"),
+           security = server.arg("security"),
+           username = server.arg("username"), identity = server.arg("identity");
+    if (ssid.length() > 32 || pass.length() > 63 || username.length() > 64 ||
+        identity.length() > 64 ||
+        (security != "personal" && security != "enterprise_peap")) {
+      sendJson(400, "{\"error\":\"Wi-Fi 입력값을 확인하세요.\"}");
+      return;
+    }
+    ssid.toCharArray(next.ssid, sizeof(next.ssid));
+    pass.toCharArray(next.password, sizeof(next.password));
+    next.security = security == "enterprise_peap" ? 1 : 0;
+    if (next.security) {
+      username.toCharArray(next.username, sizeof(next.username));
+      identity.toCharArray(next.identity, sizeof(next.identity));
+    }
+    if (!MilestoneV5::validWifiCredentials(next)) {
+      sendJson(400, "{\"error\":\"비밀번호 또는 Enterprise 계정값을 확인하세요.\"}");
+      return;
+    }
+    if (wifiScanRunning) {
+      WiFi.scanDelete();
+      wifiScanRunning = false;
+    }
+    wifi = next;
+    wifiPending = true;
+    wifiResult = "연결 시험 중";
+    sendJson(202, "{\"ok\":true,\"state\":\"testing\"}");
+  }
   bool authorize() {
-    if (server.arg("token") != token || token.isEmpty()) {
+    if (!localRequest()) {
       server.send(403, "text/plain", "Forbidden");
       return false;
     }
@@ -851,7 +1647,7 @@ private:
     return true;
   }
   static bool integer(const String &s, int low, int high, int &out) {
-    if (s.isEmpty() || s.length() > 4)
+    if (s.isEmpty() || s.length() > 10)
       return false;
     size_t i = s[0] == '-' ? 1 : 0;
     if (i == s.length())

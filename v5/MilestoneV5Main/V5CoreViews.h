@@ -88,7 +88,7 @@ public:
     return true;
   }
   bool save() {
-    if (!MilestoneV5::validDate(year, month, day) || view > 6 || infoPage > 2 ||
+    if (!MilestoneV5::validDate(year, month, day) || view > 6 || infoPage > 5 ||
         message.length() > 144 || label.length() > 64)
       return false;
     uint8_t data[256]{};
@@ -176,24 +176,26 @@ public:
     return false;
   }
   void render(V5Hardware &h) {
-    char clock[16], date[20];
+    char clockBuffer[16], date[20];
+    String clock;
     h.textScroll = scroll;
     h.textLeft = left;
     h.scrollSpeed = speed;
     h.textShift = burnin;
     if (h.rtcValid) {
       unsigned hour = hour24 ? h.rtc.hour : ((h.rtc.hour + 11) % 12 + 1);
-      snprintf(clock, sizeof(clock), seconds ? "%02u:%02u:%02u" : "%02u:%02u",
-               hour, h.rtc.minute, h.rtc.second);
-      if (!hour24)
-        strcat(clock, h.rtc.hour >= 12 ? " PM" : " AM");
-      snprintf(date, sizeof(date), "%04u-%02u-%02u", h.rtc.year, h.rtc.month,
+      snprintf(clockBuffer, sizeof(clockBuffer),
+               seconds ? "%02u:%02u:%02u" : "%02u:%02u", hour,
+               h.rtc.minute, h.rtc.second);
+      clock = hour24 ? String(clockBuffer)
+                     : String(h.rtc.hour >= 12 ? "PM " : "AM ") + clockBuffer;
+      snprintf(date, sizeof(date), "%04u.%02u.%02u", h.rtc.year, h.rtc.month,
                h.rtc.day);
     } else {
-      strcpy(clock, "--:--");
+      clock = "--:--";
       strcpy(date, "날짜 미설정");
     }
-    String dday = "D --";
+    String dday = "D --?";
     if (h.rtcValid && dateSet) {
       int32_t delta =
           MilestoneV5::dayOrdinal(year, month, day) -
@@ -221,11 +223,11 @@ public:
       centered(h, dday, 65, ddayText ? u8g2_font_unifont_t_korean2
                                      : u8g2_font_logisoso32_tf,
                colors[3], ox);
-      messageLine(h, message, 118, colors[2], ox);
+      scrollingLine(h, message, 118, colors[2], ox, 1, 126, true);
       break;
     case 2:
       title(h, "MILESTONE", ox);
-      messageLine(h, message, 75, colors[2], ox);
+      messageBlock(h, 75, 59, 83, colors[2], ox);
       break;
     case 3:
       title(h, "현재 시각", ox);
@@ -242,7 +244,7 @@ public:
                seconds ? u8g2_font_logisoso20_tf : u8g2_font_logisoso28_tf,
                colors[0], ox);
       rule(h, 68, colors[5]);
-      messageLine(h, message, 105, colors[2], ox);
+      messageBlock(h, 105, 94, 118, colors[2], ox);
       break;
     case 5:
       title(h, label, ox);
@@ -256,7 +258,7 @@ public:
       centered(h, String(date) + " " + weekday(h), 96,
                u8g2_font_unifont_t_korean2, colors[1], ox);
       rule(h, 101, colors[5]);
-      messageLine(h, message, 123, colors[2], ox);
+      scrollingLine(h, message, 123, colors[2], ox, 1, 126, true);
       break;
     case 6:
       if (infoPage == 0) {
@@ -330,28 +332,117 @@ private:
     paint(h, color);
   }
   void title(V5Hardware &h, const String &text, int8_t offset) {
-    centered(h, text, 14, u8g2_font_unifont_t_korean2, colors[4], offset);
-    rule(h, 18, colors[5]);
+    canvas.clearBuffer();
+    canvas.setFont(u8g2_font_unifont_t_korean2);
+    canvas.drawUTF8(max(0, int(offset)), 15, text.c_str());
+    paint(h, colors[4]);
+    rule(h, 17, colors[5]);
   }
   void rule(V5Hardware &h, int y, uint16_t color) {
     canvas.clearBuffer();
     canvas.drawHLine(4, y, 120);
     paint(h, color);
   }
-  void messageLine(V5Hardware &h, const String &text, int baseline,
-                   uint16_t color, int8_t offset) {
+  void scrollingLine(V5Hardware &h, String text, int baseline,
+                     uint16_t color, int8_t offset, int leftEdge, int width,
+                     bool centerIfFits) {
+    text.replace("\r", "");
+    text.replace("\n", " ");
     canvas.clearBuffer();
     canvas.setFont(u8g2_font_unifont_t_korean2);
-    const int width = canvas.getUTF8Width(text.c_str());
-    int x = left ? 2 : max(2, (128 - width) / 2 + int(offset));
-    if (scroll && width > 124) {
-      const int travel = width + 160;
-      x = 128 - int((millis() * speed / 1000UL) % travel);
-      canvas.setClipWindow(1, max(0, baseline - 18), 127,
-                           min(127, baseline + 2));
+    const int textWidth = canvas.getUTF8Width(text.c_str());
+    int x = this->left || !centerIfFits
+                ? leftEdge + int(offset)
+                : leftEdge + (width - textWidth) / 2 + int(offset);
+    if (scroll && textWidth > width) {
+      const int travel = textWidth + width + 12;
+      x = leftEdge + width - int((millis() * speed / 1000UL) % travel);
+      canvas.setClipWindow(leftEdge, max(0, baseline - 18),
+                           leftEdge + width - 1, min(127, baseline + 2));
     }
     canvas.drawUTF8(x, baseline, text.c_str());
     canvas.setMaxClipWindow();
+    paint(h, color);
+  }
+  bool splitMessage(const String &text, String &first, String &second,
+                    int maximum = 124) {
+    first = second = "";
+    String current;
+    bool onSecond = false, overflow = false;
+    for (size_t i = 0; i < text.length();) {
+      size_t bytes = 1;
+      const uint8_t lead = text[i];
+      if ((lead & 0xE0) == 0xC0)
+        bytes = 2;
+      else if ((lead & 0xF0) == 0xE0)
+        bytes = 3;
+      else if ((lead & 0xF8) == 0xF0)
+        bytes = 4;
+      const String character = text.substring(i, min(text.length(), i + bytes));
+      if (character == "\n") {
+        if (!onSecond) {
+          first = current;
+          current = "";
+          onSecond = true;
+        } else {
+          overflow = true;
+          break;
+        }
+      } else if (canvas.getUTF8Width((current + character).c_str()) > maximum &&
+                 !current.isEmpty()) {
+        if (!onSecond) {
+          first = current;
+          current = character;
+          onSecond = true;
+        } else {
+          overflow = true;
+          break;
+        }
+      } else {
+        current += character;
+      }
+      i += bytes;
+    }
+    if (onSecond)
+      second = current;
+    else
+      first = current;
+    return overflow;
+  }
+  void ellipsis(String &text, int maximum) {
+    while (!text.isEmpty() &&
+           canvas.getUTF8Width((text + "...").c_str()) > maximum) {
+      int last = text.length() - 1;
+      while (last > 0 && (uint8_t(text[last]) & 0xC0) == 0x80)
+        --last;
+      text.remove(last);
+    }
+    text += "...";
+  }
+  void messageBlock(V5Hardware &h, int single, int firstBaseline,
+                    int secondBaseline, uint16_t color, int8_t offset) {
+    canvas.setFont(u8g2_font_unifont_t_korean2);
+    String first, second;
+    const bool overflow = splitMessage(message, first, second);
+    if (overflow && scroll) {
+      scrollingLine(h, message, single, color, offset, 1, 126, true);
+      return;
+    }
+    if (overflow && second.isEmpty())
+      second = "...";
+    canvas.clearBuffer();
+    canvas.setFont(u8g2_font_unifont_t_korean2);
+    if (!second.isEmpty()) {
+      if (overflow)
+        ellipsis(second, 124);
+      const int x1 = left ? 2 : max(1, (128 - canvas.getUTF8Width(first.c_str())) / 2 + offset);
+      const int x2 = left ? 2 : max(1, (128 - canvas.getUTF8Width(second.c_str())) / 2 + offset);
+      canvas.drawUTF8(x1, firstBaseline, first.c_str());
+      canvas.drawUTF8(x2, secondBaseline, second.c_str());
+    } else {
+      const int x = left ? 2 : max(1, (128 - canvas.getUTF8Width(first.c_str())) / 2 + offset);
+      canvas.drawUTF8(x, single, first.c_str());
+    }
     paint(h, color);
   }
   String weekday(const V5Hardware &h) const {

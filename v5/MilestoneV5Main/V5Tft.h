@@ -107,6 +107,29 @@ public:
           frame_[(yOffset + y) * 128 + x] = color;
   }
 
+  void blitMonoPacked(const uint8_t *bits, int yOffset, uint16_t foreground,
+                      uint16_t background) {
+    if (!bits || !frame_ || yOffset < 0 || yOffset + 128 > 160)
+      return;
+    for (int y = 0; y < 128; ++y)
+      for (int x = 0; x < 128; ++x)
+        frame_[(yOffset + y) * 128 + x] =
+            bits[(y >> 3) * 128 + x] & (1U << (y & 7)) ? foreground
+                                                                  : background;
+  }
+
+  void blitRgb332(const uint8_t *pixels, int yOffset) {
+    if (!pixels || !frame_ || yOffset < 0 || yOffset + 128 > 160)
+      return;
+    for (int i = 0; i < 128 * 128; ++i) {
+      const uint8_t value = pixels[i];
+      const uint16_t red = ((value >> 5) & 7) * 31 / 7;
+      const uint16_t green = ((value >> 2) & 7) * 63 / 7;
+      const uint16_t blue = (value & 3) * 31 / 3;
+      frame_[yOffset * 128 + i] = (red << 11) | (green << 5) | blue;
+    }
+  }
+
   void startWrite() override {
     if (frame_ && !flushing_)
       return;

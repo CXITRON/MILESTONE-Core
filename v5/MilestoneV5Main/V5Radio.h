@@ -26,7 +26,7 @@ public:
     const bool client = portal.active && !portal.canYieldRadio(now);
     MilestoneV5::RadioState state{portal.active,
                                   client,
-                                  false,
+                                  !portal.active,
                                   zeroOnline && bool(zeroFlags & 4),
                                   zeroOnline && bool(zeroFlags & 8),
                                   safety};
@@ -72,12 +72,13 @@ public:
         redraw = true;
         return;
       }
-      if (safety || client || (portal.wifiPending && zeroOnline) ||
+      if (safety || (client && !portal.timeSyncRequested) ||
+          (portal.wifiPending && zeroOnline) ||
           int32_t(now - retryAfter) < 0)
         return;
       bool wantsArt = art.stage == 1 && !zeroArtworkAllowed;
       bool wantsTime =
-          ((!lastTimeSync && portal.system.bootSync) ||
+          (portal.timeSyncRequested || (!lastTimeSync && portal.system.bootSync) ||
            (portal.system.ntpSeconds &&
             now - lastTimeSync >= portal.system.ntpSeconds * 1000)) &&
           (!zeroOnline || state.zeroBleActive);
@@ -88,6 +89,10 @@ public:
       if (!store.load(credentials, networkIndex)) {
         networkIndex = 0;
         if (!store.load(credentials)) {
+          if (portal.timeSyncRequested) {
+            portal.timeSyncRequested = false;
+            portal.timeSyncSuccess = false;
+          }
           retryAfter = now + portal.system.retrySeconds * 1000;
           return;
         }
@@ -170,8 +175,13 @@ public:
     if (V5MainTime::received.exchange(false)) {
       time_t epoch = time(nullptr);
       if (epoch >= 1704067200 && epoch <= 4102444799LL &&
-          hardware.setRtcEpoch(epoch))
+          hardware.setRtcEpoch(epoch)) {
         lastTimeSync = now;
+        if (portal.timeSyncRequested) {
+          portal.timeSyncRequested = false;
+          portal.timeSyncSuccess = true;
+        }
+      }
       esp_sntp_stop();
     }
     if (downloadJob) {
@@ -182,8 +192,13 @@ public:
     }
     if (!artJob) {
       if (lastTimeSync == now || now - syncStarted >= 21000) {
-        if (lastTimeSync != now)
+        if (lastTimeSync != now) {
+          if (portal.timeSyncRequested) {
+            portal.timeSyncRequested = false;
+            portal.timeSyncSuccess = false;
+          }
           retryAfter = now + 60000;
+        }
         finish(now, portal, safety);
       }
       return;
