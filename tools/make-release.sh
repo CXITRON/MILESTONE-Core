@@ -26,6 +26,12 @@ if [[ ! $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   exit 2
 fi
 
+if (( 10#${version%%.*} >= 5 )); then
+  source "$script_dir/release-v5.sh"
+  milestone_build_v5 "$version" "$notes"
+  exit 0
+fi
+
 source_version=$(sed -n 's/.*FIRMWARE_VERSION\[\] = "\([0-9][0-9.]*\)".*/\1/p' "$project_dir/MILESTONE_Core.ino")
 if [[ $source_version != "$version" ]]; then
   echo "오류: 요청 버전($version)과 소스 버전($source_version)이 다릅니다." >&2

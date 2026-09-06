@@ -1,12 +1,24 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v3.3.4
-> Hardware: Waveshare ESP32-S3-Zero + ST7735-compatible 128×160 SPI TFT + three tactile switches
+> Current baseline: MILESTONE Core v5.0.0
+> Legacy baseline: MILESTONE Core v3.3.4
+> V5 firmware baseline: 5.0.0 — dual-board MAIN/ZERO plus independent SAFE
+> Hardware: GOOUUU ESP32-S3 N16R8 MAIN + Waveshare ESP32-S3-Zero companion + ST7735-compatible 128×160 SPI TFT + five tactile switches
 > Repository: `CXITRON/MILESTONE-Core`
 
 This document gives coding agents and maintainers the architectural context needed before modifying the firmware. `AGENTS.md` contains operational rules, especially the release workflow. `README.md` contains user-facing behavior and detailed version history. When documentation conflicts with implementation, inspect the current source and treat the source as authoritative.
 
-## 1. Product scope
+## Current v5 product scope
+
+MILESTONE v5 uses a 16MiB MAIN for the integrated CORE/MEDIA/NOW runtime,
+display, five buttons, SD, RTC, AHT20 and recovery coordination. A separate
+ESP32-S3-Zero owns iPhone BLE/AMS and shares bounded Wi-Fi/download work over a
+CRC-protected SPI link. The MAIN factory partition contains the independent
+network-free SAFE recovery application, with 6MiB MAIN A/B slots and signed SD
+Stable/Backup/Recovery images. The v5 release is a signed 13-asset catalog rather
+than the legacy profile manifest/BIN pairs.
+
+## 1. Legacy v3 product scope
 
 MILESTONE Core is an ESP32-S3 desktop display firmware with:
 

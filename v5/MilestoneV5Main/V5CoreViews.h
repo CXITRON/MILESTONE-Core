@@ -1,0 +1,408 @@
+#pragma once
+#include "V5Hardware.h"
+#include <MilestoneV5Calendar.h>
+#include <MilestoneV5Now.h>
+#include <MilestoneV5Protocol.h>
+#include <MilestoneV5Version.h>
+#include <Preferences.h>
+#include <U8g2lib.h>
+#include <WiFi.h>
+#include <esp_system.h>
+
+class V5CoreViews {
+public:
+  uint8_t view = 0, infoPage = 0;
+  uint16_t year = 2027;
+  uint8_t month = 1, day = 1;
+  String message = "매일을 소중하게", label = "MILESTONE";
+  uint16_t colors[6] = {0x07FF, 0xFFFF, 0xFFE0, 0x07E0, 0x07FF, 0xBDF7};
+  bool configured = false, hour24 = true, seconds = false, scroll = true,
+       left = false, ddayText = false, afterComplete = false, cycle = false,
+       burnin = true;
+  uint8_t speed = 24, cycleMask = 0x7F, cycleSeconds = 8,
+          order[7] = {0, 1, 2, 3, 4, 5, 6}, nowLayout = 1;
+  uint16_t screenOffMinutes = 0;
+  bool dirty = false;
+  bool dateSet = false;
+  void begin() {
+    Preferences p;
+    if (!p.begin("v5_core", true))
+      return;
+    uint8_t data[256];
+    bool ok = p.getBytesLength("record") == sizeof(data) &&
+              p.getBytes("record", data, sizeof(data)) == sizeof(data);
+    p.end();
+    if (ok)
+      applyRecord(data);
+  }
+  bool applyRecord(const uint8_t *data) {
+    bool modern = !memcmp(data, "VC02", 4);
+    if ((!modern && memcmp(data, "VC01", 4)) ||
+        MilestoneV5::crc32(data, 252) != read32(data + 252))
+      return false;
+    if (data[4] > 6 || data[5] > 5 ||
+        !MilestoneV5::validDate(unsigned(data[6]) | unsigned(data[7]) << 8,
+                                data[8], data[9]) ||
+        data[154] || data[219])
+      return false;
+    if (modern) {
+      unsigned mask = 0;
+      for (unsigned i = 0; i < 7; ++i) {
+        if (data[233 + i] > 6 || (mask & (1U << data[233 + i])))
+          return false;
+        mask |= 1U << data[233 + i];
+      }
+      if (data[230] < 5 || data[230] > 80 || !data[231] || data[231] > 127 ||
+          data[232] < 3 || data[232] > 60 || data[245] > 3)
+        return false;
+      uint8_t f = data[229];
+      hour24 = f & 1;
+      seconds = f & 2;
+      scroll = f & 4;
+      left = f & 8;
+      ddayText = f & 16;
+      afterComplete = f & 32;
+      cycle = f & 64;
+      burnin = f & 128;
+      speed = data[230];
+      cycleMask = data[231];
+      cycleSeconds = data[232];
+      memcpy(order, data + 233, 7);
+      nowLayout = data[245];
+      screenOffMinutes = uint16_t(data[246]) | uint16_t(data[247]) << 8;
+      colors[4] = uint16_t(data[240]) | uint16_t(data[241]) << 8;
+      colors[5] = uint16_t(data[242]) | uint16_t(data[243]) << 8;
+    }
+    view = data[4];
+    infoPage = data[5];
+    year = unsigned(data[6]) | unsigned(data[7]) << 8;
+    month = data[8];
+    day = data[9];
+    message = reinterpret_cast<const char *>(data + 10);
+    label = reinterpret_cast<const char *>(data + 155);
+    dateSet = data[228] == 1;
+    for (unsigned i = 0; i < 4; ++i)
+      colors[i] = uint16_t(data[220 + i * 2]) | uint16_t(data[221 + i * 2])
+                                                    << 8;
+    configured = true;
+    return true;
+  }
+  bool save() {
+    if (!MilestoneV5::validDate(year, month, day) || view > 6 || infoPage > 2 ||
+        message.length() > 144 || label.length() > 64)
+      return false;
+    uint8_t data[256]{};
+    memcpy(data, "VC02", 4);
+    data[4] = view;
+    data[5] = infoPage;
+    data[6] = year;
+    data[7] = year >> 8;
+    data[8] = month;
+    data[9] = day;
+    memcpy(data + 10, message.c_str(), message.length());
+    memcpy(data + 155, label.c_str(), label.length());
+    for (unsigned i = 0; i < 4; ++i) {
+      data[220 + i * 2] = colors[i];
+      data[221 + i * 2] = colors[i] >> 8;
+    }
+    data[228] = dateSet ? 1 : 0;
+    data[229] = (hour24 ? 1 : 0) | (seconds ? 2 : 0) | (scroll ? 4 : 0) |
+                (left ? 8 : 0) | (ddayText ? 16 : 0) |
+                (afterComplete ? 32 : 0) | (cycle ? 64 : 0) |
+                (burnin ? 128 : 0);
+    data[230] = speed;
+    data[231] = cycleMask;
+    data[232] = cycleSeconds;
+    memcpy(data + 233, order, 7);
+    data[240] = colors[4];
+    data[241] = colors[4] >> 8;
+    data[242] = colors[5];
+    data[243] = colors[5] >> 8;
+    data[245] = nowLayout;
+    data[246] = screenOffMinutes;
+    data[247] = screenOffMinutes >> 8;
+    uint32_t crc = MilestoneV5::crc32(data, 252);
+    for (unsigned i = 0; i < 4; ++i)
+      data[252 + i] = crc >> (8 * i);
+    Preferences p;
+    if (!p.begin("v5_core", false))
+      return false;
+    uint8_t check[256];
+    bool ok = p.putBytes("record", data, sizeof(data)) == sizeof(data) &&
+              p.getBytes("record", check, sizeof(check)) == sizeof(check) &&
+              !memcmp(data, check, sizeof(data));
+    p.end();
+    if (ok)
+      configured = true;
+    return ok;
+  }
+  void button(bool prev, bool next, bool ok, uint32_t now) {
+    if (prev || next) {
+      view = (view + (prev ? 6 : 1)) % 7;
+      dirty = true;
+      changed = now;
+      lastCycle = now;
+    }
+    if (ok && view == 6) {
+      infoPage = (infoPage + 1) % 6;
+      dirty = true;
+      changed = now;
+    }
+  }
+  void service(uint32_t now) {
+    if (dirty && now - changed >= 1500) {
+      dirty = !save();
+      changed = now;
+    }
+  }
+  bool advance(uint32_t now, bool allowed) {
+    if (!allowed || !cycle || view == 6) {
+      lastCycle = now;
+      return false;
+    }
+    if (now - lastCycle < uint32_t(cycleSeconds) * 1000)
+      return false;
+    lastCycle = now;
+    unsigned at = 0;
+    while (at < 7 && order[at] != view)
+      ++at;
+    for (unsigned step = 1; step <= 7; ++step) {
+      uint8_t next = order[(at + step) % 7];
+      if (cycleMask & (1U << next)) {
+        view = next;
+        return true;
+      }
+    }
+    return false;
+  }
+  void render(V5Hardware &h) {
+    char clock[16], date[20];
+    h.textScroll = scroll;
+    h.textLeft = left;
+    h.scrollSpeed = speed;
+    h.textShift = burnin;
+    if (h.rtcValid) {
+      unsigned hour = hour24 ? h.rtc.hour : ((h.rtc.hour + 11) % 12 + 1);
+      snprintf(clock, sizeof(clock), seconds ? "%02u:%02u:%02u" : "%02u:%02u",
+               hour, h.rtc.minute, h.rtc.second);
+      if (!hour24)
+        strcat(clock, h.rtc.hour >= 12 ? " PM" : " AM");
+      snprintf(date, sizeof(date), "%04u-%02u-%02u", h.rtc.year, h.rtc.month,
+               h.rtc.day);
+    } else {
+      strcpy(clock, "--:--");
+      strcpy(date, "날짜 미설정");
+    }
+    String dday = "D --";
+    if (h.rtcValid && dateSet) {
+      int32_t delta =
+          MilestoneV5::dayOrdinal(year, month, day) -
+          MilestoneV5::dayOrdinal(h.rtc.year, h.rtc.month, h.rtc.day);
+      dday = delta == 0                   ? String("D-DAY")
+             : delta < 0 && afterComplete ? String("")
+             : ddayText && delta > 0
+                 ? String(delta) + "일 남음"
+                 : String(delta > 0 ? "D-" : "D+") + abs(delta);
+    }
+    h.display.fillRect(0, 16, 128, 128, 0);
+    const int8_t ox = burnin ? int8_t((millis() / 60000UL) % 3) - 1 : 0;
+    switch (view) {
+    case 0:
+      title(h, label, ox);
+      centered(h, dday, 65, ddayText ? u8g2_font_unifont_t_korean2
+                                     : u8g2_font_logisoso32_tf,
+               colors[3], ox);
+      centered(h, String(date) + " " + weekday(h), 92,
+               u8g2_font_unifont_t_korean2, colors[1], ox);
+      centered(h, clock, 120, u8g2_font_logisoso20_tf, colors[0], ox);
+      break;
+    case 1:
+      title(h, label, ox);
+      centered(h, dday, 65, ddayText ? u8g2_font_unifont_t_korean2
+                                     : u8g2_font_logisoso32_tf,
+               colors[3], ox);
+      messageLine(h, message, 118, colors[2], ox);
+      break;
+    case 2:
+      title(h, "MILESTONE", ox);
+      messageLine(h, message, 75, colors[2], ox);
+      break;
+    case 3:
+      title(h, "현재 시각", ox);
+      centered(h, clock, 61,
+               seconds ? u8g2_font_logisoso20_tf : u8g2_font_logisoso28_tf,
+               colors[0], ox);
+      centered(h, date, 83, u8g2_font_6x10_tf, colors[1], ox);
+      centered(h, weekday(h) + "요일 · KST", 113,
+               u8g2_font_unifont_t_korean2, colors[1], ox);
+      break;
+    case 4:
+      title(h, date, ox);
+      centered(h, clock, 57,
+               seconds ? u8g2_font_logisoso20_tf : u8g2_font_logisoso28_tf,
+               colors[0], ox);
+      rule(h, 68, colors[5]);
+      messageLine(h, message, 105, colors[2], ox);
+      break;
+    case 5:
+      title(h, label, ox);
+      centered(h, dday, 45,
+               ddayText ? u8g2_font_unifont_t_korean2
+                        : u8g2_font_logisoso20_tf,
+               colors[3], ox);
+      centered(h, clock, 72,
+               seconds ? u8g2_font_6x10_tf : u8g2_font_logisoso20_tf,
+               colors[0], ox);
+      centered(h, String(date) + " " + weekday(h), 96,
+               u8g2_font_unifont_t_korean2, colors[1], ox);
+      rule(h, 101, colors[5]);
+      messageLine(h, message, 123, colors[2], ox);
+      break;
+    case 6:
+      if (infoPage == 0) {
+        infoHeader(h, "SYSTEM", 1);
+        infoLine(h, 29, "FW", MilestoneV5::FIRMWARE_VERSION);
+        infoLine(h, 47, "UP", uptime());
+        infoLine(h, 65, "RESET", String(int(esp_reset_reason())));
+        infoLine(h, 83, "CHIP", String(ESP.getChipModel()) + " R" + ESP.getChipRevision());
+        infoLine(h, 101, "CPU", String(getCpuFrequencyMhz()) + " MHz");
+        infoLine(h, 119, "CORES", String(ESP.getChipCores()));
+      } else if (infoPage == 1) {
+        infoHeader(h, "MEMORY", 2);
+        infoLine(h, 29, "HEAP", bytes(ESP.getHeapSize()));
+        infoLine(h, 47, "USED", bytes(ESP.getHeapSize() - ESP.getFreeHeap()));
+        infoLine(h, 65, "FREE", bytes(ESP.getFreeHeap()));
+        infoLine(h, 83, "MIN", bytes(ESP.getMinFreeHeap()));
+        infoLine(h, 101, "BLOCK", bytes(ESP.getMaxAllocHeap()));
+        infoLine(h, 119, "STACK", bytes(uxTaskGetStackHighWaterMark(nullptr)));
+      } else if (infoPage == 2) {
+        infoHeader(h, "PSRAM", 3);
+        infoLine(h, 29, "TOTAL", bytes(ESP.getPsramSize()));
+        infoLine(h, 51, "FREE", bytes(ESP.getFreePsram()));
+        infoLine(h, 73, "USED", bytes(ESP.getPsramSize() - ESP.getFreePsram()));
+        infoLine(h, 95, "BLOCK", bytes(ESP.getMaxAllocPsram()));
+        infoLine(h, 117, "USE", "COLOR / MEDIA");
+      } else if (infoPage == 3) {
+        infoHeader(h, "STORAGE", 4);
+        infoLine(h, 31, "FLASH", bytes(ESP.getFlashChipSize()));
+        infoLine(h, 53, "APP", bytes(ESP.getSketchSize()));
+        infoLine(h, 75, "OTA FREE", bytes(ESP.getFreeSketchSpace()));
+        infoLine(h, 97, "SD", h.sdMounted ? "MOUNTED" : "MISSING");
+        infoLine(h, 119, "VERIFY", "SIZE + SHA256");
+      } else if (infoPage == 4) {
+        infoHeader(h, "NETWORK", 5);
+        const bool connected = WiFi.status() == WL_CONNECTED;
+        infoLine(h, 31, "STATE", connected ? "CONNECTED" : "OFFLINE");
+        String ssid = connected ? WiFi.SSID() : String("-");
+        if (ssid.length() > 18)
+          ssid = ssid.substring(0, 18);
+        infoLine(h, 53, "SSID", ssid);
+        infoLine(h, 75, "RSSI", connected ? String(WiFi.RSSI()) + " dBm" : "-");
+        infoLine(h, 97, "IP", connected ? WiFi.localIP().toString() : "-");
+        infoLine(h, 119, "MAC", WiFi.macAddress());
+      } else {
+        infoHeader(h, "TIME / SENSOR", 6);
+        infoLine(h, 31, "CLOCK", h.rtcValid ? "VALID" : "NOT SET");
+        infoLine(h, 53, "RTC", h.rtcPresent ? "DS3231" : "MISSING");
+        infoLine(h, 75, "ENV", h.environment.address ? "AHT20" : "MISSING");
+        infoLine(h, 97, "PROFILE", "CORE / MEDIA / NOW");
+        infoLine(h, 119, "NEXT PAGE", "OK");
+      }
+      break;
+    }
+  }
+
+private:
+  U8G2_SH1107_128X128_F_SW_I2C canvas{U8G2_R0, U8X8_PIN_NONE,
+                                      U8X8_PIN_NONE, U8X8_PIN_NONE};
+  uint32_t changed = 0, lastCycle = 0;
+
+  void paint(V5Hardware &h, uint16_t color) {
+    h.display.blitMono(canvas.getBufferPtr(), 16, color);
+  }
+  void centered(V5Hardware &h, const String &text, int baseline,
+                const uint8_t *font, uint16_t color, int8_t offset = 0) {
+    canvas.clearBuffer();
+    canvas.setFont(font);
+    int width = canvas.getUTF8Width(text.c_str());
+    int x = MilestoneV5::centeredTextX(128, width, offset);
+    canvas.drawUTF8(x, baseline, text.c_str());
+    paint(h, color);
+  }
+  void title(V5Hardware &h, const String &text, int8_t offset) {
+    centered(h, text, 14, u8g2_font_unifont_t_korean2, colors[4], offset);
+    rule(h, 18, colors[5]);
+  }
+  void rule(V5Hardware &h, int y, uint16_t color) {
+    canvas.clearBuffer();
+    canvas.drawHLine(4, y, 120);
+    paint(h, color);
+  }
+  void messageLine(V5Hardware &h, const String &text, int baseline,
+                   uint16_t color, int8_t offset) {
+    canvas.clearBuffer();
+    canvas.setFont(u8g2_font_unifont_t_korean2);
+    const int width = canvas.getUTF8Width(text.c_str());
+    int x = left ? 2 : max(2, (128 - width) / 2 + int(offset));
+    if (scroll && width > 124) {
+      const int travel = width + 160;
+      x = 128 - int((millis() * speed / 1000UL) % travel);
+      canvas.setClipWindow(1, max(0, baseline - 18), 127,
+                           min(127, baseline + 2));
+    }
+    canvas.drawUTF8(x, baseline, text.c_str());
+    canvas.setMaxClipWindow();
+    paint(h, color);
+  }
+  String weekday(const V5Hardware &h) const {
+    if (!h.rtcValid)
+      return "-";
+    struct tm value{};
+    value.tm_year = h.rtc.year - 1900;
+    value.tm_mon = h.rtc.month - 1;
+    value.tm_mday = h.rtc.day;
+    value.tm_isdst = -1;
+    mktime(&value);
+    static const char *names[] = {"일", "월", "화", "수", "목", "금", "토"};
+    return names[value.tm_wday < 0 || value.tm_wday > 6 ? 0 : value.tm_wday];
+  }
+  void infoHeader(V5Hardware &h, const String &name, unsigned page) {
+    canvas.clearBuffer();
+    canvas.setFont(u8g2_font_6x10_tf);
+    canvas.drawStr(1, 10, name.c_str());
+    canvas.setFont(u8g2_font_5x8_tf);
+    char count[8];
+    snprintf(count, sizeof(count), "%u/6", page);
+    canvas.drawStr(108, 10, count);
+    canvas.drawHLine(0, 14, 128);
+    paint(h, colors[5]);
+  }
+  void infoLine(V5Hardware &h, int baseline, const String &name,
+                const String &value) {
+    canvas.clearBuffer();
+    canvas.setFont(u8g2_font_5x8_tf);
+    String line = name + ": " + value;
+    canvas.drawStr(2, baseline, line.c_str());
+    paint(h, colors[5]);
+  }
+  static String bytes(uint32_t value) {
+    if (value >= 1024UL * 1024UL)
+      return String(value / (1024.0f * 1024.0f), 2) + " MB";
+    if (value >= 1024UL)
+      return String(value / 1024.0f, 1) + " KB";
+    return String(value) + " B";
+  }
+  static String uptime() {
+    uint64_t seconds = millis() / 1000ULL;
+    char result[24];
+    snprintf(result, sizeof(result), "%llud %02u:%02u:%02u",
+             (unsigned long long)(seconds / 86400ULL),
+             unsigned(seconds / 3600ULL % 24ULL),
+             unsigned(seconds / 60ULL % 60ULL), unsigned(seconds % 60ULL));
+    return result;
+  }
+  static uint32_t read32(const uint8_t *p) {
+    return uint32_t(p[0]) | uint32_t(p[1]) << 8 | uint32_t(p[2]) << 16 |
+           uint32_t(p[3]) << 24;
+  }
+};

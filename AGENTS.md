@@ -7,17 +7,29 @@ The source code is always the final authority when documentation and implementat
 ## 1. Project baseline
 
 - Product: MILESTONE Core
-- Current firmware baseline: `3.3.4`
-- Persistent config schema: `12`
-- Hardware: Waveshare ESP32-S3-Zero + ST7735-compatible 128×160 SPI TFT + three tactile switches
+- Current firmware baseline: `5.0.0`
+- Legacy firmware baseline: `3.3.4`
+- V5 firmware baseline: `5.0.0` (`v5/`, dual-board MAIN/ZERO plus independent SAFE)
+- Legacy persistent config schema: `12`
+- Hardware: GOOUUU ESP32-S3 N16R8 MAIN + Waveshare ESP32-S3-Zero companion + ST7735-compatible 128×160 SPI TFT + five tactile switches
 - Main branch: `main`
 - Repository: `CXITRON/MILESTONE-Core`
-- Release transport: GitHub Releases + CORE/MEDIA/NOW profile manifests and BIN assets
-- Profile boundary: CORE owns all general/D-day views, MEDIA runs stored/live media only, and NOW runs iPhone AMS Bluetooth Now Playing only. MEDIA and NOW must not mutate persisted CORE view settings. This is a compile-time boundary: CORE and NOW contain no media/stream implementation, while CORE and MEDIA contain no Bluetooth runtime.
+- Release transport: GitHub Releases; v5 uses a signed 13-asset MAIN/ZERO/SAFE catalog, while legacy v3 uses CORE/MEDIA/NOW manifest/BIN pairs
+- Profile boundary: v5 runs CORE/MEDIA/NOW as isolated runtime profiles inside MAIN while ZERO exclusively owns Bluetooth. The legacy v3 tree retains its compile-time CORE/MEDIA/NOW boundary and schema-12 behavior.
 - Build/release source of truth: `tools/make-release.sh`
 - Unified operator command: `milestone-release`
 
 Do not introduce a second release workflow unless there is a concrete technical reason.
+For v5, the same `milestone-release local 5.0.0` command selects the internal
+`tools/release-v5.sh` backend through `tools/make-release.sh`. Its version source
+is `v5/libraries/MilestoneV5Core/src/MilestoneV5Version.h`. Keep the v3 baseline
+and schema-12 checks for the legacy tree; v5 candidate documentation is checked
+separately by `tests/test_v5_docs.py`. A v5 release requires the existing signing
+key pair through `MILESTONE_V5_PRIVATE_KEY` and `MILESTONE_V5_PUBLIC_KEY`.
+The v5 signed catalog replaces the six legacy profile assets for v5 only. It
+must verify MAIN/ZERO signatures, the companion pair, SAFE/initial image hashes,
+board markers, and the fixed factory/OTA offsets. Ordinary Arduino MAIN upload
+is not the v5 installation workflow because it targets the factory slot.
 Do not recommend long manual `git push` / `git tag` / `gh release create` command sequences when `milestone-release` can perform the job.
 
 ## 2. Mandatory release workflow

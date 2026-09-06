@@ -150,6 +150,11 @@ done
 [[ $VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "VERSION은 1.8.3과 같은 형식이어야 합니다."
 NOTES=${NOTES:-"MILESTONE Core v${VERSION}"}
 TAG="v${VERSION}"
+V5_RELEASE=0
+if (( 10#${VERSION%%.*} >= 5 )); then
+  V5_RELEASE=1
+  EXPECTED_RELEASE_ASSETS=(v5-bundle.txt v5-bundle.sig v5-main-manifest.txt v5-main-manifest.sig v5-main.bin v5-zero-manifest.txt v5-zero-manifest.sig v5-zero.bin v5-safe.bin v5-main-initial.bin v5-zero-initial.bin v5-catalog.json v5-catalog.sig)
+fi
 
 require_command git
 require_command gh
@@ -165,6 +170,10 @@ require_command realpath
 require_command date
 require_command mktemp
 require_command install
+if (( V5_RELEASE )); then
+  require_command openssl
+  require_command python3
+fi
 
 validate_project_root() {
   local dir=$1
@@ -182,9 +191,28 @@ validate_project_root() {
 validate_source_version() {
   local dir=$1
   local source_version
-  source_version=$(sed -n 's/.*FIRMWARE_VERSION\[\] = "\([0-9][0-9.]*\)".*/\1/p' "$dir/MILESTONE_Core.ino" | head -n1)
+  local source_file="$dir/MILESTONE_Core.ino"
+  if (( V5_RELEASE )); then source_file="$dir/v5/libraries/MilestoneV5Core/src/MilestoneV5Version.h"; fi
+  source_version=$(sed -n 's/.*FIRMWARE_VERSION\[\] = "\([0-9][0-9.]*\)".*/\1/p' "$source_file" | head -n1)
   [[ -n $source_version ]] || die "소스에서 FIRMWARE_VERSION을 읽지 못했습니다."
   [[ $source_version == "$VERSION" ]] || die "요청 버전($VERSION)과 소스 버전($source_version)이 다릅니다."
+}
+
+validate_release_documentation() {
+  (( V5_RELEASE )) || return 0
+  grep -Fqx -- "- Current firmware baseline: \`$VERSION\`" "$PROJECT_DIR/AGENTS.md" ||
+    die "v5 게시 전 AGENTS.md의 Current firmware baseline을 $VERSION으로 승격해야 합니다."
+  grep -Fqx -- "> Current baseline: MILESTONE Core v$VERSION" "$PROJECT_DIR/MILESTONE_PROJECT_CONTEXT.md" ||
+    die "v5 게시 전 MILESTONE_PROJECT_CONTEXT.md의 Current baseline을 $VERSION으로 승격해야 합니다."
+  [[ $(grep -Fxc -- "## v$VERSION 업데이트 안내" "$PROJECT_DIR/README.md") == 1 ]] ||
+    die "v5 게시 전 README.md에 정확히 하나의 v$VERSION 업데이트 안내가 필요합니다."
+}
+
+validate_v5_signing_inputs() {
+  (( V5_RELEASE )) || return 0
+  [[ -f ${MILESTONE_V5_PRIVATE_KEY:-} &&
+     -f ${MILESTONE_V5_PUBLIC_KEY:-} ]] ||
+    die "v5 릴리스에는 MILESTONE_V5_PRIVATE_KEY와 MILESTONE_V5_PUBLIC_KEY 파일이 필요합니다."
 }
 
 validate_git_identity() {
@@ -228,6 +256,10 @@ find_common_release_base() {
 
 source_version_at_ref() {
   local ref=$1
+  if (( ${V5_RELEASE:-0} )) && git -C "$PROJECT_DIR" cat-file -e "${ref}:v5/libraries/MilestoneV5Core/src/MilestoneV5Version.h" 2>/dev/null; then
+    git -C "$PROJECT_DIR" show "${ref}:v5/libraries/MilestoneV5Core/src/MilestoneV5Version.h" | sed -n 's/.*FIRMWARE_VERSION\[\] = "\([0-9][0-9.]*\)".*/\1/p' | head -n1
+    return
+  fi
   git -C "$PROJECT_DIR" show "${ref}:MILESTONE_Core.ino" 2>/dev/null \
     | sed -n 's/.*FIRMWARE_VERSION\[\] = "\([0-9][0-9.]*\)".*/\1/p' \
     | head -n1
@@ -338,12 +370,20 @@ refresh_remote() {
 }
 
 build_release() {
-  log "호스트 테스트 + CORE/MEDIA/NOW ESP32 릴리즈 빌드"
+  if (( V5_RELEASE )); then
+    log "호스트 테스트 + MAIN/ZERO/SAFE ESP32 릴리즈 빌드·서명"
+  else
+    log "호스트 테스트 + CORE/MEDIA/NOW ESP32 릴리즈 빌드"
+  fi
   (
     cd "$PROJECT_DIR"
     bash ./tools/make-release.sh "$VERSION" "$NOTES"
   )
 
+  if (( V5_RELEASE )); then
+    python3 "$PROJECT_DIR/tools/v5-release-assets.py" verify "$PROJECT_DIR/release" --version "$VERSION" --public-key "$MILESTONE_V5_PUBLIC_KEY"
+    return
+  fi
   local profiles=(core media now)
   local stems=(MILESTONE_Core MILESTONE_Media MILESTONE_Now)
   local index profile stem manifest bin manifest_version manifest_profile
@@ -501,9 +541,13 @@ make_release_notes() {
       git -C "$PROJECT_DIR" log -n 10 --format='- %s' "$release_ref"
     fi
     printf '\n## Assets\n'
+    if (( ${V5_RELEASE:-0} )); then
+      printf -- '- Signed MAIN/ZERO companion bundle and catalog; independent SAFE and initial USB images.\n'
+    else
     printf -- '- `MILESTONE_Core.bin` / `MILESTONE_Core.json` — CORE OTA firmware and manifest\n'
     printf -- '- `MILESTONE_Media.bin` / `MILESTONE_Media.json` — MEDIA OTA firmware and manifest\n'
     printf -- '- `MILESTONE_Now.bin` / `MILESTONE_Now.json` — NOW OTA firmware and manifest\n'
+    fi
   } > "$outfile"
 }
 
@@ -516,7 +560,8 @@ confirm_publish() {
   printf '  HEAD:    %s\n' "$(git -C "$PROJECT_DIR" log -1 --oneline)"
   printf '  Remote:  %s\n' "$(git -C "$PROJECT_DIR" remote get-url origin)"
   if (( RELEASE_EXISTS == 1 )); then
-    printf '\nGitHub의 main을 갱신하고 기존 %s Release의 여섯 자산을 복구할까요? [y/N] ' "$TAG"
+    printf '\nGitHub의 main을 갱신하고 기존 %s Release의 %u개 자산을 복구할까요? [y/N] ' \
+      "$TAG" "${#EXPECTED_RELEASE_ASSETS[@]}"
   else
     printf '\nGitHub에 main + %s 태그 + Release를 게시할까요? [y/N] ' "$TAG"
   fi
@@ -581,7 +626,7 @@ verify_published_release_assets() {
 
   rm -rf -- "$verify_dir"
   [[ -z $failure ]] || die "$failure"
-  log "GitHub Release CORE/MEDIA/NOW 여섯 자산 검증 완료"
+  log "GitHub Release 필수 자산 ${#EXPECTED_RELEASE_ASSETS[@]}개 검증 완료"
 }
 
 publish_release() {
@@ -604,7 +649,7 @@ publish_release() {
   REMOTE_PUSHED=1
 
   if (( RELEASE_EXISTS == 1 )); then
-    log "GitHub Release CORE/MEDIA/NOW 자산 복구"
+    log "GitHub Release 필수 자산 복구"
     gh release upload "$TAG" "${asset_paths[@]}" --repo "$EXPECTED_REPO" --clobber
     gh release edit "$TAG" \
       --repo "$EXPECTED_REPO" \
@@ -749,6 +794,8 @@ fi
 
 validate_git_identity
 validate_branch_and_remote
+validate_release_documentation
+validate_v5_signing_inputs
 refresh_remote
 detect_existing_release
 

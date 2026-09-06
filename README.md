@@ -431,6 +431,23 @@ Taildrop ZIP의 `milestone-release`가 현재 설치본보다 새로우면, 게�
 - 라이브 스트림 시작 시 진행 중인 NTP는 중단·보류하고 STREAM_MODE 종료 뒤 기존 Wi-Fi 시험·수동 동기화·업데이트 대기 흐름으로 자동 재개
 - 비차단 3초 부팅 로고와 우상단 색상·도형 기반 네트워크·동기화·업데이트 상태 아이콘
 
+## v5.0.0 업데이트 안내
+
+v5.0.0은 GOOUUU ESP32-S3 N16R8 MAIN과 Waveshare ESP32-S3-Zero를 사용하는
+첫 듀얼 ESP 정식 펌웨어입니다. 기존 v3.3.4 단일 보드 트리는 레거시 복구와
+설정 가져오기를 위해 보존합니다.
+
+- MAIN에서 CORE/MEDIA/NOW 런타임 전환, TFT·SD·RTC·AHT20·5버튼 통합
+- ZERO의 BLE/AMS, 다중 Wi-Fi/PEAP, MAIN/ZERO 동적 인터넷 작업과 HTTPS 묶음 다운로드
+- SD 사진·MVJ1 영상, 컬러 앨범아트 A/B 인덱스·LRU·사용자 관리, 환경 로그와 진단
+- v3 설정 가져오기, 요소별 색상·스크롤·자동 순환·상태 띠·경고·절전 설정
+- MAIN 승인 뒤 ZERO 갱신, 안정화 뒤 Stable/Backup 승격, 독립 SAFE 앱과 서명 복원
+- 기존 `milestone-release`에 MAIN/ZERO/SAFE 빌드·서명·초기 USB 이미지 검증 통합
+
+초기 설치·OTA·복구 조건은 [v5/README.md](v5/README.md)와
+[v5/IMPLEMENTATION_STATUS.md](v5/IMPLEMENTATION_STATUS.md)를 확인하세요.
+v3 전용 MSM1 저장 미디어와 실시간 스트리밍은 v5 SD 미디어와 호환되지 않습니다.
+
 ## v3.3.4 업데이트 안내
 
 v3.3.4는 v3.3.3에서 스트리밍 시작과 동시에 WebSocket 묶음 네 개를 밀어 넣은 뒤 연결이 반복 종료되는 회귀를 수정합니다.
