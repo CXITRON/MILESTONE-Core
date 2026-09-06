@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Internal v5 signing/verification backend for milestone-release."""
 import argparse
+import binascii
 import hashlib
 import json
 import pathlib
 import re
+import struct
 import subprocess
 
 ASSETS = ('v5-bundle.txt', 'v5-bundle.sig', 'v5-main-manifest.txt',
@@ -39,6 +41,13 @@ def validate_bins(root, version):
     # USB image offsets are deliberate; ordinary Arduino upload would put MAIN
     # at the factory slot and overwrite SAFE. Verify the merged bytes explicitly.
     initial = (root / 'v5-main-initial.bin').read_bytes()
+    ota = initial[0xe000:0x10000]
+    if len(ota) != 0x2000:
+        raise ValueError('Initial MAIN image is missing OTA selection data')
+    sequence, stored_crc = struct.unpack_from('<I24xI', ota)
+    expected_crc = binascii.crc32(ota[:4], 0xffffffff) & 0xffffffff
+    if sequence != 1 or stored_crc != expected_crc:
+        raise ValueError('Initial MAIN image does not select OTA slot A')
     for name, offset in (('safe', 0x10000), ('main', 0x210000)):
         data = (root / f'v5-{name}.bin').read_bytes()
         if initial[offset:offset + len(data)] != data:

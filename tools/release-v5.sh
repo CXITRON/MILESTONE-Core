@@ -45,6 +45,7 @@ milestone_build_v5() {
   "$esptool" --chip esp32s3 merge-bin --flash-size 16MB -o "$stage/v5-main-initial.bin" \
     0x0 "$task_root/main/MilestoneV5Main.ino.bootloader.bin" \
     0x8000 "$task_root/main/MilestoneV5Main.ino.partitions.bin" \
+    0xe000 "$task_root/main/boot_app0.bin" \
     0x10000 "$stage/v5-safe.bin" 0x210000 "$stage/v5-main.bin"
   cp "$task_root/zero/MilestoneV5Zero.ino.merged.bin" "$stage/v5-zero-initial.bin"
   python3 "$project_dir/tools/prepare-v5-sd-restore.py" "$stage/v5-main.bin" "$task_root/bundle" \
