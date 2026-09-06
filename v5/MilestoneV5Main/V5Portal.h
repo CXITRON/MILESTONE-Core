@@ -18,7 +18,9 @@
 #define MILESTONE_HAS_GENERAL_VIEWS 1
 #define MILESTONE_HAS_STREAM 0
 #define MILESTONE_HAS_ARTWORK_MANAGER 1
+#define MILESTONE_V5_INTEGRATED 1
 #include "../../PortalPage.h"
+#undef MILESTONE_V5_INTEGRATED
 #undef MILESTONE_HAS_ARTWORK_MANAGER
 #undef MILESTONE_HAS_STREAM
 #undef MILESTONE_HAS_GENERAL_VIEWS
@@ -58,9 +60,13 @@ public:
   String downloadVersion = "latest", downloadStatus,
          bundleSource = "/firmware/incoming";
 
-  void begin(V5Hardware &h, V5CoreViews &views, V5Artwork &art) {
+  void begin(V5Hardware &h, V5CoreViews &views, V5Artwork &art,
+             const MilestoneV5::NowMetadata &metadata,
+             const uint32_t &lastLinkMs) {
     hardware = &h;
     artwork = &art;
+    now = &metadata;
+    zeroLastLinkMs = &lastLinkMs;
     media.begin(h.sdMounted);
     system.begin();
     diagnostics.begin();
@@ -873,6 +879,8 @@ private:
   V5Hardware *hardware = nullptr;
   V5CoreViews *core = nullptr;
   V5Artwork *artwork = nullptr;
+  const MilestoneV5::NowMetadata *now = nullptr;
+  const uint32_t *zeroLastLinkMs = nullptr;
   WebServer server{80};
   DNSServer dns;
   V5ArtworkPortal artworkPortal;
@@ -941,6 +949,10 @@ private:
     server.on("/api/status", HTTP_GET, [this] {
       touch();
       const bool connected = WiFi.status() == WL_CONNECTED;
+      const bool zeroOnline = zeroLastLinkMs && *zeroLastLinkMs &&
+                              millis() - *zeroLastLinkMs <= 5000;
+      const bool bleConnected = zeroOnline && now && now->connected;
+      const bool amsReady = bleConnected && now->ready;
       const char *id = profileId(profile);
       String body = "{\"firmware\":\"" +
                     String(MilestoneV5::FIRMWARE_VERSION) +
@@ -980,13 +992,19 @@ private:
                                  : wifiResult.indexOf("완료") >= 0 ? "success"
                                                                     : "idle") +
               "\",\"wifi_error\":\"" + jsonEscape(wifiResult) + "\"";
-      body += ",\"bluetooth_enabled\":" +
-              String(profile == MilestoneV5::Profile::kNow ? "true" : "false") +
-              ",\"bluetooth_active\":" +
-              String(profile == MilestoneV5::Profile::kNow ? "true" : "false") +
+      body += ",\"bluetooth_enabled\":true,\"bluetooth_active\":" +
+              String(zeroOnline ? "true" : "false") +
+              ",\"bluetooth_connected\":" +
+              String(bleConnected ? "true" : "false") +
+              ",\"bluetooth_ams_ready\":" +
+              String(amsReady ? "true" : "false") +
+              ",\"bluetooth_advertising\":" +
+              String(zeroOnline && !bleConnected ? "true" : "false") +
               ",\"bluetooth_stage\":\"" +
-              String(profile == MilestoneV5::Profile::kNow ? "advertising"
-                                                            : "unsupported") +
+              String(!zeroOnline ? "error"
+                     : amsReady   ? "ready"
+                     : bleConnected ? "discovering"
+                                    : "advertising") +
               "\"";
       body += ",\"media_supported\":true,\"general_views_supported\":true";
       body += ",\"latest_firmware\":\"" +

@@ -888,7 +888,7 @@ void setup() {
   renderBootSplash();
   hardware.display.flush();
   coreViews.begin();
-  portal.begin(hardware, coreViews, artwork);
+  portal.begin(hardware, coreViews, artwork, nowMetadata, lastValidLinkMs);
   portal.note(6, hardware.sdMounted ? 1 : 0);
   if (!coreViews.configured) {
     uint8_t legacy[MilestoneV5::kLegacySnapshotBytes];
