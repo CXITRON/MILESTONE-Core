@@ -1585,6 +1585,11 @@ private:
       if (duplicate)
         continue;
       const wifi_auth_mode_t auth = WiFi.encryptionType(i);
+      const bool caRequired = auth == WIFI_AUTH_WPA3_ENTERPRISE ||
+                              auth == WIFI_AUTH_WPA2_WPA3_ENTERPRISE ||
+                              auth == WIFI_AUTH_WPA3_ENT_192;
+      const bool enterprise = auth == WIFI_AUTH_WPA2_ENTERPRISE ||
+                              auth == WIFI_AUTH_WPA_ENTERPRISE || caRequired;
       if (!first)
         body += ',';
       first = false;
@@ -1592,8 +1597,9 @@ private:
               String(WiFi.RSSI(i)) + ",\"open\":" +
               String(auth == WIFI_AUTH_OPEN ? "true" : "false") +
               ",\"enterprise\":" +
-              String(auth == WIFI_AUTH_WPA2_ENTERPRISE ? "true" : "false") +
-              ",\"enterprise_ca_required\":false}";
+              String(enterprise ? "true" : "false") +
+              ",\"enterprise_ca_required\":" +
+              String(caRequired ? "true" : "false") + "}";
     }
     body += "]}";
     WiFi.scanDelete();

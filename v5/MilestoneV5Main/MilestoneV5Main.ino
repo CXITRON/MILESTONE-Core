@@ -84,12 +84,40 @@ void drawNowProgress(uint8_t frameY, uint8_t footerY) {
   if (duration)
     hardware.display.fillRect(9, 18 + frameY,
                               uint64_t(elapsed) * 110 / duration, 4, 0x07FF);
-  char footer[32];
-  snprintf(footer, sizeof(footer), "%s %lu:%02lu / %lu:%02lu",
-           nowMetadata.playing ? ">" : "II", (unsigned long)elapsed / 60,
-           (unsigned long)elapsed % 60, (unsigned long)duration / 60,
-           (unsigned long)duration % 60);
+  char footer[28];
+  if (duration)
+    snprintf(footer, sizeof(footer), "%lu:%02lu / %lu:%02lu",
+             (unsigned long)elapsed / 60, (unsigned long)elapsed % 60,
+             (unsigned long)duration / 60, (unsigned long)duration % 60);
+  else
+    snprintf(footer, sizeof(footer), "%lu:%02lu",
+             (unsigned long)elapsed / 60, (unsigned long)elapsed % 60);
   hardware.legacyText(footer, footerY, u8g2_font_6x10_tf);
+}
+
+void drawNowArtworkPlaceholder(uint8_t x, uint8_t y, uint8_t size) {
+  hardware.legacyFrame(x, y, size, size, 0x7BEF);
+  hardware.display.drawLine(x, 16 + y, x + size - 1, 16 + y + size - 1,
+                            0x7BEF);
+  hardware.display.drawLine(x + size - 1, 16 + y, x, 16 + y + size - 1,
+                            0x7BEF);
+  String state = artwork.stage ? "LOADING" : "MISSING";
+  hardware.legacyText(state, y + size / 2 + 3, u8g2_font_5x8_tf, 0xBDF7);
+}
+
+void renderNowWaitingScreen() {
+  hardware.legacyClear();
+  hardware.legacyText("MILESTONE NOW", 18, u8g2_font_7x14B_tf);
+  hardware.legacyRule(25);
+  if (!nowMetadata.connected) {
+    hardware.legacyText("BLE ADVERTISING", 49, u8g2_font_6x10_tf);
+    hardware.legacyText("Unlock iPhone", 70, u8g2_font_6x10_tf);
+    hardware.legacyText("and play music", 86, u8g2_font_6x10_tf);
+  } else {
+    hardware.legacyText("AMS CONNECTING", 54, u8g2_font_6x10_tf);
+    hardware.legacyText("Preparing AMS", 78, u8g2_font_6x10_tf);
+  }
+  hardware.legacyText("MODE: MENU", 119, u8g2_font_5x8_tf, 0xBDF7);
 }
 
 void renderBootSplash() {
@@ -105,14 +133,17 @@ void renderPortalScreen() {
   hardware.legacyClear();
   hardware.legacyText("MILESTONE SETUP", 10, u8g2_font_6x10_tf, 0x36DF,
                       0);
-  hardware.legacyRule(14);
+  hardware.legacyText("AP", 10, u8g2_font_6x10_tf, 0x36DF, 116);
+  hardware.legacyRule(14, 0x36DF);
   hardware.legacyText("Wi-Fi:", 33, u8g2_font_6x10_tf, 0xBE3A, 2);
-  hardware.legacyText("MILESTONE-D1-SETUP", 46, u8g2_font_5x8_tf, 0xFFFF, 2);
+  hardware.legacyText("MILESTONE-D1-SETUP", 46, u8g2_font_5x8_tf, 0xFFFF,
+                      2);
   hardware.legacyText("Password:", 65, u8g2_font_6x10_tf, 0xBE3A, 2);
-  hardware.legacyText(portal.password.isEmpty() ? "OPEN NETWORK"
-                                                 : portal.password,
-                      83, u8g2_font_7x14B_tf, 0x5711);
-  hardware.legacyText("192.168.4.1", 104, u8g2_font_6x10_tf, 0xFFFF);
+  if (portal.password.isEmpty())
+    hardware.legacyText("OPEN NETWORK", 83, u8g2_font_7x14B_tf, 0x5711);
+  else
+    hardware.legacyText(portal.password, 83, u8g2_font_7x14B_tf, 0x5711, 15);
+  hardware.legacyText("192.168.4.1", 104, u8g2_font_6x10_tf, 0xFFFF, 13);
   hardware.legacyText("BACK: CLOSE", 123, u8g2_font_5x8_tf, 0xBE3A);
 }
 
@@ -209,6 +240,13 @@ void renderBody() {
       }
     } else if (!photoVisible && !video.playing) {
       hardware.legacyClear();
+      if (!hardware.fileCount) {
+        hardware.legacyText("NO MEDIA", 54, u8g2_font_7x14B_tf);
+        hardware.legacyText("OPEN SETUP TO ADD", 82,
+                            u8g2_font_6x10_tf);
+        redraw = false;
+        return;
+      }
       hardware.legacyText(videoCategory ? "MEDIA · VIDEO" : "MEDIA · PHOTO",
                           12, u8g2_font_6x10_tf, 0xF81F);
       hardware.legacyRule(15);
@@ -230,13 +268,17 @@ void renderBody() {
     hardware.textLeft = coreViews.left;
     hardware.scrollSpeed = coreViews.speed;
     hardware.textShift = coreViews.burnin;
+    if (!nowMetadata.ready) {
+      renderNowWaitingScreen();
+      redraw = false;
+      return;
+    }
     hardware.legacyClear();
     hardware.legacyText(nowMetadata.playing ? "NOW PLAYING" : "PAUSED", 10,
                         u8g2_font_6x10_tf, 0x37F1);
     hardware.legacyRule(14);
     const uint8_t layout = coreViews.nowLayout;
-    const String title = nowMetadata.ready ? String(nowMetadata.title)
-                                           : String("AMS 연결 대기");
+    const String title = nowMetadata.title;
     if (layout == 0) {
       hardware.legacyAutoText(title, 62, 0xFFFF, true);
       drawNowProgress(87, 118);
@@ -248,14 +290,14 @@ void renderBody() {
       if (artwork.visible)
         artwork.draw(hardware.display, false, 32);
       else
-        hardware.legacyFrame(34, 16, 60, 60, 0x7BEF);
+        drawNowArtworkPlaceholder(34, 16, 60);
       hardware.legacyAutoText(title, 87, 0xFFFF);
       drawNowProgress(94, 122);
     } else {
       if (artwork.visible)
         artwork.draw(hardware.display, true, 31);
       else
-        hardware.legacyFrame(20, 15, 88, 88, 0x7BEF);
+        drawNowArtworkPlaceholder(20, 15, 88);
       drawNowProgress(105, 126);
     }
   }

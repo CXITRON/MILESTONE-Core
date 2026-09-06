@@ -75,6 +75,7 @@ fi
 "$build_dir/test_v5_bundle_runtime" "$build_dir"
 PYTHONDONTWRITEBYTECODE=1 python3 "$project_dir/tests/test_v5_sd_prepare.py"
 PYTHONDONTWRITEBYTECODE=1 python3 "$project_dir/tests/test_v5_docs.py"
+PYTHONDONTWRITEBYTECODE=1 python3 "$project_dir/tests/test_v5_parity_contract.py"
 for test in storage_runtime download_runtime; do
   "$cxx" -I"$project_dir/tests/v5_mocks" "${common_flags[@]}" -std=c++17 \
     "$source_dir/MilestoneV5Protocol.cpp" "$source_dir/MilestoneV5Manifest.cpp" \
