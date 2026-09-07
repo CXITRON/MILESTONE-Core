@@ -67,6 +67,8 @@ MilestoneV5::ProfileController profiles(MilestoneV5::Profile::kCore);
 uint8_t txSlot[MilestoneV5::kSpiSlotSize] = {};
 uint8_t rxSlot[MilestoneV5::kSpiSlotSize] = {};
 uint32_t txSequence = 0;
+uint32_t wireLeaseSequence = 0;
+uint32_t txLeaseId = 0;
 uint32_t lastZeroSequence = 0;
 uint32_t lastValidLinkMs = 0;
 uint32_t mainBootId = 0;
@@ -637,6 +639,7 @@ void exchangeHeartbeat(uint32_t now) {
   if (awaitingAck && linkAttempts >= 4) {
     awaitingAck = false;
     negotiatedProtocolVersion = 0;
+    txLeaseId = 0;
     linkAttempts = 0;
   }
   if (!awaitingAck) {
@@ -728,8 +731,18 @@ void exchangeHeartbeat(uint32_t now) {
       payload[2] = static_cast<uint8_t>(safeModeActive);
       payloadLength = 3;
     }
+    const bool leased = type == MilestoneV5::MessageType::kTaskRequest ||
+                        type == MilestoneV5::MessageType::kOtaControl ||
+                        type == MilestoneV5::MessageType::kOtaChunk;
+    txLeaseId = 0;
+    if (leased) {
+      if (++wireLeaseSequence == 0)
+        ++wireLeaseSequence;
+      txLeaseId = wireLeaseSequence;
+    }
     const MilestoneV5::FrameFields fields = {
-        type, MilestoneV5::kFlagAckRequired, 0, ++txSequence, lastZeroSequence,
+        type, MilestoneV5::kFlagAckRequired, txLeaseId, ++txSequence,
+        lastZeroSequence,
     };
     if (!MilestoneV5::encodeSpiSlot(fields, payload, payloadLength, txSlot,
                                     sizeof(txSlot)))
@@ -751,7 +764,8 @@ void exchangeHeartbeat(uint32_t now) {
   if (MilestoneV5::decodeSpiSlot(rxSlot, sizeof(rxSlot), decoded,
                                  frameStatus) == MilestoneV5::SlotStatus::kOk) {
     if (!(decoded.fields.flags & MilestoneV5::kFlagResponse) ||
-        decoded.fields.leaseId != 0 || decoded.fields.ackSequence != txSequence)
+        decoded.fields.leaseId != txLeaseId ||
+        decoded.fields.ackSequence != txSequence)
       return;
     bool valid = false;
     if (decoded.fields.type == MilestoneV5::MessageType::kHelloReply) {
@@ -887,6 +901,7 @@ void exchangeHeartbeat(uint32_t now) {
       lastZeroSequence = decoded.fields.sequence;
       lastValidLinkMs = now;
       awaitingAck = false;
+      txLeaseId = 0;
     }
   }
 }
@@ -1155,6 +1170,7 @@ void loop() {
     negotiatedProtocolVersion = 0;
     zeroCapabilities = 0;
     awaitingAck = false;
+    txLeaseId = 0;
     nowMetadata = {};
     redraw = true;
     Serial.println(

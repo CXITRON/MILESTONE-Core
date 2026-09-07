@@ -49,11 +49,12 @@ V5OtaReceiver otaReceiver;
 V5RemoteDownload remoteDownload;
 MilestoneV5::ThermalPolicy thermal(true);
 float localTemperature = NAN;
-void prepareStatus(uint32_t ackSequence, bool requestValid);
+void prepareStatus(uint32_t ackSequence, bool requestValid,
+                   uint32_t leaseId = 0);
 
 void prepareArtwork(const MilestoneV5::DecodedFrame &d) {
   if (d.payloadLength < 5) {
-    prepareStatus(d.fields.sequence, false);
+    prepareStatus(d.fields.sequence, false, d.fields.leaseId);
     return;
   }
   const uint8_t op = d.payload[0];
@@ -85,7 +86,8 @@ void prepareArtwork(const MilestoneV5::DecodedFrame &d) {
       type = MilestoneV5::MessageType::kArtworkChunk;
     }
   }
-  MilestoneV5::FrameFields f{type, MilestoneV5::kFlagResponse, 0, ++txSequence,
+  MilestoneV5::FrameFields f{type, MilestoneV5::kFlagResponse,
+                             d.fields.leaseId, ++txSequence,
                              d.fields.sequence};
   MilestoneV5::encodeSpiSlot(f, p, n, txSlot, sizeof(txSlot));
 }
@@ -136,7 +138,8 @@ void IRAM_ATTR slaveDone(spi_slave_transaction_t *) {
   gpio_set_level(static_cast<gpio_num_t>(MilestoneV5::ZeroPins::kLinkReady), 0);
 }
 
-void prepareStatus(uint32_t ackSequence, bool requestValid) {
+void prepareStatus(uint32_t ackSequence, bool requestValid,
+                   uint32_t leaseId) {
   constexpr uint16_t kStatusRequestValid = 1U << 0;
   constexpr uint16_t kStatusPsramFound = 1U << 1;
   const int16_t reportedTemperature =
@@ -162,7 +165,7 @@ void prepareStatus(uint32_t ackSequence, bool requestValid) {
   MilestoneV5::FrameFields fields = {
       MilestoneV5::MessageType::kStatus,
       static_cast<uint16_t>(MilestoneV5::kFlagResponse),
-      0,
+      leaseId,
       ++txSequence,
       ackSequence,
   };
@@ -353,13 +356,19 @@ void loop() {
 
   MilestoneV5::DecodedFrame decoded = {};
   MilestoneV5::DecodeStatus frameStatus = MilestoneV5::DecodeStatus::kTooShort;
-  const bool valid =
+  const bool decodedOk =
       completed == &transaction &&
       transaction.trans_len == sizeof(rxSlot) * 8 &&
       MilestoneV5::decodeSpiSlot(rxSlot, sizeof(rxSlot), decoded,
-                                 frameStatus) == MilestoneV5::SlotStatus::kOk &&
-      decoded.fields.flags == MilestoneV5::kFlagAckRequired &&
-      decoded.fields.leaseId == 0;
+                                 frameStatus) == MilestoneV5::SlotStatus::kOk;
+  const bool taskFrame =
+      decodedOk &&
+      (decoded.fields.type == MilestoneV5::MessageType::kTaskRequest ||
+       decoded.fields.type == MilestoneV5::MessageType::kOtaControl ||
+       decoded.fields.type == MilestoneV5::MessageType::kOtaChunk);
+  const bool valid =
+      decodedOk && decoded.fields.flags == MilestoneV5::kFlagAckRequired &&
+      (taskFrame ? decoded.fields.leaseId != 0 : decoded.fields.leaseId == 0);
   bool newSession = false;
   if (valid && decoded.fields.type == MilestoneV5::MessageType::kHello) {
     MilestoneV5::HelloPayload h{};
@@ -376,7 +385,7 @@ void loop() {
       return;
     }
     if (int32_t(decoded.fields.sequence - rememberedSequence) <= 0) {
-      prepareStatus(decoded.fields.sequence, false);
+      prepareStatus(decoded.fields.sequence, false, decoded.fields.leaseId);
       return;
     }
   }
@@ -418,11 +427,12 @@ void loop() {
     if (otaReceiver.request(decoded.payload, decoded.payloadLength, response,
                             n)) {
       MilestoneV5::FrameFields fields{MilestoneV5::MessageType::kOtaControl,
-                                      MilestoneV5::kFlagResponse, 0,
+                                      MilestoneV5::kFlagResponse,
+                                      decoded.fields.leaseId,
                                       ++txSequence, decoded.fields.sequence};
       MilestoneV5::encodeSpiSlot(fields, response, n, txSlot, sizeof(txSlot));
     } else
-      prepareStatus(ackSequence, false);
+      prepareStatus(ackSequence, false, decoded.fields.leaseId);
   } else if (valid && mainSessionKnown &&
              decoded.fields.type == MilestoneV5::MessageType::kTaskRequest &&
              decoded.payloadLength == 97 && decoded.payload[0] == 34) {
@@ -432,7 +442,8 @@ void loop() {
       V5Network::settings = next;
     uint8_t response[] = {34, uint8_t(ok ? 0 : 1)};
     MilestoneV5::FrameFields f{MilestoneV5::MessageType::kTaskResult,
-                               MilestoneV5::kFlagResponse, 0, ++txSequence,
+                               MilestoneV5::kFlagResponse,
+                               decoded.fields.leaseId, ++txSequence,
                                decoded.fields.sequence};
     MilestoneV5::encodeSpiSlot(f, response, sizeof(response), txSlot,
                                sizeof(txSlot));
@@ -457,7 +468,8 @@ void loop() {
       }
     }
     MilestoneV5::FrameFields f{MilestoneV5::MessageType::kTaskResult,
-                               MilestoneV5::kFlagResponse, 0, ++txSequence,
+                               MilestoneV5::kFlagResponse,
+                               decoded.fields.leaseId, ++txSequence,
                                decoded.fields.sequence};
     MilestoneV5::encodeSpiSlot(f, response, n, txSlot, sizeof(txSlot));
   } else if (valid && mainSessionKnown &&
@@ -469,11 +481,12 @@ void loop() {
     if (remoteDownload.request(decoded.payload, decoded.payloadLength, response,
                                n, !thermalStop && !otaReceiver.active())) {
       MilestoneV5::FrameFields f{MilestoneV5::MessageType::kTaskResult,
-                                 MilestoneV5::kFlagResponse, 0, ++txSequence,
+                                 MilestoneV5::kFlagResponse,
+                                 decoded.fields.leaseId, ++txSequence,
                                  decoded.fields.sequence};
       MilestoneV5::encodeSpiSlot(f, response, n, txSlot, sizeof(txSlot));
     } else
-      prepareStatus(ackSequence, false);
+      prepareStatus(ackSequence, false, decoded.fields.leaseId);
   } else if (valid && mainSessionKnown &&
              decoded.fields.type == MilestoneV5::MessageType::kTaskRequest &&
              decoded.payloadLength >= 5 &&
@@ -490,7 +503,8 @@ void loop() {
                                                      decoded.payloadLength - 1);
     uint8_t result[] = {1, lastProvisionResult};
     MilestoneV5::FrameFields f{MilestoneV5::MessageType::kTaskResult,
-                               MilestoneV5::kFlagResponse, 0, ++txSequence,
+                               MilestoneV5::kFlagResponse,
+                               decoded.fields.leaseId, ++txSequence,
                                decoded.fields.sequence};
     MilestoneV5::encodeSpiSlot(f, result, sizeof(result), txSlot,
                                sizeof(txSlot));

@@ -54,6 +54,10 @@ assert "SET_LOOP_TASK_STACK_SIZE(32 * 1024);" in main
 assert "kEnableZeroLink" not in main
 assert "linkSpi.begin(" in main
 assert "exchangeHeartbeat(now);" in main
+assert "txLeaseId = wireLeaseSequence" in main
+assert "decoded.fields.leaseId != txLeaseId" in main
+assert "taskFrame ? decoded.fields.leaseId != 0" in zero
+assert "d.fields.leaseId, ++txSequence" in zero
 assert "result == ESP_ERR_TIMEOUT" in zero
 assert "transactionQueued = false;" in zero
 assert "ZeroPins::kLinkReady), 0" in zero
