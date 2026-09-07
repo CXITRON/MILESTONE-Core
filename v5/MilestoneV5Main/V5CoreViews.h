@@ -7,10 +7,13 @@
 #include <Preferences.h>
 #include <U8g2lib.h>
 #include <WiFi.h>
+#include <esp_ota_ops.h>
+#include <esp_partition.h>
 #include <esp_system.h>
 
 class V5CoreViews {
 public:
+  static constexpr uint8_t kInfoPageCount = 9;
   uint8_t view = 0, infoPage = 0;
   uint16_t year = 2027;
   uint8_t month = 1, day = 1;
@@ -40,7 +43,7 @@ public:
     if ((!modern && memcmp(data, "VC01", 4)) ||
         MilestoneV5::crc32(data, 252) != read32(data + 252))
       return false;
-    if (data[4] > 6 || data[5] > 5 ||
+    if (data[4] > 6 || data[5] >= kInfoPageCount ||
         !MilestoneV5::validDate(unsigned(data[6]) | unsigned(data[7]) << 8,
                                 data[8], data[9]) ||
         data[154] || data[219])
@@ -88,7 +91,8 @@ public:
     return true;
   }
   bool save() {
-    if (!MilestoneV5::validDate(year, month, day) || view > 6 || infoPage > 5 ||
+    if (!MilestoneV5::validDate(year, month, day) || view > 6 ||
+        infoPage >= kInfoPageCount ||
         message.length() > 144 || label.length() > 64)
       return false;
     uint8_t data[256]{};
@@ -144,7 +148,7 @@ public:
       lastCycle = now;
     }
     if (ok && view == 6) {
-      infoPage = (infoPage + 1) % 6;
+      infoPage = (infoPage + 1) % kInfoPageCount;
       dirty = true;
       changed = now;
     }
@@ -175,7 +179,9 @@ public:
     }
     return false;
   }
-  void render(V5Hardware &h) {
+  void render(V5Hardware &h, bool zeroOnline = false,
+              const MilestoneV5::StatusPayload *zero = nullptr,
+              uint8_t protocolVersion = 0, uint32_t zeroCapabilities = 0) {
     char clockBuffer[16], date[20];
     String clock;
     h.textScroll = scroll;
@@ -265,7 +271,7 @@ public:
         infoHeader(h, "SYSTEM", 1);
         infoLine(h, 29, "FW", MilestoneV5::FIRMWARE_VERSION);
         infoLine(h, 47, "UP", uptime());
-        infoLine(h, 65, "RESET", String(int(esp_reset_reason())));
+        infoLine(h, 65, "RESET", resetReason());
         infoLine(h, 83, "CHIP", String(ESP.getChipModel()) + " R" + ESP.getChipRevision());
         infoLine(h, 101, "CPU", String(getCpuFrequencyMhz()) + " MHz");
         infoLine(h, 119, "CORES", String(ESP.getChipCores()));
@@ -280,34 +286,91 @@ public:
       } else if (infoPage == 2) {
         infoHeader(h, "PSRAM", 3);
         infoLine(h, 29, "TOTAL", bytes(ESP.getPsramSize()));
-        infoLine(h, 51, "FREE", bytes(ESP.getFreePsram()));
-        infoLine(h, 73, "USED", bytes(ESP.getPsramSize() - ESP.getFreePsram()));
-        infoLine(h, 95, "BLOCK", bytes(ESP.getMaxAllocPsram()));
-        infoLine(h, 117, "USE", "COLOR / MEDIA");
+        infoLine(h, 47, "FREE", bytes(ESP.getFreePsram()));
+        infoLine(h, 65, "USED", bytes(ESP.getPsramSize() - ESP.getFreePsram()));
+        infoLine(h, 83, "BLOCK", bytes(ESP.getMaxAllocPsram()));
+        infoLine(h, 101, "TYPE", "EXTERNAL RAM");
+        infoLine(h, 119, "USE", "COLOR / MEDIA");
       } else if (infoPage == 3) {
         infoHeader(h, "STORAGE", 4);
-        infoLine(h, 31, "FLASH", bytes(ESP.getFlashChipSize()));
-        infoLine(h, 53, "APP", bytes(ESP.getSketchSize()));
-        infoLine(h, 75, "OTA FREE", bytes(ESP.getFreeSketchSpace()));
-        infoLine(h, 97, "SD", h.sdMounted ? "MOUNTED" : "MISSING");
-        infoLine(h, 119, "VERIFY", "SIZE + SHA256");
+        infoLine(h, 29, "FLASH", bytes(ESP.getFlashChipSize()));
+        infoLine(h, 47, "APP", bytes(ESP.getSketchSize()));
+        infoLine(h, 65, "OTA FREE", bytes(ESP.getFreeSketchSpace()));
+        infoLine(h, 83, "SD", h.sdMounted ? "MOUNTED" : "MISSING");
+        infoLine(h, 101, "SD TOTAL",
+                 h.sdMounted ? bytes64(SD.totalBytes()) : "-");
+        infoLine(h, 119, "SD FREE",
+                 h.sdMounted ? bytes64(SD.totalBytes() - SD.usedBytes()) : "-");
       } else if (infoPage == 4) {
         infoHeader(h, "NETWORK", 5);
         const bool connected = WiFi.status() == WL_CONNECTED;
-        infoLine(h, 31, "STATE", connected ? "CONNECTED" : "OFFLINE");
+        infoLine(h, 29, "STATE", connected ? "CONNECTED" : "OFFLINE");
         String ssid = connected ? WiFi.SSID() : String("-");
         if (ssid.length() > 18)
           ssid = ssid.substring(0, 18);
-        infoLine(h, 53, "SSID", ssid);
-        infoLine(h, 75, "RSSI", connected ? String(WiFi.RSSI()) + " dBm" : "-");
-        infoLine(h, 97, "IP", connected ? WiFi.localIP().toString() : "-");
+        infoLine(h, 47, "SSID", ssid);
+        infoLine(h, 65, "RSSI", connected ? String(WiFi.RSSI()) + " dBm" : "-");
+        infoLine(h, 83, "IP", connected ? WiFi.localIP().toString() : "-");
+        infoLine(h, 101, "GW", connected ? WiFi.gatewayIP().toString() : "-");
         infoLine(h, 119, "MAC", WiFi.macAddress());
+      } else if (infoPage == 5) {
+        infoHeader(h, "TIME / RTC", 6);
+        infoLine(h, 29, "CLOCK", h.rtcValid ? "VALID" : "NOT SET");
+        infoLine(h, 47, "RTC", h.rtcPresent ? "DS3231" : "MISSING");
+        infoLine(h, 65, "DATE", h.rtcValid ? rtcDate(h) : "-");
+        infoLine(h, 83, "TIME", h.rtcValid ? rtcTime(h) : "-");
+        infoLine(h, 101, "ZONE", "KST / UTC+9");
+        infoLine(h, 119, "SOURCE", h.rtcPresent ? "RTC" : "SYSTEM");
+      } else if (infoPage == 6) {
+        infoHeader(h, "ENVIRONMENT", 7);
+        const bool present = h.environment.address == 0x38;
+        const bool valid = present && h.environment.values.hasValue();
+        const bool stale = valid && h.environment.values.stale(millis());
+        infoLine(h, 29, "SENSOR", present ? "AHT20" : "MISSING");
+        infoLine(h, 47, "STATE", !present ? "OFFLINE" : stale ? "STALE" : valid ? "VALID" : "WAITING");
+        if (valid) {
+          const auto &sample = h.environment.values.filtered();
+          infoLine(h, 65, "TEMP", String(sample.temperatureC, 1) + " C");
+          infoLine(h, 83, "HUMID", String(sample.humidityPercent, 1) + " %");
+        } else {
+          infoLine(h, 65, "TEMP", "-");
+          infoLine(h, 83, "HUMID", "-");
+        }
+        infoLine(h, 101, "ERRORS", String(h.environment.errors));
+        infoLine(h, 119, "PRESSURE", "NOT INSTALLED");
+      } else if (infoPage == 7) {
+        infoHeader(h, "MAIN / ZERO", 8);
+        infoLine(h, 29, "LINK", zeroOnline ? "ONLINE" : "OFFLINE");
+        infoLine(h, 47, "PROTOCOL",
+                 protocolVersion ? String("SPI v") + protocolVersion : "-");
+        infoLine(h, 65, "ZERO TEMP",
+                 zeroOnline && zero && zero->temperatureCenti != INT16_MIN
+                     ? String(zero->temperatureCenti / 100.0f, 1) + " C"
+                     : "-");
+        infoLine(h, 83, "ZERO HEAP",
+                 zeroOnline && zero ? bytes(zero->freeHeap) : "-");
+        infoLine(h, 101, "ZERO PSRAM",
+                 zeroOnline && zero ? bytes(zero->freePsram) : "-");
+        infoLine(h, 119, "BLE / WIFI",
+                 zeroOnline && zero
+                     ? String((zero->stateFlags & 4) ? "ON" : "WAIT") + " / " +
+                           ((zero->stateFlags & 8) ? "ON" : "OFF")
+                     : "- / -");
       } else {
-        infoHeader(h, "TIME / SENSOR", 6);
-        infoLine(h, 31, "CLOCK", h.rtcValid ? "VALID" : "NOT SET");
-        infoLine(h, 53, "RTC", h.rtcPresent ? "DS3231" : "MISSING");
-        infoLine(h, 75, "ENV", h.environment.address ? "AHT20" : "MISSING");
-        infoLine(h, 97, "PROFILE", "CORE / MEDIA / NOW");
+        infoHeader(h, "FIRMWARE / SAFE", 9);
+        const esp_partition_t *running = esp_ota_get_running_partition();
+        const esp_partition_t *next = esp_ota_get_next_update_partition(nullptr);
+        const esp_partition_t *safe = esp_partition_find_first(
+            ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_FACTORY,
+            "safety");
+        infoLine(h, 29, "RUNNING", running ? running->label : "UNKNOWN");
+        infoLine(h, 47, "NEXT OTA", next ? next->label : "NONE");
+        infoLine(h, 65, "SAFE", safe ? "AVAILABLE" : "MISSING");
+        infoLine(h, 83, "ZERO OTA",
+                 zeroCapabilities & MilestoneV5::kCapabilityCompanionOta
+                     ? "SUPPORTED"
+                     : "UNAVAILABLE");
+        infoLine(h, 101, "VERIFY", "SIGN + SHA256");
         infoLine(h, 119, "NEXT PAGE", "OK");
       }
       break;
@@ -463,8 +526,8 @@ private:
     canvas.drawStr(1, 10, name.c_str());
     canvas.setFont(u8g2_font_5x8_tf);
     char count[8];
-    snprintf(count, sizeof(count), "%u/6", page);
-    canvas.drawStr(108, 10, count);
+    snprintf(count, sizeof(count), "%u/%u", page, kInfoPageCount);
+    canvas.drawStr(127 - canvas.getStrWidth(count), 10, count);
     canvas.drawHLine(0, 14, 128);
     paint(h, colors[5]);
   }
@@ -482,6 +545,40 @@ private:
     if (value >= 1024UL)
       return String(value / 1024.0f, 1) + " KB";
     return String(value) + " B";
+  }
+  static String bytes64(uint64_t value) {
+    if (value >= 1024ULL * 1024ULL * 1024ULL)
+      return String(value / (1024.0 * 1024.0 * 1024.0), 1) + " GB";
+    if (value >= 1024ULL * 1024ULL)
+      return String(value / (1024.0 * 1024.0), 1) + " MB";
+    return String(static_cast<unsigned long>(value / 1024ULL)) + " KB";
+  }
+  static String resetReason() {
+    switch (esp_reset_reason()) {
+    case ESP_RST_POWERON: return "POWER ON";
+    case ESP_RST_EXT: return "EXTERNAL";
+    case ESP_RST_SW: return "SOFTWARE";
+    case ESP_RST_PANIC: return "PANIC";
+    case ESP_RST_INT_WDT: return "INT WDT";
+    case ESP_RST_TASK_WDT: return "TASK WDT";
+    case ESP_RST_WDT: return "WDT";
+    case ESP_RST_DEEPSLEEP: return "DEEP SLEEP";
+    case ESP_RST_BROWNOUT: return "BROWNOUT";
+    case ESP_RST_SDIO: return "SDIO";
+    default: return "UNKNOWN";
+    }
+  }
+  static String rtcDate(const V5Hardware &h) {
+    char value[16];
+    snprintf(value, sizeof(value), "%04u.%02u.%02u", h.rtc.year, h.rtc.month,
+             h.rtc.day);
+    return value;
+  }
+  static String rtcTime(const V5Hardware &h) {
+    char value[16];
+    snprintf(value, sizeof(value), "%02u:%02u:%02u", h.rtc.hour, h.rtc.minute,
+             h.rtc.second);
+    return value;
   }
   static String uptime() {
     uint64_t seconds = millis() / 1000ULL;

@@ -71,6 +71,7 @@ uint32_t lastZeroSequence = 0;
 uint32_t lastValidLinkMs = 0;
 uint32_t mainBootId = 0;
 uint8_t negotiatedProtocolVersion = 0;
+uint32_t zeroCapabilities = 0;
 uint8_t linkAttempts = 0;
 bool awaitingAck = false;
 MilestoneV5::StatusPayload zeroStatus = {};
@@ -232,7 +233,10 @@ void renderBody() {
         : sdUpdate.state == V5SdUpdate::State::Failed ? sdUpdate.error
                                                       : String("BACK으로 돌아가기"));
   } else if (profiles.active() == MilestoneV5::Profile::kCore) {
-    coreViews.render(hardware);
+    coreViews.render(hardware,
+                     lastValidLinkMs &&
+                         millis() - lastValidLinkMs <= MilestoneV5::kLinkStaleMs,
+                     &zeroStatus, negotiatedProtocolVersion, zeroCapabilities);
   } else if (profiles.active() == MilestoneV5::Profile::kMedia) {
     if (portal.media.hasEnabled()) {
       if (!portal.media.displayEnabled) {
@@ -760,6 +764,8 @@ void exchangeHeartbeat(uint32_t now) {
             hello.minimumVersion, hello.maximumVersion);
         valid = negotiatedProtocolVersion != 0;
         if (valid)
+          zeroCapabilities = hello.capabilities;
+        if (valid)
           portal.note(3);
         Serial.printf("ZERO protocol negotiated: v%u capabilities=%08lX\n",
                       negotiatedProtocolVersion,
@@ -1076,8 +1082,8 @@ void loop() {
         : bundleUpdate.active()                                          ? 5
         : bundleDownload.active                                          ? 4
         : portal.active                                                  ? 3
-        : (zeroStatus.stateFlags & 4) && lastValidLinkMs                 ? 2
-        : radio.busy || ((zeroStatus.stateFlags & 8) && lastValidLinkMs) ? 1
+        : radio.busy                                                      ? 1
+        : (zeroStatus.stateFlags & 8) && lastValidLinkMs                 ? 2
                                                                          : 0;
     hardware.statusBands(profileName(profiles.active()),
                          zeroTemperatureKnown && now - lastZeroStatusMs <=
@@ -1147,6 +1153,7 @@ void loop() {
     portal.note(4);
     lastValidLinkMs = 0;
     negotiatedProtocolVersion = 0;
+    zeroCapabilities = 0;
     awaitingAck = false;
     nowMetadata = {};
     redraw = true;

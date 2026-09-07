@@ -7,6 +7,9 @@ portal = (ROOT / "v5/MilestoneV5Main/V5Portal.h").read_text()
 page = (ROOT / "PortalPage.h").read_text()
 zero = (ROOT / "v5/MilestoneV5Zero/MilestoneV5Zero.ino").read_text()
 media = (ROOT / "v5/MilestoneV5Main/V5LegacyMedia.h").read_text()
+core_views = (ROOT / "v5/MilestoneV5Main/V5CoreViews.h").read_text()
+hardware = (ROOT / "v5/MilestoneV5Main/V5Hardware.h").read_text()
+artwork_portal = (ROOT / "v5/MilestoneV5Main/V5ArtworkPortal.h").read_text()
 
 for marker in (
     '"CYTRON//MILESTONE"', '"MILESTONE NOW"', '"BLE ADVERTISING"',
@@ -38,6 +41,15 @@ assert "MILESTONE_PORTAL_HTML" in portal
 assert "location.href='/artwork'" in page
 assert "MilestoneV5LegacyMedia" in media
 assert "kCapabilityInternetHttp" in zero
+assert "kCapabilityCompanionOta" in zero
+assert "static constexpr uint8_t kInfoPageCount = 9" in core_views
+for heading in ('"TIME / RTC"', '"ENVIRONMENT"', '"MAIN / ZERO"',
+                '"FIRMWARE / SAFE"'):
+    assert heading in core_views, f"v5 device-info page missing: {heading}"
+assert 'display.print("AP")' in hardware
+assert 'display.drawCircle(122, 6, 4, 0x2F2D)' in hardware
+assert "['delete','이미지만 삭제']" in artwork_portal
+assert 'op == "delete"' in artwork_portal
 assert "SET_LOOP_TASK_STACK_SIZE(32 * 1024);" in main
 assert "kEnableZeroLink" not in main
 assert "linkSpi.begin(" in main

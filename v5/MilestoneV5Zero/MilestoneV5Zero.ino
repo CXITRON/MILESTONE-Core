@@ -178,6 +178,7 @@ void prepareHelloReply(uint32_t ackSequence) {
       uint32_t(MilestoneV5::kCapabilityBleAms) |
           uint32_t(MilestoneV5::kCapabilityWifiSta) |
           uint32_t(MilestoneV5::kCapabilityInternetHttp) |
+          uint32_t(MilestoneV5::kCapabilityCompanionOta) |
           (psramFound() ? uint32_t(MilestoneV5::kCapabilityPsram) : 0UL),
       zeroBootId,
   };

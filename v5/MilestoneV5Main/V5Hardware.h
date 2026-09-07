@@ -35,7 +35,9 @@ public:
   bool textScroll = true, textLeft = false;
   bool textShift = true;
   uint8_t scrollSpeed = 24;
-  uint8_t radioIndicator = 0; // idle, STA, BLE, AP, download, update, fault
+  // Legacy status meanings: idle/wait, connecting, online, AP, download,
+  // installing, fault. Bluetooth is deliberately not shown as Wi-Fi state.
+  uint8_t radioIndicator = 0;
   size_t fileCount = 0;
 
   void begin() {
@@ -311,22 +313,31 @@ public:
     } else if (environment.enabled && environment.displayMask)
       display.print(" ENV --");
     display.fillRect(116, 0, 12, 14, 0);
-    if (radioIndicator == 0)
+    if (radioIndicator == 0) {
       display.drawCircle(122, 6, 4, 0x8410);
-    else if (radioIndicator == 3)
-      display.drawRect(118, 2, 8, 8, 0x07FF);
-    else if (radioIndicator == 4) {
-      display.drawFastVLine(122, 1, 8, 0xFFE0);
-      display.drawLine(119, 6, 122, 9, 0xFFE0);
-      display.drawLine(125, 6, 122, 9, 0xFFE0);
+    } else if (radioIndicator == 1) {
+      // Same clock-shaped waiting/synchronizing indicator as legacy CORE.
+      display.drawCircle(122, 6, 4, 0x3D7F);
+      display.drawFastVLine(122, 3, 3, 0x3D7F);
+      display.drawFastHLine(122, 6, 3, 0x3D7F);
+    } else if (radioIndicator == 2) {
+      // Same online check mark as legacy CORE.
+      display.drawCircle(122, 6, 4, 0x2F2D);
+      display.drawLine(119, 6, 121, 8, 0x2F2D);
+      display.drawLine(121, 8, 125, 3, 0x2F2D);
+    } else if (radioIndicator == 3) {
+      display.setTextColor(0x07FF, 0);
+      display.setCursor(116, 4);
+      display.print("AP");
+    } else if (radioIndicator == 4 || radioIndicator == 5) {
+      const uint16_t color = radioIndicator == 4 ? 0xFD20 : 0xF81F;
+      display.drawFastVLine(122, 1, 8, color);
+      display.drawLine(122, 1, 119, 4, color);
+      display.drawLine(122, 1, 125, 4, color);
     } else if (radioIndicator == 6) {
       display.drawLine(118, 2, 126, 10, 0xF800);
       display.drawLine(126, 2, 118, 10, 0xF800);
-    } else
-      display.fillCircle(122, 6, 4,
-                         radioIndicator == 1   ? 0x07E0
-                         : radioIndicator == 2 ? 0x001F
-                                               : 0xF800);
+    }
     display.drawFastHLine(0, 15, 128, 0x4208);
     display.fillRect(0, 144, 128, 16, 0);
     display.drawFastHLine(0, 144, 128, 0x4208);

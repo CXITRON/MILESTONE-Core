@@ -30,7 +30,7 @@ public:
       page += R"HTML(<script>
 const csrf=document.querySelector('#csrf').value,items=document.querySelector('#items'),status=document.querySelector('#status');let cursor=0;
 const check=async r=>{if(!r.ok)throw Error(await r.text());return r;};
-async function action(key,op){try{await check(await fetch('/artwork/action',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({token:csrf,key,op})}));status.textContent=op==='refresh'?'다운로드 요청 접수':'완료';if(op==='refresh'){for(let i=0;i<65;i++){await new Promise(resolve=>setTimeout(resolve,1000));const state=await(await check(await fetch('/artwork/request-status'))).json();if(state.key!==key)break;status.textContent=state.result;if(!state.pending)break;}}}catch(e){status.textContent=e.message;}}
+async function action(key,op){if(op==='delete'&&!confirm('이미지를 삭제하고 MISSING 상태로 유지할까요?'))return;try{await check(await fetch('/artwork/action',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({token:csrf,key,op})}));status.textContent=op==='refresh'?'다운로드 요청 접수':op==='delete'?'이미지 삭제 완료':'완료';if(op==='refresh'){for(let i=0;i<65;i++){await new Promise(resolve=>setTimeout(resolve,1000));const state=await(await check(await fetch('/artwork/request-status'))).json();if(state.key!==key)break;status.textContent=state.result;if(!state.pending)break;}}}catch(e){status.textContent=e.message;}}
 function crc32(bytes){let c=0xffffffff;for(const b of bytes){c^=b;for(let n=0;n<8;n++)c=(c>>>1)^((c&1)?0xedb88320:0);}return (c^0xffffffff)>>>0;}
 async function upload(key,file){
  if(!file||!['image/jpeg','image/png'].includes(file.type))throw Error('JPG/PNG를 선택하세요');
@@ -42,7 +42,7 @@ async function upload(key,file){
  }finally{URL.revokeObjectURL(url);}
 }
 async function preview(key,canvas){const bytes=new Uint8Array(await (await check(await fetch('/artwork/file?key='+key))).arrayBuffer());if(bytes.length!==22704)throw Error('Invalid image');const ctx=canvas.getContext('2d'),image=ctx.createImageData(88,88),v=new DataView(bytes.buffer);for(let i=0;i<88*88;i++){let c=v.getUint16(7216+i*2);image.data[i*4]=((c>>11)&31)*255/31;image.data[i*4+1]=((c>>5)&63)*255/63;image.data[i*4+2]=(c&31)*255/31;image.data[i*4+3]=255;}ctx.putImageData(image,0,0);}
-async function load(){try{if(cursor<0)return;const response=await check(await fetch('/artwork/list?cursor='+cursor+'&q='+encodeURIComponent(document.querySelector('#query').value))),data=await response.json();cursor=data.next;status.textContent=data.bytes+' bytes / '+data.count+' images';for(const item of data.items){const row=document.createElement('article'),title=document.createElement('p');title.textContent=item.text+' ['+item.state+']';row.append(title);const canvas=document.createElement('canvas');canvas.width=canvas.height=88;row.append(canvas);const show=document.createElement('button');show.textContent='미리보기';show.onclick=()=>preview(item.key,canvas).catch(e=>status.textContent=e.message);row.append(show);for(const [op,label] of [['pin','고정'],['unpin','고정 해제'],['block','자동 요청 차단'],['unblock','차단 해제'],['refresh','자동 이미지 삭제·재요청']]){const b=document.createElement('button');b.textContent=label;b.onclick=()=>action(item.key,op);row.append(b);}const input=document.createElement('input');input.type='file';input.accept='image/jpeg,image/png';input.onchange=()=>upload(item.key,input.files[0]).then(()=>status.textContent='사용자 이미지 저장 완료').catch(e=>status.textContent=e.message);row.append(input);items.append(row);}document.querySelector('#more').disabled=cursor<0;}catch(e){status.textContent=e.message;}}
+async function load(){try{if(cursor<0)return;const response=await check(await fetch('/artwork/list?cursor='+cursor+'&q='+encodeURIComponent(document.querySelector('#query').value))),data=await response.json();cursor=data.next;status.textContent=data.bytes+' bytes / '+data.count+' images';for(const item of data.items){const row=document.createElement('article'),title=document.createElement('p');title.textContent=item.text+' ['+item.state+']';row.append(title);const canvas=document.createElement('canvas');canvas.width=canvas.height=88;row.append(canvas);const show=document.createElement('button');show.textContent='미리보기';show.onclick=()=>preview(item.key,canvas).catch(e=>status.textContent=e.message);row.append(show);for(const [op,label] of [['pin','고정'],['unpin','고정 해제'],['block','자동 요청 차단'],['unblock','차단 해제'],['delete','이미지만 삭제'],['refresh','자동 이미지 삭제·재요청']]){const b=document.createElement('button');b.textContent=label;b.onclick=()=>action(item.key,op);row.append(b);}const input=document.createElement('input');input.type='file';input.accept='image/jpeg,image/png';input.onchange=()=>upload(item.key,input.files[0]).then(()=>status.textContent='사용자 이미지 저장 완료').catch(e=>status.textContent=e.message);row.append(input);items.append(row);}document.querySelector('#more').disabled=cursor<0;}catch(e){status.textContent=e.message;}}
 document.querySelector('#search').onclick=()=>{cursor=0;items.replaceChildren();load();};document.querySelector('#more').onclick=load;load();
 </script></html>)HTML";
       server->sendHeader("Cache-Control", "no-store");
@@ -213,16 +213,25 @@ private:
       ok = marker(path + ".blocked");
     else if (op == "unblock")
       ok = !SD.exists(path + ".blocked") || SD.remove(path + ".blocked");
-    else if (op == "refresh") {
+    else if (op == "delete") {
+      if (SD.exists(path + ".bak")) {
+        server->send(409, "text/plain",
+                     "복구용 백업을 먼저 복원하거나 명시적으로 정리해야 합니다");
+        return;
+      }
+      ok = (!SD.exists(path + ".mac") || SD.remove(path + ".mac")) &&
+           (!SD.exists(path + ".custom") || SD.remove(path + ".custom")) &&
+           (!SD.exists(path + ".blocked") || SD.remove(path + ".blocked"));
+    } else if (op == "refresh") {
       if (SD.exists(path + ".custom") || SD.exists(path + ".bak")) {
         server->send(
             409, "text/plain",
-            "Unpin first; recovery backup is never deleted automatically");
+            "고정을 먼저 해제하세요. 복구용 백업은 자동 삭제하지 않습니다");
         return;
       }
       if (!art->queueRefresh(key)) {
         server->send(409, "text/plain",
-                     "Artwork queue busy or metadata missing");
+                     "앨범아트 작업 중이거나 메타데이터가 없습니다");
         return;
       }
       ok = (!SD.exists(path + ".blocked") || SD.remove(path + ".blocked")) &&
@@ -235,7 +244,8 @@ private:
       if (art->key == key && op != "refresh")
         art->invalidate();
     }
-    server->send(ok ? 200 : 400, "text/plain", ok ? "Done" : "Action failed");
+    server->send(ok ? 200 : 400, "text/plain",
+                 ok ? "완료" : "작업에 실패했습니다");
   }
   void upload() {
     HTTPUpload &u = server->upload();
