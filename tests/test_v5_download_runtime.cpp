@@ -71,22 +71,31 @@ int main(int argc, char **argv) {
   assert(!SD.exists(rejected.directory));
   assert(V5DownloadWorker::requests.size() == 2);
   prepare();
+  V5BundleDownload current;
+  assert(current.begin("latest", false));
+  for (unsigned i = 0; i < 10 && current.active; ++i)
+    current.service(true, true, false);
+  assert(current.upToDate && !current.ready && !current.active);
+  assert(current.checkedVersion == String("5.0.0"));
+  assert(current.directory.isEmpty());
+  assert(V5DownloadWorker::requests.size() == 2);
+  prepare();
   V5DownloadWorker::fixtures["v5-main.bin"][0] ^= 1;
   V5BundleDownload corrupt;
-  assert(corrupt.begin("latest", false));
+  assert(corrupt.begin("5.0.0", false));
   for (unsigned i = 0; i < 30 && corrupt.active; ++i)
     corrupt.service(true, true, false);
   assert(!corrupt.ready && !corrupt.active);
   preparePaired(true);
   V5BundleDownload mixedVersion;
-  assert(mixedVersion.begin("latest", false));
+  assert(mixedVersion.begin("5.0.0", false));
   for (unsigned i = 0; i < 30 && mixedVersion.active; ++i)
     mixedVersion.service(true, true, false);
   assert(!mixedVersion.ready && !mixedVersion.active);
   assert(V5DownloadWorker::requests.size() == 6);
   preparePaired(false);
   V5BundleDownload paired;
-  assert(paired.begin("latest", false));
+  assert(paired.begin("5.0.0", false));
   for (unsigned i = 0; i < 40 && paired.active; ++i)
     paired.service(true, true, false);
   assert(paired.ready && !paired.active);
@@ -99,4 +108,23 @@ int main(int argc, char **argv) {
   assert(unsafe.begin("latest", false));
   unsafe.service(true, false, false);
   assert(!unsafe.active && !unsafe.ready && V5DownloadWorker::cancel.load());
+  prepare();
+  V5BundleDownload zeroTimeout;
+  assert(zeroTimeout.begin("5.0.0", true));
+  uint8_t request[476]{};
+  size_t requestSize = 0;
+  assert(zeroTimeout.request(request, requestSize));
+  assert(requestSize > 9 && request[0] == 16);
+  FakeOta::now += 16000;
+  zeroTimeout.service(false, true, true);
+  assert(!zeroTimeout.active && !zeroTimeout.ready);
+  assert(zeroTimeout.error == String("ZERO 다운로드 시작 응답 시간 초과"));
+  prepare();
+  V5BundleDownload zeroNeverRequested;
+  assert(zeroNeverRequested.begin("5.0.0", true));
+  FakeOta::now += 16000;
+  zeroNeverRequested.service(false, true, false);
+  assert(!zeroNeverRequested.active && !zeroNeverRequested.ready);
+  assert(zeroNeverRequested.error ==
+         String("ZERO 다운로드 시작 응답 시간 초과"));
 }

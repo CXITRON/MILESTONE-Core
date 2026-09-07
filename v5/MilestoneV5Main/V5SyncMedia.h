@@ -32,6 +32,8 @@ public:
     cleanup();
     state = State::Idle;
     error = "";
+    requestedFrame = displayedFrame = UINT32_MAX;
+    controlCount = renderedFrames = lastRenderedMs = 0;
   }
 
   bool beginUpload(uint32_t expected) {
@@ -152,6 +154,7 @@ public:
     anchorPositionMs = positionMs < duration ? positionMs : duration;
     anchorLocalMs = now;
     lastControlMs = now;
+    ++controlCount;
     state = run && anchorPositionMs < duration ? State::Playing : State::Paused;
     return true;
   }
@@ -167,6 +170,7 @@ public:
       return false;
     }
     const uint32_t target = MilestoneV5::videoFrameAtMs(info, positionMs(now));
+    requestedFrame = target;
     if (target == displayedFrame)
       return false;
     uint8_t entry[4], record[8];
@@ -206,8 +210,12 @@ public:
     display.rgb565(rgb, 16, 128);
     display.flushRegion(16, 128);
     displayedFrame = target;
+    ++renderedFrames;
+    lastRenderedMs = now;
     return true;
   }
+
+  void invalidateDisplayedFrame() { displayedFrame = UINT32_MAX; }
 
   void stopPlayback() {
     playVideo.close();
@@ -226,6 +234,8 @@ public:
     state = State::Idle;
     error = "";
     expectedBytes = writtenBytes = indexedFrames = 0;
+    requestedFrame = displayedFrame = UINT32_MAX;
+    controlCount = renderedFrames = lastRenderedMs = 0;
     info = {};
   }
 
@@ -273,6 +283,8 @@ public:
   MilestoneV5::VideoInfo info{};
   uint32_t expectedBytes = 0, writtenBytes = 0, indexedFrames = 0;
   uint32_t indexedAtMs = 0, displayedFrame = UINT32_MAX;
+  uint32_t requestedFrame = UINT32_MAX, controlCount = 0, renderedFrames = 0,
+           lastRenderedMs = 0;
   uint8_t browserEventSequence = 0;
 
 private:

@@ -63,6 +63,7 @@ bool bootValidated = false;
 bool restoreArmed = false;
 uint32_t lastRtcSyncMs = 0;
 bool rtcSynced = false;
+bool bootUpdateCheckAttempted = false;
 MilestoneV5::ProfileController profiles(MilestoneV5::Profile::kCore);
 uint8_t txSlot[MilestoneV5::kSpiSlotSize] = {};
 uint8_t rxSlot[MilestoneV5::kSpiSlotSize] = {};
@@ -1045,11 +1046,41 @@ void loop() {
   if (!safeModeActive && !bundleUpdate.critical() &&
       profiles.active() == MilestoneV5::Profile::kNow)
     artwork.observe(nowMetadata, now, hardware.sdMounted);
+  if (!bootUpdateCheckAttempted && bootValidated &&
+      now - bootStartedMs >= 15000 && !safeModeActive &&
+      !bundleUpdate.active() && !zeroUpdate.busy() && !portal.active &&
+      !bundleDownload.active && !bundleDownload.ready) {
+    bootUpdateCheckAttempted = true;
+    MilestoneV5::WifiStore store;
+    MilestoneV5::WifiCredentials credentials;
+    if (hardware.sdMounted && store.load(credentials)) {
+      portal.downloadVersion = "latest";
+      portal.downloadRequested = true;
+      portal.downloadReady = false;
+      portal.downloadCurrent = false;
+      portal.downloadError = "";
+      Serial.println("Automatic signed update check queued");
+      Serial0.println("Automatic signed update check queued");
+    }
+  }
   if (portal.downloadRequested) {
     portal.downloadRequested = false;
-    bundleDownload.begin(portal.downloadVersion,
-                         lastValidLinkMs != 0 &&
-                             (portal.active || !(zeroStatus.stateFlags & 4)));
+    const bool zeroFresh =
+        lastValidLinkMs != 0 &&
+        now - lastValidLinkMs <= MilestoneV5::kLinkStaleMs &&
+        !(zeroStatus.stateFlags &
+          (MilestoneV5::kStatusThermalStop | MilestoneV5::kStatusOtaActive));
+    const bool useZero = zeroFresh &&
+                         (portal.active ||
+                          !(zeroStatus.stateFlags &
+                            MilestoneV5::kStatusBleConnected));
+    if (portal.active && WiFi.softAPgetStationNum() > 0 && !useZero) {
+      bundleDownload.reject(
+          "설정 AP 사용 중에는 정상 연결된 ZERO가 있어야 업데이트를 확인할 수 있습니다");
+    } else if (!bundleDownload.begin(portal.downloadVersion, useZero) &&
+               bundleDownload.error.isEmpty()) {
+      bundleDownload.reject("업데이트 확인을 시작할 수 없습니다");
+    }
   }
   radio.downloadWanted = bundleDownload.active && !bundleDownload.useZero;
   radio.service(now, portal, hardware, artwork, lastValidLinkMs != 0,
@@ -1058,16 +1089,33 @@ void loop() {
   bundleDownload.service(radio.downloadReady,
                          !temperatureSafe && !safeModeActive &&
                              !bundleUpdate.active(),
-                         lastValidLinkMs != 0);
-  if (portal.downloadBusy && !bundleDownload.active)
+                         lastValidLinkMs != 0 &&
+                             now - lastValidLinkMs <=
+                                 MilestoneV5::kLinkStaleMs);
+  if (portal.downloadBusy && !bundleDownload.active) {
     portal.note(8, bundleDownload.ready ? 0 : 1);
+    if (bundleDownload.ready)
+      Serial.printf("OTA check complete: update %s available\n",
+                    bundleDownload.checkedVersion.c_str());
+    else if (bundleDownload.upToDate)
+      Serial.printf("OTA check complete: current (%s)\n",
+                    bundleDownload.checkedVersion.c_str());
+    else
+      Serial.printf("OTA check failed: %s\n", bundleDownload.error.c_str());
+  }
   portal.downloadBusy = bundleDownload.active;
   portal.downloadReady = bundleDownload.ready;
+  portal.downloadCurrent = bundleDownload.upToDate;
+  portal.downloadError = bundleDownload.error;
+  if (!bundleDownload.checkedVersion.isEmpty())
+    portal.downloadLatest = bundleDownload.checkedVersion;
   portal.downloadStatus =
       bundleDownload.active ? String("다운로드 ") + bundleDownload.received +
                                   " / " + bundleDownload.total
       : bundleDownload.ready
           ? String("다운로드 검증 완료. 기기 확인 후 설치할 수 있습니다.")
+      : bundleDownload.upToDate
+          ? String("서명된 최신 릴리스를 확인했습니다. 현재 버전이 최신입니다.")
           : bundleDownload.error;
   if (bundleDownload.ready)
     portal.bundleSource = bundleDownload.directory;
@@ -1153,6 +1201,9 @@ void loop() {
   if (redraw && ((!zeroUpdate.busy() && !bundleUpdate.critical()) ||
                  now - lastBodyRender >= 100)) {
     renderBody();
+    if (portal.active && profiles.active() == MilestoneV5::Profile::kMedia &&
+        portal.sync.activePlayback())
+      portal.sync.invalidateDisplayedFrame();
     lastBodyRender = now;
   }
   if (!safeModeActive && !bundleUpdate.critical() && !modeMenu.isOpen() &&
@@ -1172,6 +1223,19 @@ void loop() {
         portal.sync.servicePlayback(hardware.display, now, hardware.monochrome);
     if (!rendered && portal.sync.state == V5SyncMedia::State::Error)
       redraw = true;
+    static uint32_t lastSyncDiagnosticMs = 0;
+    if (now - lastSyncDiagnosticMs >= 2000) {
+      lastSyncDiagnosticMs = now;
+      Serial.printf(
+          "SYNC state=%s pos=%lu control=%lu target=%lu displayed=%lu rendered=%lu error=%s\n",
+          portal.sync.stateName(),
+          static_cast<unsigned long>(portal.sync.positionMs(now)),
+          static_cast<unsigned long>(portal.sync.controlCount),
+          static_cast<unsigned long>(portal.sync.requestedFrame),
+          static_cast<unsigned long>(portal.sync.displayedFrame),
+          static_cast<unsigned long>(portal.sync.renderedFrames),
+          portal.sync.error.c_str());
+    }
   }
   if (!safeModeActive && !bundleUpdate.critical() && !modeMenu.isOpen() &&
       !portal.active && profiles.active() == MilestoneV5::Profile::kMedia &&

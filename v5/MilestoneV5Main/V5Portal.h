@@ -63,8 +63,10 @@ public:
   bool bundleRequested = false, bundleBusy = false;
   uint32_t bundleRequestedMs = 0;
   String bundleStatus = "idle", bundleError;
-  bool downloadRequested = false, downloadBusy = false, downloadReady = false;
-  String downloadVersion = "latest", downloadStatus,
+  bool downloadRequested = false, downloadBusy = false, downloadReady = false,
+       downloadCurrent = false;
+  String downloadVersion = "latest", downloadStatus, downloadError,
+         downloadLatest = MilestoneV5::FIRMWARE_VERSION,
          bundleSource = "/firmware/incoming";
 
   void begin(V5Hardware &h, V5CoreViews &views, V5Artwork &art,
@@ -705,6 +707,8 @@ public:
       }
       downloadVersion = server.arg("version");
       downloadRequested = true;
+      downloadCurrent = false;
+      downloadError = "";
       server.sendHeader("Location", "/");
       server.send(303);
     });
@@ -991,6 +995,11 @@ private:
                   ",\"written_bytes\":" + String(sync.writtenBytes) +
                   ",\"duration_ms\":" + String(sync.durationMs()) +
                   ",\"position_ms\":" + String(sync.positionMs(nowMs)) +
+                  ",\"requested_frame\":" + String(sync.requestedFrame) +
+                  ",\"displayed_frame\":" + String(sync.displayedFrame) +
+                  ",\"control_count\":" + String(sync.controlCount) +
+                  ",\"rendered_frames\":" + String(sync.renderedFrames) +
+                  ",\"last_rendered_ms\":" + String(sync.lastRenderedMs) +
                   ",\"device_ms\":" + String(nowMs) +
                   ",\"error\":\"" + jsonEscape(sync.error) + "\"}";
     sendJson(200, body);
@@ -1058,18 +1067,19 @@ private:
                                     : "advertising") +
               "\"";
       body += ",\"media_supported\":true,\"general_views_supported\":true";
-      body += ",\"latest_firmware\":\"" +
-              String(MilestoneV5::FIRMWARE_VERSION) +
+      body += ",\"latest_firmware\":\"" + jsonEscape(downloadLatest) +
               "\",\"latest_profile\":\"" + String(id) +
               "\",\"update_state\":\"" +
               String(downloadBusy ? "checking" : downloadReady ? "available"
-                                                              : "current") +
+                     : !downloadError.isEmpty() ? "error"
+                                                : "current") +
               "\",\"update_available\":" +
               String(downloadReady ? "true" : "false") +
               ",\"update_install_ready\":" +
               String(downloadReady ? "true" : "false") +
               ",\"update_check_pending\":" +
-              String(downloadBusy ? "true" : "false") + "}"
+              String(downloadBusy ? "true" : "false") +
+              ",\"update_error\":\"" + jsonEscape(downloadError) + "\"}"
               ;
       sendJson(200, body);
     });
@@ -1413,6 +1423,8 @@ private:
       downloadVersion = "latest";
       downloadRequested = true;
       downloadReady = false;
+      downloadCurrent = false;
+      downloadError = "";
       sendJson(202, "{\"ok\":true,\"state\":\"checking\"}");
     });
     server.on("/api/update/install", HTTP_POST, [this] {

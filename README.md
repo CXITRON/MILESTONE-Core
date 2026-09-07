@@ -1,10 +1,10 @@
 # MILESTONE Core — MILESTONE D1
 
-현재 제품 펌웨어는 **v5.1.5**입니다. GOOUUU ESP32-S3 N16R8 MAIN과
+현재 제품 펌웨어는 **v5.1.6**입니다. GOOUUU ESP32-S3 N16R8 MAIN과
 Waveshare ESP32-S3-Zero ZERO를 함께 사용하며, 기존 v3.3.4의 CORE·MEDIA·NOW
 인터페이스를 듀얼 보드 구조 안에서 실행합니다.
 
-- 최신 릴리스: [MILESTONE Core v5.1.5](https://github.com/CXITRON/MILESTONE-Core/releases/tag/v5.1.5)
+- 최신 릴리스: [MILESTONE Core v5.1.6](https://github.com/CXITRON/MILESTONE-Core/releases/tag/v5.1.6)
 - 설치·OTA·복구: [v5/README.md](v5/README.md)
 - 구현·검증 범위: [v5/IMPLEMENTATION_STATUS.md](v5/IMPLEMENTATION_STATUS.md)
 - v3.3.4 설치·사용법·변경 이력: [docs/LEGACY_V3.md](docs/LEGACY_V3.md)
@@ -87,6 +87,17 @@ milestone-release local X.Y.Z "release note"
 
 모든 버튼은 `INPUT_PULLUP` active-low이며 두 보드는 GND를 공통으로 연결합니다.
 TFT와 microSD는 MAIN의 MOSI/SCK를 공유하고 각각 별도의 CS를 사용합니다.
+
+## v5.1.6 업데이트 안내
+
+v5.1.6은 OTA 확인 고착과 MEDIA 동기화 재생 제어를 복구하는 안정화 릴리스입니다.
+
+- 부팅 검증 후 저장 Wi-Fi가 있으면 서명된 최신 bundle manifest를 한 번 자동 확인하며 자동 설치는 수행하지 않음
+- `latest` 확인 시 bundle과 서명만 먼저 검증해 현재 버전 이하이면 펌웨어 바이너리를 다시 받지 않고 `current`로 종료
+- 설정 AP에서 ZERO 다운로드 시작 응답이 사라진 경우 15초 watchdog으로 `checking` 고착을 회수하고 stale ZERO 링크를 다운로드 대상으로 사용하지 않음
+- AP 클라이언트가 연결된 상태에서 ZERO를 사용할 수 없으면 MAIN 로컬 다운로드를 무한 대기하지 않고 명확한 오류로 종료
+- 동기화 MEDIA WebSocket 제어에 sequence ACK를 추가하고 ACK 누락 시 HTTP `/api/sync/control`로 자동 fallback
+- 동기화 재생의 요청/표시 프레임과 제어/렌더 카운터를 상태 API에 노출하고, 포털 redraw가 영상 본문을 덮은 경우 같은 프레임도 다시 표시
 
 ## v5.1.5 업데이트 안내
 

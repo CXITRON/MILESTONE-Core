@@ -28,6 +28,10 @@ assert "wifiPolling=false;await load();" in page
 # ordinary status packets, and never overlay status bands on the boot splash.
 assert "now - lastValidLinkMs <= MilestoneV5::kLinkStaleMs" in main
 assert "if (now - bootStartedMs >= 3000)" in main
+assert "kZeroStartReplyTimeoutMs = 15000" in (root / "v5/MilestoneV5Main/V5BundleDownload.h").read_text()
+assert "Automatic signed update check queued" in main
+assert "WiFi.softAPgetStationNum() > 0 && !useZero" in main
+assert "downloadError" in portal and '"error"' in portal
 
 # Stored credentials must not be replayed as a provisioning test on every
 # boot. SNTP teardown is legal only after that board has started SNTP/lwIP.

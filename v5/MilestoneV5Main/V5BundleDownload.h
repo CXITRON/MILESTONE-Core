@@ -4,11 +4,12 @@
 #include <MilestoneV5DownloadWorker.h>
 #include <MilestoneV5Signature.h>
 #include <MilestoneV5Video.h>
+#include <MilestoneV5Version.h>
 
 class V5BundleDownload {
 public:
-  bool active = false, ready = false, useZero = false;
-  String directory, error;
+  bool active = false, ready = false, useZero = false, upToDate = false;
+  String directory, error, checkedVersion;
   uint32_t received = 0, total = 0;
   bool begin(const String &version, bool onZero) {
     if (active || V5DownloadWorker::state.load() == 1 || !SD.cardSize())
@@ -55,11 +56,17 @@ public:
     useZero = onZero;
     active = true;
     ready = false;
+    upToDate = false;
     error = "";
+    checkedVersion = "";
+    latestSelector = version == "latest";
     index = 0;
     received = total = 0;
     started = millis();
+    stageStarted = started;
     begun = false;
+    firstZeroRequestMs = 0;
+    lastReply = 0;
     id = esp_random();
     if (!id)
       id = 1;
@@ -69,6 +76,7 @@ public:
     file.close();
     active = false;
     ready = false;
+    upToDate = false;
     error = why;
     V5DownloadWorker::cancel.store(true);
     if (hashActive) {
@@ -82,7 +90,17 @@ public:
       return;
     cleanupDirectory();
     ready = false;
+    upToDate = false;
     directory = "";
+  }
+  void reject(const char *why) {
+    if (active)
+      stop(why);
+    else {
+      ready = false;
+      upToDate = false;
+      error = why;
+    }
   }
   void service(bool localReady, bool healthy, bool zeroOnline) {
     if (!active)
@@ -92,7 +110,13 @@ public:
       return;
     }
     if (useZero) {
-      if (begun && !zeroOnline && millis() - lastReply > 60000)
+      const uint32_t now = millis();
+      if (!begun && now - stageStarted > kZeroStartReplyTimeoutMs) {
+        stop("ZERO 다운로드 시작 응답 시간 초과");
+        return;
+      }
+      if (begun && !zeroOnline && lastReply &&
+          now - lastReply > kZeroLinkTimeoutMs)
         stop("ZERO 다운로드 연결 끊김");
       return;
     }
@@ -126,6 +150,8 @@ public:
     if (!begun) {
       if (!file && !openFile())
         return false;
+      if (!firstZeroRequestMs)
+        firstZeroRequestMs = millis();
       String url = base + asset();
       p[0] = 16;
       put(p + 1, id);
@@ -150,8 +176,10 @@ public:
       return true;
     }
     if (p[0] == 16) {
-      if (p[5] == 0)
+      if (p[5] == 0) {
         begun = true;
+        firstZeroRequestMs = 0;
+      }
       return true;
     }
     if (MilestoneV5::readVideoU32(p + 6) != received) {
@@ -175,11 +203,14 @@ public:
   }
 
 private:
+  static constexpr uint32_t kZeroStartReplyTimeoutMs = 15000;
+  static constexpr uint32_t kZeroLinkTimeoutMs = 15000;
   String base;
   File file;
   uint8_t index = 0;
-  uint32_t id = 0, started = 0, lastReply = 0;
-  bool begun = false, hashActive = false;
+  uint32_t id = 0, started = 0, stageStarted = 0, lastReply = 0,
+           firstZeroRequestMs = 0;
+  bool begun = false, hashActive = false, latestSelector = false;
   MilestoneV5::SignedBundleManifest bundle{};
   MilestoneV5::SignedImageManifest main{}, zero{};
   mbedtls_sha256_context sha;
@@ -259,6 +290,19 @@ private:
     return a.read(text, n) == n && b.read(sig, sn) == sn &&
            MilestoneV5::verifyImageSignature(text, n, sig, sn);
   }
+  static bool newerThanRunning(const MilestoneV5::SignedBundleManifest &value) {
+    unsigned major = 0, minor = 0, patch = 0;
+    int used = 0;
+    if (sscanf(MilestoneV5::FIRMWARE_VERSION, "%u.%u.%u%n", &major, &minor,
+               &patch, &used) != 3 ||
+        used != int(strlen(MilestoneV5::FIRMWARE_VERSION)))
+      return true;
+    if (value.major != major)
+      return value.major > major;
+    if (value.minor != minor)
+      return value.minor > minor;
+    return value.patch > patch;
+  }
   void finishFile() {
     uint8_t digest[32];
     if (mbedtls_sha256_finish(&sha, digest)) {
@@ -272,9 +316,23 @@ private:
     uint8_t text[255];
     size_t n = 0;
     bool valid = true;
-    if (index == 1)
+    if (index == 1) {
       valid = pair(directory + "/bundle", text, n) &&
               MilestoneV5::decodeBundleManifest(text, n, bundle);
+      if (valid) {
+        checkedVersion = String(bundle.major) + "." + String(bundle.minor) +
+                         "." + String(bundle.patch);
+        if (latestSelector && !newerThanRunning(bundle)) {
+          active = false;
+          ready = false;
+          upToDate = true;
+          error = "";
+          cleanupDirectory();
+          directory = "";
+          return;
+        }
+      }
+    }
     if (index == 3 || index == 5) {
       auto &image = index == 3 ? main : zero;
       bool isZero = index == 5;
@@ -310,6 +368,9 @@ private:
     if (++id == 0)
       ++id;
     begun = false;
+    stageStarted = millis();
+    firstZeroRequestMs = 0;
+    lastReply = 0;
     received = total = 0;
   }
 };

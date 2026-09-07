@@ -146,12 +146,14 @@ private:
     const uint8_t head[2] = {uint8_t(0x80U | opcode), uint8_t(size)};
     return writeAll(head, sizeof(head)) && (!size || writeAll(data, size));
   }
-  void sendStatus() {
-    uint8_t data[14] = {'M', 'S', 'A', '1'};
+  void sendStatus(uint8_t controlSequence = 0, bool accepted = true) {
+    uint8_t data[16] = {'M', 'S', 'A', '1'};
     put32(data + 4, millis());
     put32(data + 8, sync->positionMs(millis()));
     data[12] = uint8_t(sync->state);
     data[13] = sync->browserEventSequence;
+    data[14] = controlSequence;
+    data[15] = accepted ? 1 : 0;
     if (!sendFrame(2, data, sizeof(data)))
       client.stop();
   }
@@ -178,11 +180,14 @@ private:
       uint8_t *payload = input + 6;
       for (size_t i = 0; i < length; ++i)
         payload[i] ^= input[2 + (i & 3U)];
-      if (opcode == 2 && length == 9 && !memcmp(payload, "MSC1", 4)) {
+      if (opcode == 2 && (length == 9 || length == 10) &&
+          !memcmp(payload, "MSC1", 4)) {
         const uint32_t position = read32(payload + 4);
-        sync->control(position, payload[8] != 0, millis());
+        const uint8_t sequence = length == 10 ? payload[9] : 0;
+        const bool accepted =
+            sync->control(position, payload[8] != 0, millis());
         activity = true;
-        sendStatus();
+        sendStatus(sequence, accepted);
       } else if (opcode == 9) {
         sendFrame(10, payload, length);
       } else if (opcode == 8) {
