@@ -271,9 +271,9 @@ public:
                  ddayText ? u8g2_font_unifont_t_korean2
                           : u8g2_font_logisoso20_tf,
                  colors[3], ox);
-        centered(h, clock, 72,
-                 seconds ? u8g2_font_6x10_tf : u8g2_font_logisoso20_tf,
-                 colors[0], ox);
+        // Keep the dashboard proportions identical with seconds on or off.
+        // The former no-seconds Logisoso font made only this state oversized.
+        centered(h, clock, 72, u8g2_font_6x10_tf, colors[0], ox);
         centered(h, String(date) + " " + weekday(h), 96,
                  u8g2_font_unifont_t_korean2, colors[1], ox);
       } else {
@@ -314,22 +314,27 @@ public:
         infoLine(h, 47, "APP", bytes(ESP.getSketchSize()));
         infoLine(h, 65, "OTA FREE", bytes(ESP.getFreeSketchSpace()));
         infoLine(h, 83, "SD", h.sdMounted ? "MOUNTED" : "MISSING");
-        infoLine(h, 101, "SD TOTAL",
-                 h.sdMounted ? bytes64(SD.totalBytes()) : "-");
-        infoLine(h, 119, "SD FREE",
-                 h.sdMounted ? bytes64(SD.totalBytes() - SD.usedBytes()) : "-");
+        // Never perform filesystem capacity walks while painting a frame.
+        // A slow or marginal card must not stall buttons, SPI heartbeat or UI.
+        infoLine(h, 101, "SD WRITE", h.sdMounted ? "READY" : "-");
+        infoLine(h, 119, "MEDIA", h.sdMounted ? "/media" : "-");
       } else if (infoPage == 4) {
         infoHeader(h, "NETWORK", 5);
-        const bool connected = WiFi.status() == WL_CONNECTED;
-        infoLine(h, 29, "STATE", connected ? "CONNECTED" : "OFFLINE");
-        String ssid = connected ? WiFi.SSID() : String("-");
-        if (ssid.length() > 18)
-          ssid = ssid.substring(0, 18);
-        infoLine(h, 47, "SSID", ssid);
-        infoLine(h, 65, "RSSI", connected ? String(WiFi.RSSI()) + " dBm" : "-");
-        infoLine(h, 83, "IP", connected ? WiFi.localIP().toString() : "-");
-        infoLine(h, 101, "GW", connected ? WiFi.gatewayIP().toString() : "-");
-        infoLine(h, 119, "MAC", WiFi.macAddress());
+        // The display path must not wait on the Wi-Fi driver lock. MAIN owns
+        // only short radio leases; cached link/status flags are sufficient.
+        const char *mainRadio = h.radioIndicator == 3 ? "SETUP AP"
+                                : h.radioIndicator == 1 ? "BUSY"
+                                : h.radioIndicator == 2 ? "ZERO ONLINE"
+                                                       : "IDLE";
+        infoLine(h, 29, "MAIN", mainRadio);
+        infoLine(h, 47, "ZERO", zeroOnline ? "ONLINE" : "OFFLINE");
+        infoLine(h, 65, "ZERO WIFI",
+                 zeroOnline && zero && (zero->stateFlags & 8) ? "ON" : "OFF");
+        infoLine(h, 83, "ZERO BLE",
+                 zeroOnline && zero && (zero->stateFlags & 4) ? "ON" : "WAIT");
+        infoLine(h, 101, "PROTOCOL",
+                 protocolVersion ? String("SPI v") + protocolVersion : "-");
+        infoLine(h, 119, "SETUP", "MODE MENU");
       } else if (infoPage == 5) {
         infoHeader(h, "TIME / RTC", 6);
         infoLine(h, 29, "CLOCK", h.rtcValid ? "VALID" : "NOT SET");

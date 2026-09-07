@@ -924,7 +924,7 @@ private:
   uint32_t lastActivity = 0, openedMs = 0;
   bool wifiScanRunning = false;
   bool mediaUploadRejected = false;
-  bool syncUploadRejected = false;
+  bool syncUploadRejected = false, syncUploadFinalize = false;
   uint32_t resetRequestedMs = 0;
   void touch() { lastActivity = millis(); }
   static String escape(String value) {
@@ -1209,7 +1209,7 @@ private:
                         ",\"item_count\":" + String(media.catalog.count) +
                         ",\"max_items\":" + String(V5LegacyMedia::kMaxItems) +
                         ",\"media_used_bytes\":" + String(media.usedBytes()) +
-                        ",\"media_limit_bytes\":8388608,\"psram\":true}");
+                        ",\"media_limit_bytes\":268435456,\"psram\":true}");
     });
     server.on("/api/media/list", HTTP_GET, [this] {
       String body = "{\"items\":[";
@@ -1331,23 +1331,41 @@ private:
     server.on(
         "/api/sync/upload", HTTP_POST,
         [this] {
-          const bool accepted = !syncUploadRejected && sync.finishUpload();
+          const bool finalize = syncUploadFinalize;
+          const bool accepted = !syncUploadRejected &&
+                                (!finalize || sync.finishUpload());
           syncUploadRejected = false;
+          syncUploadFinalize = false;
           if (!accepted) {
-            sendJson(400, "{\"error\":\"" + jsonEscape(sync.error) + "\"}");
+            const String message = sync.error.isEmpty()
+                                       ? String("동기화 업로드 요청이 거부되었습니다")
+                                       : sync.error;
+            sendJson(409, "{\"error\":\"" + jsonEscape(message) + "\"}");
             return;
           }
-          sendJson(202, "{\"ok\":true,\"state\":\"indexing\"}");
+          if (finalize)
+            sendJson(202, "{\"ok\":true,\"state\":\"indexing\"}");
+          else
+            sendSyncStatus();
         },
         [this] {
           HTTPUpload &part = server.upload();
           if (part.status == UPLOAD_FILE_START) {
-            uint32_t expected = 0;
-            syncUploadRejected = !localRequest() ||
-                                 profile != MilestoneV5::Profile::kMedia ||
-                                 bundleBusy || downloadBusy || wifiPending ||
-                                 !unsignedInteger(server.arg("size"), expected) ||
-                                 !sync.beginUpload(expected);
+            uint32_t expected = 0, offset = 0;
+            syncUploadFinalize = server.arg("final") == "1";
+            const bool permitted = localRequest() &&
+                                   profile == MilestoneV5::Profile::kMedia &&
+                                   !bundleBusy && !downloadBusy && !wifiPending;
+            bool validPosition = false;
+            if (permitted &&
+                unsignedInteger(server.arg("total"), expected) &&
+                unsignedInteger(server.arg("offset"), offset))
+              validPosition =
+                  (offset == 0 && sync.beginUpload(expected)) ||
+                  (offset != 0 &&
+                   sync.state == V5SyncMedia::State::Uploading &&
+                   sync.expectedBytes == expected && sync.writtenBytes == offset);
+            syncUploadRejected = !permitted || !validPosition;
             touch();
           } else if (part.status == UPLOAD_FILE_WRITE) {
             if (!syncUploadRejected &&

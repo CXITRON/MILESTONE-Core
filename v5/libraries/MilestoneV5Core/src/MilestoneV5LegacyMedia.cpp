@@ -1,2 +1,4 @@
 #define MILESTONE_BUILD_PROFILE 2
+#define MILESTONE_MEDIA_MAX_FILE_BYTES (4U * 1024U * 1024U)
+#define MILESTONE_MEDIA_MAX_FRAMES 4096U
 #include "../../../../CoreMedia.cpp"

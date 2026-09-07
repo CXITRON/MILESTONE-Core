@@ -24,7 +24,6 @@ public:
   };
 
   static constexpr uint32_t kMaximumBytes = 0x7FFFFFFFUL;
-  static constexpr uint64_t kFreeReserve = 64ULL * 1024ULL * 1024ULL;
   static constexpr uint32_t kControlStaleMs = 2500;
 
   void begin(bool mounted) {
@@ -40,10 +39,10 @@ public:
     if (!available || expected < 16 || expected > kMaximumBytes) {
       return fail("동기화 영상 크기가 올바르지 않습니다");
     }
-    const uint64_t total = SD.totalBytes(), used = SD.usedBytes();
-    if (!total || used > total || uint64_t(expected) + kFreeReserve > total - used) {
-      return fail("SD 여유 공간이 부족합니다");
-    }
+    // Do not walk the FAT allocation table before an upload. On a slow or
+    // marginal card a full FAT free-space walk can hold the MAIN loop long
+    // enough for the browser and companion link to time out. Bounded writes
+    // below remain the source of truth and fail safely if the card fills.
     upload = SD.open(kUploadPath, FILE_WRITE);
     if (!upload)
       return fail("동기화 임시 파일을 만들 수 없습니다");
@@ -233,8 +232,10 @@ public:
 
   void abortUpload() {
     upload.close();
-    if (state == State::Uploading)
+    if (state == State::Uploading) {
       SD.remove(kUploadPath);
+      fail("동기화 업로드가 중단되었습니다");
+    }
   }
 
   bool ready() const {

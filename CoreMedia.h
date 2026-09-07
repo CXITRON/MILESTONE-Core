@@ -13,8 +13,14 @@ constexpr size_t COLOR_FRAME_BYTES = static_cast<size_t>(WIDTH) * HEIGHT;
 constexpr size_t HEADER_BYTES = 24;
 constexpr size_t FRAME_HEADER_BYTES = 5;
 constexpr size_t MAX_ENCODED_FRAME_BYTES = FRAME_BYTES + 32U;
-constexpr size_t MAX_FILE_BYTES = 160U * 1024U;
-constexpr uint16_t MAX_FRAMES = 1024;
+#ifndef MILESTONE_MEDIA_MAX_FILE_BYTES
+#define MILESTONE_MEDIA_MAX_FILE_BYTES (160U * 1024U)
+#endif
+#ifndef MILESTONE_MEDIA_MAX_FRAMES
+#define MILESTONE_MEDIA_MAX_FRAMES 1024U
+#endif
+constexpr size_t MAX_FILE_BYTES = MILESTONE_MEDIA_MAX_FILE_BYTES;
+constexpr uint16_t MAX_FRAMES = MILESTONE_MEDIA_MAX_FRAMES;
 constexpr uint8_t LIVE_JPEG_ENCODING = 2;
 constexpr size_t LIVE_WS_PUSH_HEADER_BYTES = 16;
 constexpr uint8_t LIVE_WS_VERSION = 1;

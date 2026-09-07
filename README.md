@@ -1,10 +1,10 @@
 # MILESTONE Core — MILESTONE D1
 
-현재 제품 펌웨어는 **v5.1.3**입니다. GOOUUU ESP32-S3 N16R8 MAIN과
+현재 제품 펌웨어는 **v5.1.4**입니다. GOOUUU ESP32-S3 N16R8 MAIN과
 Waveshare ESP32-S3-Zero ZERO를 함께 사용하며, 기존 v3.3.4의 CORE·MEDIA·NOW
 인터페이스를 듀얼 보드 구조 안에서 실행합니다.
 
-- 최신 릴리스: [MILESTONE Core v5.1.3](https://github.com/CXITRON/MILESTONE-Core/releases/tag/v5.1.3)
+- 최신 릴리스: [MILESTONE Core v5.1.4](https://github.com/CXITRON/MILESTONE-Core/releases/tag/v5.1.4)
 - 설치·OTA·복구: [v5/README.md](v5/README.md)
 - 구현·검증 범위: [v5/IMPLEMENTATION_STATUS.md](v5/IMPLEMENTATION_STATUS.md)
 - v3.3.4 설치·사용법·변경 이력: [docs/LEGACY_V3.md](docs/LEGACY_V3.md)
@@ -43,8 +43,9 @@ TFT에 표시되는 8자리 임의 암호 또는 사용자가 저장한 고정/�
 - 영상: `/media/video/*.mvj`, 128×128 컬러 JPEG 프레임 기반 MVJ1,
   1~30fps, 오디오 없음
 - 포털 미디어: 브라우저에서 변환한 v3 호환 MSM1을 microSD에 원자적으로 저장
+- 포털 미디어 한도: v5 항목당 4 MiB·최대 4,096프레임
 - 동기화 MEDIA: 브라우저에서 전체 영상을 MVJ1으로 변환·임시 업로드한 뒤,
-  브라우저 원본 오디오 시간을 기준으로 SD 영상 재생
+  브라우저 원본 오디오 시간을 기준으로 SD 영상 재생(최대 256 MiB)
 - 기본 출력은 컬러이며 MEDIA 설정에서만 흑백 표시를 선택할 수 있음
 - 재생 중에는 영상 프레임을 전송하지 않으며 제어 신호만 교환함
 
@@ -86,6 +87,19 @@ milestone-release local X.Y.Z "release note"
 
 모든 버튼은 `INPUT_PULLUP` active-low이며 두 보드는 GND를 공통으로 연결합니다.
 TFT와 microSD는 MAIN의 MOSI/SCK를 공유하고 각각 별도의 CS를 사용합니다.
+
+## v5.1.4 업데이트 안내
+
+v5.1.4는 동기화 MEDIA 진입과 기기 정보 화면 정지를 수정한 안정화
+릴리스입니다.
+
+- CORE/NOW에서 동기화 MEDIA 열기를 누르면 MEDIA 전환 완료 후 전용 페이지로 이동
+- 동기화 영상을 64 KiB 단위로 재시도 가능하게 업로드해 대용량 요청 실패 방지
+- v5 포털 MEDIA 한도를 항목당 4 MiB·4,096프레임으로 확장
+- 저장된 Wi-Fi 삭제를 8초 안에 같은 버튼을 두 번 누르는 확인 방식으로 변경
+- 기기 정보 렌더링 중 microSD 용량 탐색과 Wi-Fi 드라이버 직접 조회를 제거해 전체 루프 정지 방지
+- 네트워크 정보 페이지는 MAIN/ZERO가 이미 보유한 상태값만 사용하도록 변경
+- 디데이·문구·시간·날짜 대시보드의 시간 크기를 초 표시 ON/OFF 모두 동일하게 유지
 
 ## v5.1.3 업데이트 안내
 

@@ -28,6 +28,11 @@ assert "input[0] & 0x70U" in socket
 assert 'memcmp(payload, "MSC1", 4)' in socket
 assert "never carry video data" in socket
 assert "BROWSER_LIMIT=256*1024*1024" in page
+assert "chunkSize=64*1024" in page
+assert "offset=${offset}&final=${final}" in page
+assert 'server.arg("total")' in portal
+assert 'server.arg("offset")' in portal
+assert "SD.usedBytes()" not in runtime
 assert "new WebSocket" in page
 assert "audio.currentTime" not in page  # timeline is read from the selected video element
 assert "video.currentTime*1000" in page

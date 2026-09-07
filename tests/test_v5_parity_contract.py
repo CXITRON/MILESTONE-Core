@@ -76,5 +76,18 @@ assert "coreViews.view != 6" in main
 assert "glyphs.drawHLine(0, y, 128);" in hardware
 assert "canvas.drawHLine(0, y, 128);" in core_views
 assert 'centered(h, "시간 미확정", 66' in core_views
+assert 'onclick="openSyncMedia()"' in page
+assert "async function openSyncMedia()" in page
+assert "s.profile!=='media'" in page
+assert "function armWifiDelete(ssid,button)" in page
+assert "다시 눌러 삭제" in page
+assert "confirm(`저장된 Wi-Fi" not in page
+assert "MEDIA_MAX_FRAMES=4096" in page
+assert "MEDIA_FILE_LIMIT=4*1024*1024" in page
+assert '"media_limit_bytes\\\":268435456' in portal
+assert "SD.totalBytes()" not in core_views
+assert "SD.usedBytes()" not in core_views
+assert "WiFi.status()" not in core_views
+assert "centered(h, clock, 72, u8g2_font_6x10_tf" in core_views
 
 print("v5 legacy parity source contract passed")

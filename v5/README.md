@@ -1,4 +1,4 @@
-# MILESTONE v5.1.3
+# MILESTONE v5.1.4
 
 This is the release source for the dual-ESP v5 hardware. It remains separate
 from the legacy v3.3.4 firmware and uses its own signed MAIN/ZERO/SAFE release
@@ -6,8 +6,8 @@ catalog. Initial installation requires the merged USB images; subsequent
 updates use the signed companion bundle.
 
 The current public release is
-[v5.1.3](https://github.com/CXITRON/MILESTONE-Core/releases/tag/v5.1.3).
-Its 13 signed assets passed the release re-download contract. The v5.1.3 MAIN
+[v5.1.4](https://github.com/CXITRON/MILESTONE-Core/releases/tag/v5.1.4).
+Its 13 signed assets passed the release re-download contract. The v5.1.4 MAIN
 and ZERO application images were written and hash-verified on the assembled
 boards, booted successfully, and negotiated companion protocol v1. End-to-end
 browser/audio/video synchronization remains a user acceptance check.
@@ -88,7 +88,8 @@ The restored portal also accepts the legacy browser-generated MSM1 photo/GIF/
 video container. Those items are stored on microSD as `/media/XXXXXXXX.msm`
 with CRC-checked A/B catalogs and take precedence when enabled. MVJ1 remains the
 direct-copy video format under `/media/video/`; original MP4 files are not
-stored or decoded on the device.
+stored or decoded on the device. The v5 portal limit is 4 MiB and 4,096 frames
+per persistent MSM1 item; longer videos use staged sync media.
 
 ### Staged browser-audio sync media
 
@@ -100,9 +101,9 @@ frames from microSD according to the browser audio position. Playback traffic
 contains only bounded control/status packets over a one-client WebSocket; video
 frames are never carried during playback.
 
-The converted browser blob is limited to 256 MiB to avoid exhausting phone
-memory, and MAIN also reserves 64 MiB of free SD capacity. Lower FPS or JPEG
-quality when that browser limit is reached. Keep the browser in the foreground:
+The converted browser blob is limited to 256 MiB and uploaded in retryable
+64 KiB requests. Lower FPS or JPEG quality when that browser limit is reached.
+Keep the browser in the foreground:
 screen lock, background suspension, AP loss, or 2.5 seconds without control
 updates pauses device video. BACK, MODE, the portal close button, thermal stop,
 or reboot removes the temporary video/index. This path is intentionally
@@ -120,6 +121,7 @@ kept in CRC-protected A/B records. New credentials are committed only after a
 bounded connection test remains usable for two seconds, then replicated to the
 other board. SSIDs are visible in the portal; passwords and enterprise identity
 fields are never returned to the browser.
+Saved-network deletion requires two presses of the same button within eight seconds.
 
 The development artwork downloader uses the existing unencrypted HTTP worker
 endpoint. Track title, artist and album are transmitted to that service only
@@ -158,7 +160,7 @@ nor publishes a release, and refuses to overwrite an existing output directory:
 
 ```bash
 python3 tools/prepare-v5-sd-restore.py firmware.bin new-restore-directory \
-  --target ZERO --version 5.1.3 \
+  --target ZERO --version 5.1.4 \
   --private-key /path/to/private.pem --public-key /path/to/public.pem
 ```
 
@@ -183,7 +185,7 @@ Prepare an offline bundle from verified board binaries with the same helper:
 
 ```bash
 python3 tools/prepare-v5-sd-restore.py main.bin new-bundle-directory \
-  --bundle --zero-source zero.bin --version 5.1.3 \
+  --bundle --zero-source zero.bin --version 5.1.4 \
   --private-key /path/to/private.pem --public-key /path/to/public.pem
 ```
 
@@ -224,7 +226,7 @@ release build uses the existing release backend:
 ```bash
 MILESTONE_V5_PRIVATE_KEY=/secure/private.pem \
 MILESTONE_V5_PUBLIC_KEY=/secure/public.pem \
-./tools/make-release.sh 5.1.3 "MILESTONE v5.1.3"
+./tools/make-release.sh 5.1.4 "MILESTONE v5.1.4"
 ```
 
 This creates and verifies 13 assets: board applications, signed manifests and
