@@ -2,7 +2,7 @@
 
 기준: 2026-09-07.
 계획한 v5 소프트웨어 경로는 모두 소스에 연결됐다. 현재 소스 기준은 v5.1.0이며,
-아래의 호스트·컴파일 검증과 v5.0.1 기본 배선
+아래의 호스트·컴파일 검증과 v5.1.0 기본 배선
 실기 검증은 장시간 무선·전원 차단·업데이트 내구 시험을 대신하지 않는다.
 
 ## 반영 완료 범위
@@ -44,23 +44,25 @@
 - `V5_SANITIZE=1`의 ASan/UBSan 조건도 통과. 환경 제약 때문에
   LeakSanitizer만 비활성화했다.
 - Arduino-ESP32 3.3.11 제품 설정으로 MAIN, ZERO, SAFE를 제품 공개키와 함께
-  빌드했다. v5.0.1 Release 앱 자산은 각각 1,719,488 / 1,345,344 /
-  594,064바이트이며 지정 파티션 한도 안이다.
+  빌드했다. v5.1.0 Release 앱 자산은 각각 1,745,632 / 1,345,344 /
+  594,080바이트이며 지정 파티션 한도 안이다.
 - 로컬 제품키로 MAIN/ZERO/SAFE 앱, MAIN/ZERO 초기 USB 이미지, 서명
   manifest/bundle/catalog 13개 자산을 생성하고 모든 SHA-256·서명·offset
   계약을 재검증했다.
-- `milestone-release local 5.0.1`이 커밋·태그·`origin/main`을 같은 커밋으로
+- `milestone-release local 5.1.0`이 커밋·태그·`origin/main`을 같은 커밋으로
   맞추고 GitHub Release 게시와 13개 자산 재다운로드 검증을 완료했다.
 
-## v5.0.1 배포 및 장치 확인
+## v5.1.0 배포 및 장치 확인
 
-- 공개 릴리스: <https://github.com/CXITRON/MILESTONE-Core/releases/tag/v5.0.1>
+- 공개 릴리스: <https://github.com/CXITRON/MILESTONE-Core/releases/tag/v5.1.0>
 - MAIN 제품 슬롯 `0x210000`과 ZERO 앱 슬롯 `0x10000`에 유선 업로드했으며,
   기존 NVS를 지우지 않고 esptool의 기록 직후 해시 검증을 통과했다.
 - MAIN이 32KiB loopTask stack으로 setup과 main loop에 진입했고 기존
   LoadProhibited/TLSF assert/반복 재부팅은 재발하지 않았다.
 - MAIN과 ZERO가 protocol v1/capability `0x0000001F`를 협상했고 ZERO에서
-  연속 유효 링크 프레임을 확인했다.
+  v5.1.0 식별 문자열, BLE/AMS 광고와 연속 유효 링크 프레임을 확인했다.
+- 단계형 동기 MEDIA의 실제 휴대폰 전체 변환·업로드·오디오 동기 재생은
+  아래의 사용자 실기 검증 범위에 남긴다.
 - 복구된 TFT 배치의 픽셀 단위 육안 확인과 실제 설정 AP 탐색·저장 반복 시험은
   아래의 장기 실기 검증 범위에 남긴다.
 

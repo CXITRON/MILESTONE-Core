@@ -7,11 +7,10 @@ updates use the signed companion bundle.
 
 The current public release is
 [v5.1.0](https://github.com/CXITRON/MILESTONE-Core/releases/tag/v5.1.0).
-Its 13 signed assets passed the release re-download contract, and the MAIN and
-ZERO application images were written and hash-verified on the assembled boards.
-The assembled boards previously booted v5.0.1 and negotiated companion
-protocol v1 after upload. The v5.1.0 staged sync-media path is software-tested;
-browser/device playback remains part of the release hardware check.
+Its 13 signed assets passed the release re-download contract. The v5.1.0 MAIN
+and ZERO application images were written and hash-verified on the assembled
+boards, booted successfully, and negotiated companion protocol v1. End-to-end
+browser/audio/video synchronization remains a user acceptance check.
 
 ## Contents
 
