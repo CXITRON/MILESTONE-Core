@@ -844,6 +844,10 @@ public:
   void close() {
     if (!active)
       return;
+    if (wifiScanRunning) {
+      WiFi.scanDelete();
+      wifiScanRunning = false;
+    }
     server.stop();
     dns.stop();
     WiFi.softAPdisconnect(true);

@@ -34,6 +34,11 @@ for forbidden in ('server.on("/stream"', 'server.on("/api/stream/'):
     assert forbidden not in portal, f"streaming route returned: {forbidden}"
 
 assert "ABCDEFGHJKLMNPQRSTUVWXYZ23456789" in portal
+close_start = portal.index("  void close()")
+close_end = portal.index("  void service()", close_start)
+close_body = portal[close_start:close_end]
+assert "WiFi.scanDelete()" in close_body
+assert "wifiScanRunning = false" in close_body
 assert "WIFI_AUTH_WPA2_ENTERPRISE" in portal
 assert "WIFI_AUTH_WPA3_ENTERPRISE" in portal
 assert "enterprise_ca_required" in portal

@@ -1,8 +1,8 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v5.0.0
+> Current baseline: MILESTONE Core v5.0.1
 > Legacy baseline: MILESTONE Core v3.3.4
-> V5 firmware baseline: 5.0.0 — dual-board MAIN/ZERO plus independent SAFE
+> V5 firmware baseline: 5.0.1 — dual-board MAIN/ZERO plus independent SAFE
 > Hardware: GOOUUU ESP32-S3 N16R8 MAIN + Waveshare ESP32-S3-Zero companion + ST7735-compatible 128×160 SPI TFT + five tactile switches
 > Repository: `CXITRON/MILESTONE-Core`
 
