@@ -1,4 +1,4 @@
-# MILESTONE v5.1.4
+# MILESTONE v5.1.5
 
 This is the release source for the dual-ESP v5 hardware. It remains separate
 from the legacy v3.3.4 firmware and uses its own signed MAIN/ZERO/SAFE release
@@ -6,8 +6,8 @@ catalog. Initial installation requires the merged USB images; subsequent
 updates use the signed companion bundle.
 
 The current public release is
-[v5.1.4](https://github.com/CXITRON/MILESTONE-Core/releases/tag/v5.1.4).
-Its 13 signed assets passed the release re-download contract. The v5.1.4 MAIN
+[v5.1.5](https://github.com/CXITRON/MILESTONE-Core/releases/tag/v5.1.5).
+Its 13 signed assets passed the release re-download contract. The v5.1.5 MAIN
 and ZERO application images were written and hash-verified on the assembled
 boards, booted successfully, and negotiated companion protocol v1. End-to-end
 browser/audio/video synchronization remains a user acceptance check.
@@ -160,7 +160,7 @@ nor publishes a release, and refuses to overwrite an existing output directory:
 
 ```bash
 python3 tools/prepare-v5-sd-restore.py firmware.bin new-restore-directory \
-  --target ZERO --version 5.1.4 \
+  --target ZERO --version 5.1.5 \
   --private-key /path/to/private.pem --public-key /path/to/public.pem
 ```
 
@@ -185,7 +185,7 @@ Prepare an offline bundle from verified board binaries with the same helper:
 
 ```bash
 python3 tools/prepare-v5-sd-restore.py main.bin new-bundle-directory \
-  --bundle --zero-source zero.bin --version 5.1.4 \
+  --bundle --zero-source zero.bin --version 5.1.5 \
   --private-key /path/to/private.pem --public-key /path/to/public.pem
 ```
 
@@ -226,7 +226,7 @@ release build uses the existing release backend:
 ```bash
 MILESTONE_V5_PRIVATE_KEY=/secure/private.pem \
 MILESTONE_V5_PUBLIC_KEY=/secure/public.pem \
-./tools/make-release.sh 5.1.4 "MILESTONE v5.1.4"
+./tools/make-release.sh 5.1.5 "MILESTONE v5.1.5"
 ```
 
 This creates and verifies 13 assets: board applications, signed manifests and

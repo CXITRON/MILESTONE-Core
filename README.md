@@ -1,10 +1,10 @@
 # MILESTONE Core — MILESTONE D1
 
-현재 제품 펌웨어는 **v5.1.4**입니다. GOOUUU ESP32-S3 N16R8 MAIN과
+현재 제품 펌웨어는 **v5.1.5**입니다. GOOUUU ESP32-S3 N16R8 MAIN과
 Waveshare ESP32-S3-Zero ZERO를 함께 사용하며, 기존 v3.3.4의 CORE·MEDIA·NOW
 인터페이스를 듀얼 보드 구조 안에서 실행합니다.
 
-- 최신 릴리스: [MILESTONE Core v5.1.4](https://github.com/CXITRON/MILESTONE-Core/releases/tag/v5.1.4)
+- 최신 릴리스: [MILESTONE Core v5.1.5](https://github.com/CXITRON/MILESTONE-Core/releases/tag/v5.1.5)
 - 설치·OTA·복구: [v5/README.md](v5/README.md)
 - 구현·검증 범위: [v5/IMPLEMENTATION_STATUS.md](v5/IMPLEMENTATION_STATUS.md)
 - v3.3.4 설치·사용법·변경 이력: [docs/LEGACY_V3.md](docs/LEGACY_V3.md)
@@ -87,6 +87,14 @@ milestone-release local X.Y.Z "release note"
 
 모든 버튼은 `INPUT_PULLUP` active-low이며 두 보드는 GND를 공통으로 연결합니다.
 TFT와 microSD는 MAIN의 MOSI/SCK를 공유하고 각각 별도의 CS를 사용합니다.
+
+## v5.1.5 업데이트 안내
+
+v5.1.5는 MEDIA 안내 화면과 동기화 영상 출력을 수정한 패치 릴리스입니다.
+
+- MEDIA 재생 종료 안내를 화면 폭 안에 맞추고 PREV/NEXT를 좌우 선택 영역 중앙에 배치
+- 동기화 재생 프레임을 일반 UI 부분 갱신 큐에 맡기지 않고 128×128 본문에 즉시 전송
+- 재생 중 다음 프레임이 먼저 덮여 영상이 멈춘 것처럼 보이고 일시정지 때만 표시되던 문제 수정
 
 ## v5.1.4 업데이트 안내
 

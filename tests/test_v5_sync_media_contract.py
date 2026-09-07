@@ -37,6 +37,8 @@ assert "new WebSocket" in page
 assert "audio.currentTime" not in page  # timeline is read from the selected video element
 assert "video.currentTime*1000" in page
 assert "portal.sync.servicePlayback" in main
+assert "display.flushRegion(16, 128);" in runtime
+assert "void flushRegion(int y, int height)" in (root / "v5/MilestoneV5Main/V5Tft.h").read_text()
 assert "if (mode || back)" in main and "portal.close();" in main
 
 print("v5 staged sync-media source contract passed")

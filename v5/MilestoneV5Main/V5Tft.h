@@ -95,6 +95,25 @@ public:
     endWrite();
   }
 
+  // Video changes nearly every body tile at once. The incremental UI flusher
+  // cannot finish one frame before the next replaces it, so present a decoded
+  // video frame as one bounded SPI transaction and synchronize the shadow copy.
+  void flushRegion(int y, int height) {
+    if (!frame_ || sleeping_ || y < 0 || height <= 0 || y + height > 160)
+      return;
+    flushing_ = true;
+    startWrite();
+    setWindow(0, y, 127, y + height - 1);
+    const size_t first = size_t(y) * 128U;
+    const size_t count = size_t(height) * 128U;
+    for (size_t i = 0; i < count; ++i) {
+      writeColor(frame_[first + i], 1);
+      front_[first + i] = frame_[first + i];
+    }
+    endWrite();
+    flushing_ = false;
+  }
+
   // Paint a legacy 128x128 U8g2 page buffer into the v5 body.  Keeping the
   // original page-oriented renderer preserves the established typography and
   // layout while the native TFT framebuffer owns the new status bands.

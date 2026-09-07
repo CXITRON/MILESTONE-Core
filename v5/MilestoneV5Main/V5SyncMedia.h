@@ -204,6 +204,7 @@ public:
         rgb[i] = ((y & 248) << 8) | ((y & 252) << 3) | (y >> 3);
       }
     display.rgb565(rgb, 16, 128);
+    display.flushRegion(16, 128);
     displayedFrame = target;
     return true;
   }

@@ -89,5 +89,8 @@ assert "SD.totalBytes()" not in core_views
 assert "SD.usedBytes()" not in core_views
 assert "WiFi.status()" not in core_views
 assert "centered(h, clock, 72, u8g2_font_6x10_tf" in core_views
+assert 'legacyAutoText("BACK: 재생 종료", 70);' in main
+assert 'legacyText("PREV", 104' in main
+assert 'legacyText("NEXT", 104' in main
 
 print("v5 legacy parity source contract passed")

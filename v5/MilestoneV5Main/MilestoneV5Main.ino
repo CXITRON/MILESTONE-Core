@@ -253,9 +253,9 @@ void renderBody() {
       if (!portal.media.displayEnabled) {
         hardware.legacyClear();
         hardware.legacyText("MEDIA", 34, u8g2_font_logisoso20_tf, 0xF81F);
-        hardware.legacyAutoText("BACK으로 재생 종료", 70);
-        hardware.legacyText("PREV/NEXT로 다시 선택", 104,
-                            u8g2_font_5x8_tf, 0xBDF7);
+        hardware.legacyAutoText("BACK: 재생 종료", 70);
+        hardware.legacyText("PREV", 104, u8g2_font_5x8_tf, 0xBDF7, 22);
+        hardware.legacyText("NEXT", 104, u8g2_font_5x8_tf, 0xBDF7, 86);
       }
     } else if (!photoVisible && !video.playing) {
       hardware.legacyClear();
