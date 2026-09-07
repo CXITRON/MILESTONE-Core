@@ -52,6 +52,7 @@ public:
   int8_t contrast = 8;
   bool environmentLogging = false;
   bool wifiPending = false, wifiReplicate = false;
+  uint8_t wifiTestState = 0; // 0 idle, 1 testing, 2 success, 3 failed
   bool timeSyncRequested = false, timeSyncSuccess = false;
   bool profilePending = false, closeRequested = false;
   MilestoneV5::Profile requestedProfile = MilestoneV5::Profile::kCore;
@@ -386,8 +387,13 @@ public:
       server.send_P(200, "text/html; charset=utf-8", MILESTONE_PORTAL_HTML);
     });
     server.on("/sync", HTTP_GET, [this] {
-      if (!localRequest() || profile != MilestoneV5::Profile::kMedia)
-        return server.send(403, "text/plain", "권한이 없습니다");
+      if (!localRequest())
+        return server.send(403, "text/plain; charset=utf-8",
+                           "권한이 없습니다");
+      if (profile != MilestoneV5::Profile::kMedia) {
+        server.sendHeader("Location", "/");
+        return server.send(303);
+      }
       touch();
       server.sendHeader("Cache-Control", "no-store");
       server.send_P(200, "text/html; charset=utf-8", MILESTONE_V5_SYNC_PAGE);
@@ -732,6 +738,7 @@ public:
       }
       wifi = next;
       wifiPending = true;
+      wifiTestState = 1;
       wifiResult = "ZERO 연결 시험 대기 (실패하면 기존 설정 유지)";
       server.sendHeader("Location", "/");
       server.send(303);
@@ -1029,10 +1036,11 @@ private:
               String(timeSyncRequested ? "true" : "false") +
               ",\"time_sync_success\":" +
               String(timeSyncSuccess ? "true" : "false");
-      body += ",\"wifi_test\":\"" +
-              String(wifiPending ? "testing"
-                                 : wifiResult.indexOf("완료") >= 0 ? "success"
-                                                                    : "idle") +
+      const char *wifiState = wifiTestState == 1   ? "testing"
+                              : wifiTestState == 2 ? "success"
+                              : wifiTestState == 3 ? "failed"
+                                                   : "idle";
+      body += ",\"wifi_test\":\"" + String(wifiState) +
               "\",\"wifi_error\":\"" + jsonEscape(wifiResult) + "\"";
       body += ",\"bluetooth_enabled\":true,\"bluetooth_active\":" +
               String(zeroOnline ? "true" : "false") +
@@ -1225,7 +1233,8 @@ private:
         "/api/media/upload", HTTP_POST,
         [this] {
           if (!localRequest())
-            return server.send(403, "text/plain", "권한이 없습니다");
+            return server.send(403, "text/plain; charset=utf-8",
+                               "권한이 없습니다");
           V5LegacyMedia::Entry entry;
           const bool saved = !mediaUploadRejected && media.finishUpload(entry);
           mediaUploadRejected = false;
@@ -1769,12 +1778,13 @@ private:
     }
     wifi = next;
     wifiPending = true;
+    wifiTestState = 1;
     wifiResult = "연결 시험 중";
     sendJson(202, "{\"ok\":true,\"state\":\"testing\"}");
   }
   bool authorize() {
     if (!localRequest()) {
-      server.send(403, "text/plain", "권한이 없습니다");
+      server.send(403, "text/plain; charset=utf-8", "권한이 없습니다");
       return false;
     }
     touch();

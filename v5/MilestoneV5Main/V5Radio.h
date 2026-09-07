@@ -49,6 +49,7 @@ public:
                   now - testConnected >= 2000 && store.save(portal.wifi);
         portal.wifiPending = false;
         portal.wifiReplicate = ok;
+        portal.wifiTestState = ok ? 2 : 3;
         portal.wifiResult = ok ? "MAIN 연결 저장 완료. ZERO 복귀 후 동기화"
                                : "MAIN 연결 시험 실패. 기존 네트워크 유지";
         portal.note(9, ok ? 0 : 1);

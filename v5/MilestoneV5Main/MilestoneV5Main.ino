@@ -147,7 +147,6 @@ void renderPortalScreen() {
   hardware.legacyClear();
   hardware.legacyText("MILESTONE SETUP", 10, u8g2_font_6x10_tf, 0x36DF,
                       0);
-  hardware.legacyText("AP", 10, u8g2_font_6x10_tf, 0x36DF, 116);
   hardware.legacyRule(14, 0x36DF);
   hardware.legacyText("Wi-Fi:", 33, u8g2_font_6x10_tf, 0xBE3A, 2);
   hardware.legacyText("MILESTONE-D1-SETUP", 46, u8g2_font_5x8_tf, 0xFFFF,
@@ -852,6 +851,7 @@ void exchangeHeartbeat(uint32_t now) {
           MilestoneV5::WifiStore store;
           bool saved = decoded.payload[1] == 0 && store.save(portal.wifi);
           portal.wifiPending = portal.wifiReplicate = false;
+          portal.wifiTestState = saved ? 2 : 3;
           portal.wifi = {};
           portal.wifiResult =
               saved ? "연결 시험 및 두 보드 저장 완료"
@@ -1110,10 +1110,12 @@ void loop() {
         : radio.busy                                                      ? 1
         : (zeroStatus.stateFlags & 8) && lastValidLinkMs                 ? 2
                                                                          : 0;
-    hardware.statusBands(profileName(profiles.active()),
-                         zeroTemperatureKnown && now - lastZeroStatusMs <=
-                                                     MilestoneV5::kLinkStaleMs,
-                         zeroStatus.temperatureCenti);
+    if (now - bootStartedMs >= 3000)
+      hardware.statusBands(
+          profileName(profiles.active()),
+          zeroTemperatureKnown && lastValidLinkMs &&
+              now - lastValidLinkMs <= MilestoneV5::kLinkStaleMs,
+          zeroStatus.temperatureCenti);
     uint16_t minute = hardware.rtc.hour * 60 + hardware.rtc.minute;
     const auto &s = portal.system;
     bool night = hardware.rtcValid &&

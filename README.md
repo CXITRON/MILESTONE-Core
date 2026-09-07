@@ -1,10 +1,10 @@
 # MILESTONE Core — MILESTONE D1
 
-현재 제품 펌웨어는 **v5.1.0**입니다. GOOUUU ESP32-S3 N16R8 MAIN과
+현재 제품 펌웨어는 **v5.1.1**입니다. GOOUUU ESP32-S3 N16R8 MAIN과
 Waveshare ESP32-S3-Zero ZERO를 함께 사용하며, 기존 v3.3.4의 CORE·MEDIA·NOW
 인터페이스를 듀얼 보드 구조 안에서 실행합니다.
 
-- 최신 릴리스: [MILESTONE Core v5.1.0](https://github.com/CXITRON/MILESTONE-Core/releases/tag/v5.1.0)
+- 최신 릴리스: [MILESTONE Core v5.1.1](https://github.com/CXITRON/MILESTONE-Core/releases/tag/v5.1.1)
 - 설치·OTA·복구: [v5/README.md](v5/README.md)
 - 구현·검증 범위: [v5/IMPLEMENTATION_STATUS.md](v5/IMPLEMENTATION_STATUS.md)
 - v3.3.4 설치·사용법·변경 이력: [docs/LEGACY_V3.md](docs/LEGACY_V3.md)
@@ -86,6 +86,19 @@ milestone-release local X.Y.Z "release note"
 
 모든 버튼은 `INPUT_PULLUP` active-low이며 두 보드는 GND를 공통으로 연결합니다.
 TFT와 microSD는 MAIN의 MOSI/SCK를 공유하고 각각 별도의 CS를 사용합니다.
+
+## v5.1.1 업데이트 안내
+
+v5.1.1은 설정 AP와 Wi-Fi 저장 과정에서 확인된 표시·상태 복구 오류를 우선
+수정한 긴급 안정화 릴리스입니다.
+
+- Wi-Fi 시험 실패를 `idle`로 숨기지 않고 성공·실패 상태를 명확히 반환
+- 저장 성공 직후 포털의 저장 네트워크 목록을 다시 불러오도록 수정
+- ZERO가 Wi-Fi를 시험하는 동안에도 마지막 정상 온도를 링크 유효 시간 기준으로 유지
+- 이전 동기 MEDIA 주소가 남은 브라우저를 설정 첫 화면으로 안전하게 복귀
+- 한글 오류 응답에 UTF-8 charset을 명시해 깨진 문자 표시 방지
+- 부팅 splash 위에 상태바를 번갈아 그리던 3초간의 깜빡임 제거
+- 설정 본문과 상단 상태바에 중복 표시되던 AP 표식 제거
 
 ## v5.1.0 업데이트 안내
 
