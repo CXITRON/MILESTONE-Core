@@ -315,7 +315,7 @@ void loop() {
     V5DownloadWorker::cancel.store(true);
     if (V5ArtworkWorker::state.load() != 1 &&
         V5DownloadWorker::state.load() != 1) {
-      esp_sntp_stop();
+      V5Network::stopTime();
       if (WiFi.getMode() != WIFI_OFF)
         WiFi.mode(WIFI_OFF);
       V5Network::connecting = V5Network::syncing = false;

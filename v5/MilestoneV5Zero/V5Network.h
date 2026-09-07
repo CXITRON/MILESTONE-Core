@@ -10,6 +10,7 @@ MilestoneV5::WifiCredentials credentials;
 MilestoneV5::WifiStore store;
 MilestoneV5::SystemSettings settings;
 bool configured = false, connecting = false, syncing = false, started = false;
+bool sntpStarted = false;
 bool reconnectRequested = false;
 uint32_t attemptMs = 0, retryMs = 0, syncMs = 0;
 uint32_t lastTimeSyncMs = 0;
@@ -19,10 +20,19 @@ uint32_t testAt = 0, connectedAt = 0;
 MilestoneV5::WifiCredentials candidate;
 std::atomic<bool> timeReceived{false};
 void synchronized(struct timeval *) { timeReceived.store(true); }
+void stopTime() {
+  if (!sntpStarted)
+    return;
+  esp_sntp_stop();
+  sntpStarted = false;
+  syncing = false;
+}
 void startTime(uint32_t now) {
+  stopTime();
   timeReceived.store(false);
   esp_sntp_set_time_sync_notification_cb(synchronized);
   configTime(0, 0, "time.cloudflare.com", "time.google.com", "pool.ntp.org");
+  sntpStarted = true;
   syncMs = now;
   syncing = true;
 }
@@ -66,7 +76,7 @@ void service(uint32_t now, bool bleBusy, bool forceTime = false) {
         }
         return;
       }
-      esp_sntp_stop();
+      stopTime();
       WiFi.disconnect(false, false);
       WiFi.mode(WIFI_STA);
       connecting = syncing = false;
@@ -97,12 +107,7 @@ void service(uint32_t now, bool bleBusy, bool forceTime = false) {
         WiFi.disconnect(false, false);
         retryMs = now + 1000;
       } else {
-        timeReceived.store(false);
-        esp_sntp_set_time_sync_notification_cb(synchronized);
-        configTime(0, 0, "time.cloudflare.com", "time.google.com",
-                   "pool.ntp.org");
-        syncMs = now;
-        syncing = true;
+        startTime(now);
       }
     }
     return;
@@ -114,7 +119,7 @@ void service(uint32_t now, bool bleBusy, bool forceTime = false) {
     connecting = false;
     syncing = false;
     reconnectRequested = false;
-    esp_sntp_stop();
+    stopTime();
   }
   if (connecting) {
     if (WiFi.status() == WL_CONNECTED) {
@@ -137,8 +142,7 @@ void service(uint32_t now, bool bleBusy, bool forceTime = false) {
   if (syncing && (timeReceived.load() || now - syncMs >= 21000)) {
     if (timeReceived.load())
       lastTimeSyncMs = now;
-    esp_sntp_stop();
-    syncing = false;
+    stopTime();
   }
   if (!connecting && !syncing && WiFi.status() == WL_CONNECTED &&
       ((forceTime && time(nullptr) < 1704067200) ||

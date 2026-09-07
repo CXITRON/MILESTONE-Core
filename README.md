@@ -1,10 +1,10 @@
 # MILESTONE Core — MILESTONE D1
 
-현재 제품 펌웨어는 **v5.1.1**입니다. GOOUUU ESP32-S3 N16R8 MAIN과
+현재 제품 펌웨어는 **v5.1.2**입니다. GOOUUU ESP32-S3 N16R8 MAIN과
 Waveshare ESP32-S3-Zero ZERO를 함께 사용하며, 기존 v3.3.4의 CORE·MEDIA·NOW
 인터페이스를 듀얼 보드 구조 안에서 실행합니다.
 
-- 최신 릴리스: [MILESTONE Core v5.1.1](https://github.com/CXITRON/MILESTONE-Core/releases/tag/v5.1.1)
+- 최신 릴리스: [MILESTONE Core v5.1.2](https://github.com/CXITRON/MILESTONE-Core/releases/tag/v5.1.2)
 - 설치·OTA·복구: [v5/README.md](v5/README.md)
 - 구현·검증 범위: [v5/IMPLEMENTATION_STATUS.md](v5/IMPLEMENTATION_STATUS.md)
 - v3.3.4 설치·사용법·변경 이력: [docs/LEGACY_V3.md](docs/LEGACY_V3.md)
@@ -86,6 +86,15 @@ milestone-release local X.Y.Z "release note"
 
 모든 버튼은 `INPUT_PULLUP` active-low이며 두 보드는 GND를 공통으로 연결합니다.
 TFT와 microSD는 MAIN의 MOSI/SCK를 공유하고 각각 별도의 CS를 사용합니다.
+
+## v5.1.2 업데이트 안내
+
+v5.1.2는 저장된 Wi-Fi가 있는 상태에서 ZERO가 반복 재부팅되던 초기화 순서
+오류를 수정한 긴급 복구 릴리스입니다.
+
+- MAIN이 부팅할 때마다 저장된 Wi-Fi를 새 후보처럼 ZERO에 재시험하던 동작 제거
+- ZERO와 MAIN 모두 SNTP가 실제 시작된 경우에만 종료하도록 네트워크 수명주기 보호
+- ZERO의 `Invalid mbox` assert와 그에 따른 온도·BLE·Wi-Fi 기능 상실 방지
 
 ## v5.1.1 업데이트 안내
 

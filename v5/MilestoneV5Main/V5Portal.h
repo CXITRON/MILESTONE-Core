@@ -80,10 +80,11 @@ public:
     diagnostics.begin();
     note(1);
     systemPending = system.loaded;
-    {
-      MilestoneV5::WifiStore store;
-      wifiReplicate = store.load(wifi);
-    }
+    // Successful provisioning is already persisted on both boards. Replaying
+    // stored credentials as a fresh test on every MAIN boot can reach ZERO
+    // before its network stack exists and needlessly interrupts Bluetooth.
+    wifiReplicate = false;
+    wifi = {};
     core = &views;
     const char *headers[] = {"X-CSRF-Token", "X-Artwork-Key"};
     server.collectHeaders(headers, 2);

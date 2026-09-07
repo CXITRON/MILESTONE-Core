@@ -156,6 +156,7 @@ public:
       esp_sntp_set_time_sync_notification_cb(V5MainTime::synchronized);
       configTime(0, 0, "time.cloudflare.com", "time.google.com",
                  "pool.ntp.org");
+      sntpStarted = true;
       syncStarted = now;
       if (artJob) {
         uint8_t bytes[476];
@@ -183,7 +184,7 @@ public:
           portal.timeSyncSuccess = true;
         }
       }
-      esp_sntp_stop();
+      stopNtp();
     }
     if (downloadJob) {
       downloadReady = time(nullptr) >= 1704067200;
@@ -243,9 +244,15 @@ private:
            syncStarted = 0, lastTimeSync = 0, testConnected = 0;
   uint8_t phase = 0, networkIndex = 0;
   bool restorePortal = false, artJob = false, cancelled = false,
-       downloadJob = false;
-  void finish(uint32_t now, V5Portal &portal, bool safety) {
+       downloadJob = false, sntpStarted = false;
+  void stopNtp() {
+    if (!sntpStarted)
+      return;
     esp_sntp_stop();
+    sntpStarted = false;
+  }
+  void finish(uint32_t now, V5Portal &portal, bool safety) {
+    stopNtp();
     WiFi.disconnect(false, false);
     WiFi.mode(WIFI_OFF);
     busy = false;

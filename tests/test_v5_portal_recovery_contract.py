@@ -4,6 +4,8 @@ root = pathlib.Path(__file__).resolve().parents[1]
 main = (root / "v5/MilestoneV5Main/MilestoneV5Main.ino").read_text()
 portal = (root / "v5/MilestoneV5Main/V5Portal.h").read_text()
 radio = (root / "v5/MilestoneV5Main/V5Radio.h").read_text()
+zero_network = (root / "v5/MilestoneV5Zero/V5Network.h").read_text()
+zero = (root / "v5/MilestoneV5Zero/MilestoneV5Zero.ino").read_text()
 page = (root / "PortalPage.h").read_text()
 
 # A stale MEDIA URL must return to the setup root instead of trapping the
@@ -26,5 +28,15 @@ assert "wifiPolling=false;await load();" in page
 # ordinary status packets, and never overlay status bands on the boot splash.
 assert "now - lastValidLinkMs <= MilestoneV5::kLinkStaleMs" in main
 assert "if (now - bootStartedMs >= 3000)" in main
+
+# Stored credentials must not be replayed as a provisioning test on every
+# boot. SNTP teardown is legal only after that board has started SNTP/lwIP.
+assert "wifiReplicate = store.load(wifi)" not in portal
+assert "bool sntpStarted = false" in zero_network
+assert "void stopTime()" in zero_network
+assert zero_network.count("esp_sntp_stop();") == 1
+assert "V5Network::stopTime();" in zero
+assert "void stopNtp()" in radio
+assert radio.count("esp_sntp_stop();") == 1
 
 print("v5 AP/Wi-Fi recovery source contract passed")
