@@ -336,10 +336,16 @@ void loop() {
     return;
   }
   if (result != ESP_OK) {
+    // The queued DMA transaction is no longer usable after a non-timeout
+    // error. Release the software state so the next loop can queue again.
+    transactionQueued = false;
+    gpio_set_level(
+        static_cast<gpio_num_t>(MilestoneV5::ZeroPins::kLinkReady), 0);
     if (Serial.availableForWrite() >= 64) {
       Serial.printf("ZERO SPI transaction failed: %s\n",
                     esp_err_to_name(result));
     }
+    delay(1);
     return;
   }
   transactionQueued = false;

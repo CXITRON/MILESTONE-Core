@@ -38,5 +38,12 @@ assert "MILESTONE_PORTAL_HTML" in portal
 assert "location.href='/artwork'" in page
 assert "MilestoneV5LegacyMedia" in media
 assert "kCapabilityInternetHttp" in zero
+assert "SET_LOOP_TASK_STACK_SIZE(32 * 1024);" in main
+assert "kEnableZeroLink" not in main
+assert "linkSpi.begin(" in main
+assert "exchangeHeartbeat(now);" in main
+assert "result == ESP_ERR_TIMEOUT" in zero
+assert "transactionQueued = false;" in zero
+assert "ZeroPins::kLinkReady), 0" in zero
 
 print("v5 legacy parity source contract passed")

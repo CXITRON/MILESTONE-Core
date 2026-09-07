@@ -5,6 +5,8 @@ release/
 *.bin
 *.elf
 *.map
+*.ino.bak.*
+*.ino.spi-test-backup
 
 # Editor and operating-system files
 .vscode/

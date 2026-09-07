@@ -22,6 +22,10 @@
 #include <MilestoneV5Transport.h>
 #include <MilestoneV5Version.h>
 
+// V5 media/catalog code can use more than Arduino's default 8 KiB loopTask stack.
+// 32 KiB prevents Catalog stack frames from corrupting adjacent heap metadata.
+SET_LOOP_TASK_STACK_SIZE(32 * 1024);
+
 extern "C" bool verifyRollbackLater() { return true; }
 
 namespace {
@@ -760,6 +764,9 @@ void exchangeHeartbeat(uint32_t now) {
         Serial.printf("ZERO protocol negotiated: v%u capabilities=%08lX\n",
                       negotiatedProtocolVersion,
                       static_cast<unsigned long>(hello.capabilities));
+        Serial0.printf("ZERO protocol negotiated: v%u capabilities=%08lX\n",
+                       negotiatedProtocolVersion,
+                       static_cast<unsigned long>(hello.capabilities));
       }
     } else if (decoded.fields.type == MilestoneV5::MessageType::kOtaControl) {
       valid = zeroUpdate.response(decoded.payload, decoded.payloadLength);
@@ -881,14 +888,24 @@ void exchangeHeartbeat(uint32_t now) {
 } // namespace
 
 void setup() {
+  Serial0.begin(115200);
+  Serial0.println("[BOOT-UART] setup entered");
   Serial.begin(115200);
   Serial.setTxTimeoutMs(0);
+  Serial0.println("[BOOT] setup entered");
+  Serial0.println("[BOOT] hardware.begin START");
   hardware.begin();
+  Serial0.println("[BOOT] hardware.begin DONE");
   bootStartedMs = millis();
   renderBootSplash();
   hardware.display.flush();
+  Serial0.println("[BOOT] display flush DONE");
+  Serial0.println("[BOOT] coreViews.begin START");
   coreViews.begin();
+  Serial0.println("[BOOT] coreViews.begin DONE");
+  Serial0.println("[BOOT] portal.begin START");
   portal.begin(hardware, coreViews, artwork, nowMetadata, lastValidLinkMs);
+  Serial0.println("[BOOT] portal.begin DONE");
   portal.note(6, hardware.sdMounted ? 1 : 0);
   if (!coreViews.configured) {
     uint8_t legacy[MilestoneV5::kLegacySnapshotBytes];
@@ -903,7 +920,9 @@ void setup() {
     if (!store.load(v))
       importNetwork = 7;
   }
+  Serial0.println("[BOOT] bundleUpdate.beginBoot START");
   bundleUpdate.beginBoot(hardware, sdUpdate, zeroUpdate);
+  Serial0.println("[BOOT] bundleUpdate.beginBoot DONE");
   profiles = MilestoneV5::ProfileController(
       static_cast<MilestoneV5::Profile>(hardware.savedProfile));
   if (profiles.active() == MilestoneV5::Profile::kMedia)
@@ -920,12 +939,16 @@ void setup() {
   if (!digitalRead(MilestoneV5::MainPins::kButtonBack) &&
       !digitalRead(MilestoneV5::MainPins::kButtonMode))
     MilestoneV5::bootSafetyApplication();
+  Serial0.println("[BOOT] MAIN-ZERO SPI init");
   linkSpi.begin(
       MilestoneV5::MainPins::kLinkSck, MilestoneV5::MainPins::kLinkMiso,
       MilestoneV5::MainPins::kLinkMosi, MilestoneV5::MainPins::kLinkCs);
+  Serial0.println("[BOOT] MAIN-ZERO SPI ready");
   mainBootId = esp_random();
   Serial.println("MILESTONE_V5_MAIN_RUNTIME");
   Serial.println(MilestoneV5::FIRMWARE_VERSION);
+  Serial0.println("MILESTONE_V5_MAIN_RUNTIME");
+  Serial0.println(MilestoneV5::FIRMWARE_VERSION);
 }
 
 void loop() {
