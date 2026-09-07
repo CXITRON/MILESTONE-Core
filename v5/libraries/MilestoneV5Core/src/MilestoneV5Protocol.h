@@ -105,6 +105,21 @@ struct StatusPayload {
   uint32_t freePsram;
 };
 
+// Additive status bits preserve the fixed wire payload and remain safe for
+// older peers that ignore unknown flags.
+enum StatusFlags : uint16_t {
+  kStatusRequestValid = 1U << 0,
+  kStatusPsramFound = 1U << 1,
+  kStatusBleConnected = 1U << 2,
+  kStatusWifiConnected = 1U << 3,
+  kStatusArtworkBusy = 1U << 4,
+  kStatusThermalStop = 1U << 5,
+  kStatusOtaActive = 1U << 6,
+  kStatusBleAdvertising = 1U << 7,
+  kStatusBleReady = 1U << 8,
+  kStatusBleError = 1U << 9,
+};
+
 constexpr size_t kStatusPayloadSize = 12;
 bool encodeStatusPayload(const StatusPayload &status, uint8_t *output,
                          size_t capacity);

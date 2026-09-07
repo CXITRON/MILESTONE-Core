@@ -82,7 +82,7 @@ document.querySelector('#search').onclick=()=>{cursor=0;items.replaceChildren();
         "/artwork/upload", HTTP_POST,
         [this] {
           server->send(uploadOk ? 200 : 400, "text/plain",
-                       uploadOk ? "Saved" : uploadError);
+                       uploadOk ? "저장 완료" : uploadError);
         },
         [this] { upload(); });
   }
@@ -98,7 +98,7 @@ private:
   std::function<String()> token;
   File directory, uploadFile;
   uint32_t cursor = 0, uploadBytes = 0;
-  String uploadKey, uploadError = "No upload";
+  String uploadKey, uploadError = "업로드 없음";
   bool uploadOk = false, uploadActive = false;
   static String base(const String &key) {
     return String("/now/art-cache/") + key;
@@ -135,7 +135,7 @@ private:
       cursor = 0;
     }
     if (position != cursor) {
-      server->send(409, "text/plain", "Search again to restart listing");
+      server->send(409, "text/plain", "목록을 처음부터 다시 검색하세요");
       return;
     }
     String query = server->arg("q");
@@ -254,7 +254,7 @@ private:
       uploadOk = false;
       uploadActive = false;
       uploadBytes = 0;
-      uploadError = "Invalid upload";
+      uploadError = "올바르지 않은 업로드입니다";
       uploadKey = server->header("X-Artwork-Key");
       if (server->header("X-CSRF-Token") != token() || token().isEmpty() ||
           !V5Artwork::validKey(uploadKey))

@@ -116,10 +116,17 @@ void renderNowWaitingScreen() {
   hardware.legacyClear();
   hardware.legacyText("MILESTONE NOW", 18, u8g2_font_7x14B_tf);
   hardware.legacyRule(25);
-  if (!nowMetadata.connected) {
+  if (zeroStatus.stateFlags & MilestoneV5::kStatusBleError) {
+    hardware.legacyText("BLUETOOTH ERROR", 48, u8g2_font_6x10_tf, 0xF800);
+    hardware.legacyText("Retrying...", 78, u8g2_font_6x10_tf);
+  } else if (!nowMetadata.connected &&
+             (zeroStatus.stateFlags & MilestoneV5::kStatusBleAdvertising)) {
     hardware.legacyText("BLE ADVERTISING", 49, u8g2_font_6x10_tf);
     hardware.legacyText("Unlock iPhone", 70, u8g2_font_6x10_tf);
     hardware.legacyText("and play music", 86, u8g2_font_6x10_tf);
+  } else if (!nowMetadata.connected) {
+    hardware.legacyText("BLUETOOTH STARTING", 54, u8g2_font_6x10_tf);
+    hardware.legacyText("Preparing...", 78, u8g2_font_6x10_tf);
   } else {
     hardware.legacyText("AMS CONNECTING", 54, u8g2_font_6x10_tf);
     hardware.legacyText("Preparing AMS", 78, u8g2_font_6x10_tf);

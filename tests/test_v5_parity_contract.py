@@ -42,6 +42,9 @@ assert "location.href='/artwork'" in page
 assert "MilestoneV5LegacyMedia" in media
 assert "kCapabilityInternetHttp" in zero
 assert "kCapabilityCompanionOta" in zero
+assert "kStatusBleAdvertising" in zero
+assert "kStatusBleReady" in zero
+assert "kStatusBleError" in zero
 assert "static constexpr uint8_t kInfoPageCount = 9" in core_views
 for heading in ('"TIME / RTC"', '"ENVIRONMENT"', '"MAIN / ZERO"',
                 '"FIRMWARE / SAFE"'):
@@ -54,6 +57,8 @@ assert "SET_LOOP_TASK_STACK_SIZE(32 * 1024);" in main
 assert "kEnableZeroLink" not in main
 assert "linkSpi.begin(" in main
 assert "exchangeHeartbeat(now);" in main
+assert '"BLUETOOTH ERROR"' in main
+assert '"BLUETOOTH STARTING"' in main
 assert "txLeaseId = wireLeaseSequence" in main
 assert "decoded.fields.leaseId != txLeaseId" in main
 assert "taskFrame ? decoded.fields.leaseId != 0" in zero

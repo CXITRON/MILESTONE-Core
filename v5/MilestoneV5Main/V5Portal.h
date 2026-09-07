@@ -168,7 +168,7 @@ public:
           token +
           "'><label>Wi-Fi 이름 <input name='ssid' maxlength='32' "
           "required></label><label>보안 <select name='security'><option "
-          "value='0'>Personal / Open</option><option value='1'>Enterprise "
+          "value='0'>개인용 / 개방형</option><option value='1'>Enterprise "
           "PEAP</option></select></label><label>암호 <input name='password' "
           "type='password' maxlength='63'></label><label>PEAP 사용자 이름 "
           "<input name='username' maxlength='64'></label><label>PEAP 외부 ID "
@@ -406,9 +406,9 @@ public:
     });
     server.on("/diagnostics", HTTP_GET, [this] {
       touch();
-      String text = "MILESTONE v5 diagnostics\nEvent: 1 boot, 2 boot accepted, "
-                    "3 ZERO online, 4 ZERO lost, 5 thermal, 6 SD, 7 bundle "
-                    "stage, 8 download, 9 Wi-Fi test\n";
+      String text = "MILESTONE v5 진단\n이벤트: 1 부팅, 2 부팅 승인, "
+                    "3 ZERO 연결, 4 ZERO 끊김, 5 온도, 6 SD, 7 묶음 "
+                    "단계, 8 다운로드, 9 Wi-Fi 시험\n";
       for (unsigned i = 0; i < diagnostics.count; ++i) {
         auto &e = diagnostics.events[(diagnostics.head + 15 - i) % 16];
         text += String(e.code) + "," + e.value + ",uptime_ms=" + e.uptime +
@@ -421,7 +421,7 @@ public:
       if (!authorize())
         return;
       server.send(diagnostics.clear() ? 200 : 500, "text/plain",
-                  "Diagnostics clear result");
+                  "진단 이력 삭제 결과");
     });
     server.on("/settings", HTTP_POST, [this] {
       if (!authorize())
@@ -429,12 +429,12 @@ public:
       int l, c;
       if (!integer(server.arg("luminance"), 50, 100, l) ||
           !integer(server.arg("contrast"), -20, 20, c)) {
-        server.send(400, "text/plain", "Invalid setting");
+        server.send(400, "text/plain", "설정값이 올바르지 않습니다");
         return;
       }
       Preferences prefs;
       if (!prefs.begin("milestone_v5", false)) {
-        server.send(500, "text/plain", "Storage unavailable");
+        server.send(500, "text/plain", "설정 저장소를 사용할 수 없습니다");
         return;
       }
       const uint16_t tone = uint16_t(l) | (uint16_t(c + 20) << 8);
@@ -444,7 +444,7 @@ public:
       ok = ok && prefs.putBool("env_log", logging) == 1;
       prefs.end();
       if (!ok) {
-        server.send(500, "text/plain", "Save failed");
+        server.send(500, "text/plain", "설정 저장에 실패했습니다");
         return;
       }
       luminance = l;
@@ -487,7 +487,7 @@ public:
                     ((rgb >> 3) & 0x001F);
       }
       if (!valid) {
-        server.send(400, "text/plain", "Invalid CORE settings");
+        server.send(400, "text/plain", "CORE 설정값이 올바르지 않습니다");
         return;
       }
       V5CoreViews previous = *core;
@@ -500,7 +500,7 @@ public:
       memcpy(core->colors, colors, sizeof(colors));
       if (!core->save()) {
         *core = previous;
-        server.send(500, "text/plain", "CORE save failed");
+        server.send(500, "text/plain", "CORE 설정 저장에 실패했습니다");
         return;
       }
       server.sendHeader("Location", "/");
@@ -525,7 +525,7 @@ public:
           mask |= 1U << i;
       }
       if (!valid || !mask) {
-        server.send(400, "text/plain", "Invalid display options/order");
+        server.send(400, "text/plain", "화면 옵션 또는 순서가 올바르지 않습니다");
         return;
       }
       V5CoreViews previous = *core;
@@ -545,7 +545,7 @@ public:
       memcpy(core->order, order, 7);
       if (!core->save()) {
         *core = previous;
-        server.send(500, "text/plain", "Save failed");
+        server.send(500, "text/plain", "화면 설정 저장에 실패했습니다");
         return;
       }
       server.sendHeader("Location", "/");
@@ -568,7 +568,7 @@ public:
                 fabsf(values[i]) <= limits[i];
       }
       if (!valid) {
-        server.send(400, "text/plain", "Invalid environment settings");
+        server.send(400, "text/plain", "환경 센서 설정값이 올바르지 않습니다");
         return;
       }
       bool on = server.arg("enabled") == "1",
@@ -583,7 +583,7 @@ public:
                    p.getString("env_config", "") == data;
       p.end();
       if (!saved) {
-        server.send(500, "text/plain", "Save failed");
+        server.send(500, "text/plain", "환경 센서 설정 저장에 실패했습니다");
         return;
       }
       memcpy(offsets, values, sizeof(offsets));
@@ -613,7 +613,7 @@ public:
       w[2] = 0;
       d[2] = 0;
       if (!valid || !validLimits(mask, w, d)) {
-        server.send(400, "text/plain", "Invalid environment limits");
+        server.send(400, "text/plain", "환경 센서 경고 기준이 올바르지 않습니다");
         return;
       }
       char data[128];
@@ -625,7 +625,7 @@ public:
                    p.getString("env_limits", "") == data;
       p.end();
       if (!saved) {
-        server.send(500, "text/plain", "Save failed");
+        server.send(500, "text/plain", "환경 센서 기준 저장에 실패했습니다");
         return;
       }
       hardware->environment.displayMask = mask & 3U;
@@ -646,7 +646,7 @@ public:
                 p.getUChar("media", 255) == value;
       p.end();
       if (!ok) {
-        server.send(500, "text/plain", "Save failed");
+        server.send(500, "text/plain", "MEDIA 설정 저장에 실패했습니다");
         return;
       }
       hardware->monochrome = value & 1;
@@ -660,11 +660,11 @@ public:
       if (!authorize())
         return;
       if (bundleBusy || bundleRequested || downloadBusy || downloadRequested) {
-        server.send(409, "text/plain", "Bundle operation already pending");
+        server.send(409, "text/plain", "업데이트 묶음 작업이 이미 진행 중입니다");
         return;
       }
       if (!hardware->sdMounted) {
-        server.send(409, "text/plain", "SD unavailable");
+        server.send(409, "text/plain", "SD 카드를 사용할 수 없습니다");
         return;
       }
       bundleRequested = true;
@@ -677,7 +677,7 @@ public:
       if (!authorize())
         return;
       if (bundleBusy || bundleRequested || downloadBusy || downloadRequested) {
-        server.send(409, "text/plain", "Update already pending");
+        server.send(409, "text/plain", "업데이트 작업이 이미 진행 중입니다");
         return;
       }
       downloadVersion = server.arg("version");
@@ -689,7 +689,7 @@ public:
       if (!authorize())
         return;
       if (wifiPending || downloadBusy || bundleBusy) {
-        server.send(409, "text/plain", "Network operation pending");
+        server.send(409, "text/plain", "네트워크 작업이 진행 중입니다");
         return;
       }
       MilestoneV5::WifiCredentials next;
@@ -700,7 +700,7 @@ public:
       if (ssid.length() > 32 || pass.length() > 63 || username.length() > 64 ||
           identity.length() > 64 ||
           !integer(server.arg("security"), 0, 1, security)) {
-        server.send(400, "text/plain", "Invalid Wi-Fi");
+        server.send(400, "text/plain", "Wi-Fi 설정값이 올바르지 않습니다");
         return;
       }
       ssid.toCharArray(next.ssid, sizeof(next.ssid));
@@ -711,7 +711,7 @@ public:
         identity.toCharArray(next.identity, sizeof(next.identity));
       }
       if (!MilestoneV5::validWifiCredentials(next)) {
-        server.send(400, "text/plain", "Invalid Wi-Fi");
+        server.send(400, "text/plain", "Wi-Fi 설정값이 올바르지 않습니다");
         return;
       }
       wifi = next;
@@ -749,7 +749,7 @@ public:
         valid = false;
       if (!valid) {
         server.send(400, "text/plain",
-                    "Invalid system settings / open AP confirmation required");
+                    "시스템 설정값이 올바르지 않거나 개방형 AP 확인이 필요합니다");
         return;
       }
       next.ledDay = v[0];
@@ -759,7 +759,7 @@ public:
       next.ntpSeconds = v[4];
       next.retrySeconds = v[5];
       if (!next.save()) {
-        server.send(500, "text/plain", "System save failed");
+        server.send(500, "text/plain", "시스템 설정 저장에 실패했습니다");
         return;
       }
       system = next;
@@ -1175,7 +1175,7 @@ private:
         "/api/media/upload", HTTP_POST,
         [this] {
           if (!localRequest())
-            return server.send(403, "text/plain", "Forbidden");
+            return server.send(403, "text/plain", "권한이 없습니다");
           V5LegacyMedia::Entry entry;
           const bool saved = !mediaUploadRejected && media.finishUpload(entry);
           mediaUploadRejected = false;
@@ -1664,7 +1664,7 @@ private:
   }
   bool authorize() {
     if (!localRequest()) {
-      server.send(403, "text/plain", "Forbidden");
+      server.send(403, "text/plain", "권한이 없습니다");
       return false;
     }
     touch();

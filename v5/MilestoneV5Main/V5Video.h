@@ -16,13 +16,13 @@ public:
     uint8_t header[16];
     if (!file || file.read(header, 16) != 16 ||
         !MilestoneV5::decodeVideoHeader(header, 16, info))
-      return fail("Invalid MVJ1 header");
+      return fail("MVJ1 헤더 오류");
     encoded = static_cast<uint8_t *>(heap_caps_malloc(
         MilestoneV5::kVideoMaxJpeg, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
     pixels = static_cast<uint8_t *>(
         heap_caps_malloc(128 * 128 * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
     if (!encoded || !pixels)
-      return fail("PSRAM unavailable");
+      return fail("PSRAM 사용 불가");
     frame = 0;
     next = millis();
     playing = true;
@@ -65,11 +65,11 @@ public:
     if (esp_jpeg_get_image_info(&cfg, &output) != ESP_OK ||
         output.width != 128 || output.height != 128 ||
         output.output_len != 32768)
-      return fail("Invalid JPEG dimensions");
+      return fail("JPEG 크기 오류");
     cfg.outbuf = pixels;
     cfg.outbuf_size = 32768;
     if (esp_jpeg_decode(&cfg, &output) != ESP_OK)
-      return fail("JPEG decode failed");
+      return fail("JPEG 해독 실패");
     uint16_t *rgb = reinterpret_cast<uint16_t *>(pixels);
     if (monochrome)
       for (unsigned i = 0; i < 128 * 128; ++i) {
@@ -91,26 +91,26 @@ private:
   bool prefetch() {
     if (frame == info.frames) {
       if (file.position() != file.size())
-        return fail("Trailing video bytes");
+        return fail("영상 끝 데이터 오류");
       if (!repeat) {
         stop();
         return false;
       }
       if (!file.seek(16))
-        return fail("Video seek failed");
+        return fail("영상 탐색 실패");
       frame = 0;
     }
     uint8_t record[8];
     if (file.read(record, 8) != 8)
-      return fail("Truncated frame header");
+      return fail("프레임 헤더 손상");
     const uint32_t length = MilestoneV5::readVideoU32(record);
     if (length < 4 || length > MilestoneV5::kVideoMaxJpeg ||
         length > file.size() - file.position())
-      return fail("Invalid frame size");
+      return fail("프레임 크기 오류");
     if (file.read(encoded, length) != length ||
         MilestoneV5::crc32(encoded, length) !=
             MilestoneV5::readVideoU32(record + 4))
-      return fail("Frame CRC mismatch");
+      return fail("프레임 CRC 불일치");
     prefetchedLength = length;
     prefetched = true;
     return true;

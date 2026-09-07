@@ -59,13 +59,13 @@ public:
     }
     if (journal.stage == J::Failed) {
       phase = Phase::Failed;
-      error = "Previous bundle incomplete";
+      error = "이전 업데이트 묶음이 완료되지 않음";
       return;
     }
     const esp_partition_t *running = esp_ota_get_running_partition();
     if (!running || running->address != journal.mainAddress ||
         journal.mainBytes > running->size) {
-      fail("MAIN rolled back; ZERO unchanged");
+      fail("MAIN 롤백됨; ZERO는 유지됨");
       return;
     }
     runningPartition = running;
@@ -91,7 +91,7 @@ public:
                   n, signature, sn) ||
         !MilestoneV5::decodeBundleManifest(text, n, bundle) ||
         !MilestoneV5::verifyImageSignature(text, n, signature, sn))
-      return fail("Bundle signature rejected");
+      return fail("업데이트 묶음 서명 검증 실패");
     sizes[0] = n;
     sizes[1] = sn;
     mbedtls_sha256(text, n, hashes[0], 0);
@@ -105,9 +105,9 @@ public:
       total += sizes[i];
     if (SD.totalBytes() <
         SD.usedBytes() + uint64_t(total) + 1024ULL * 1024 * 1024)
-      return fail("Insufficient SD reserve");
+      return fail("SD 여유 공간 부족");
     if (!SD.exists("/firmware/sets") && !SD.mkdir("/firmware/sets"))
-      return fail("Firmware set storage unavailable");
+      return fail("펌웨어 묶음 저장소 사용 불가");
     journal = {};
     journal.stage = J::MainPending;
     journal.hasZero = bundle.hasZero;
@@ -117,15 +117,15 @@ public:
       if (!SD.exists(setRoot()) && SD.mkdir(setRoot()))
         break;
       if (attempt == 3)
-        return fail("Cannot create unique firmware set");
+        return fail("고유 펌웨어 묶음을 만들 수 없음");
     }
     if (!SD.mkdir(setRoot() + "/main") ||
         (bundle.hasZero && !SD.mkdir(setRoot() + "/zero")))
-      return fail("Firmware set directory failed");
+      return fail("펌웨어 묶음 폴더 생성 실패");
     const esp_partition_t *destination =
         esp_ota_get_next_update_partition(nullptr);
     if (!destination || sizes[4] > destination->size)
-      return fail("MAIN exceeds inactive slot");
+      return fail("MAIN이 비활성 슬롯 크기를 초과함");
     journal.mainAddress = destination->address;
     journal.mainBytes = sizes[4];
     memcpy(journal.mainSha256, bundle.mainSha256, 32);
@@ -134,7 +134,7 @@ public:
     // then diagnosed as an incomplete MAIN transaction and can never start
     // ZERO or promote Stable silently.
     if (!saveJournal())
-      return fail("Bundle staging journal failed");
+      return fail("묶음 준비 기록 저장 실패");
     fileIndex = 0;
     fileOffset = 0;
     readback = false;
@@ -152,7 +152,7 @@ public:
       }
       mainUpdate->cancel();
       zeroUpdate->cancel();
-      fail("Bundle stopped by local safety");
+      fail("기기 안전 조건으로 묶음 작업 중단");
       return;
     }
     if (phase == Phase::Copying) {
@@ -194,7 +194,7 @@ public:
       if (journal.stage == J::MainPending) {
         journal.stage = J::MainVerified;
         if (!saveJournal()) {
-          fail("MAIN acceptance journal failed");
+          fail("MAIN 승인 기록 저장 실패");
           return;
         }
       }
@@ -211,7 +211,7 @@ public:
     }
     if (phase == Phase::NeedZero) {
       if (!hardware->sdMounted) {
-        error = "Insert SD to finish companion update";
+        error = "ZERO 업데이트 완료를 위해 SD를 삽입하세요";
         return;
       }
       if (!journal.hasZero) {
@@ -227,7 +227,7 @@ public:
       journal.zeroTransfer = zeroUpdate->id;
       if (!saveJournal()) {
         zeroUpdate->cancel();
-        fail("ZERO transfer journal failed");
+        fail("ZERO 전송 기록 저장 실패");
         return;
       }
       phase = Phase::UpdatingZero;
@@ -235,7 +235,7 @@ public:
     }
     if (phase == Phase::UpdatingZero) {
       if (zeroUpdate->state == V5ZeroUpdate::State::Failed) {
-        fail("ZERO not confirmed; MAIN retained");
+        fail("ZERO 확인 실패; MAIN은 유지됨");
         return;
       }
       if (zeroUpdate->state == V5ZeroUpdate::State::Done)
@@ -250,12 +250,12 @@ public:
         now - lastPromotionTry >= 60000) {
       lastPromotionTry = now;
       if (!hardware->sdMounted || !promoteIndex()) {
-        error = "Stable publication pending; current apps retained";
+        error = "안정본 등록 대기 중; 현재 앱 유지됨";
         return;
       }
       journal.stage = J::Complete;
       if (!saveJournal()) {
-        error = "Stable published; journal completion pending";
+        error = "안정본 등록 완료; 기록 마무리 대기 중";
         return;
       }
       phase = Phase::Complete;
@@ -318,7 +318,7 @@ private:
         MilestoneV5::kProtocolVersion < m.minimumPeerProtocol ||
         MilestoneV5::kProtocolVersion > m.maximumPeerProtocol ||
         !MilestoneV5::verifyImageSignature(text, n, sig, sn))
-      return fail("Bundle asset manifest rejected");
+      return fail("묶음 자산 매니페스트 검증 실패");
     if (m.major != bundle.major || m.minor != bundle.minor ||
         m.patch != bundle.patch)
       return fail(zero ? "Bundle ZERO version mismatch"
@@ -326,13 +326,13 @@ private:
     if (!zero) {
       const esp_partition_t *slot = esp_ota_get_next_update_partition(nullptr);
       if (!slot || m.bytes > slot->size)
-        return fail("MAIN exceeds inactive slot");
+        return fail("MAIN이 비활성 슬롯 크기를 초과함");
     }
     if (zero && m.bytes > 1966080)
-      return fail("ZERO exceeds fixed OTA slot");
+      return fail("ZERO가 고정 OTA 슬롯 크기를 초과함");
     File bin = SD.open(base + "/firmware.bin", FILE_READ);
     if (!bin || bin.size() != m.bytes)
-      return fail("Bundle asset size mismatch");
+      return fail("묶음 자산 크기 불일치");
     unsigned first = zero ? 5 : 2;
     sizes[first] = n;
     sizes[first + 1] = sn;
@@ -388,7 +388,7 @@ private:
   void copyStep() {
     if (fileIndex >= count) {
       if (!saveJournal()) {
-        fail("Bundle restart journal failed");
+        fail("묶음 재시작 기록 저장 실패");
         return;
       }
       String path = setRoot() + "/main";
@@ -403,7 +403,7 @@ private:
       input = SD.open(sourceRoot + leaf(fileIndex), FILE_READ);
       output = SD.open(setRoot() + leaf(fileIndex), FILE_WRITE);
       if (!input || !output || input.size() != sizes[fileIndex]) {
-        fail("Bundle copy open failed");
+        fail("묶음 복사 파일 열기 실패");
         return;
       }
       fileOffset = 0;
@@ -416,7 +416,7 @@ private:
       if (input.read(buffer, take) != take ||
           mbedtls_sha256_update(&sha, buffer, take) ||
           (!readback && output.write(buffer, take) != take)) {
-        fail("Bundle SD copy failed");
+        fail("묶음 SD 복사 실패");
         return;
       }
       fileOffset += take;
@@ -427,7 +427,7 @@ private:
     uint8_t hash[32];
     if (mbedtls_sha256_finish(&sha, hash) ||
         memcmp(hash, hashes[fileIndex], 32)) {
-      fail("Bundle SD SHA-256 mismatch");
+      fail("묶음 SD SHA-256 불일치");
       return;
     }
     if (!readback) {
@@ -436,7 +436,7 @@ private:
       input.close();
       input = SD.open(setRoot() + leaf(fileIndex), FILE_READ);
       if (!input || input.size() != sizes[fileIndex]) {
-        fail("Bundle readback failed");
+        fail("묶음 재확인 읽기 실패");
         return;
       }
       fileOffset = 0;
@@ -450,7 +450,7 @@ private:
   void beginHold(uint32_t now) {
     journal.stage = J::PromotePending;
     if (!saveJournal()) {
-      fail("Stable pending journal failed");
+      fail("안정본 대기 기록 저장 실패");
       return;
     }
     holdStarted = now;

@@ -140,8 +140,7 @@ void IRAM_ATTR slaveDone(spi_slave_transaction_t *) {
 
 void prepareStatus(uint32_t ackSequence, bool requestValid,
                    uint32_t leaseId) {
-  constexpr uint16_t kStatusRequestValid = 1U << 0;
-  constexpr uint16_t kStatusPsramFound = 1U << 1;
+  const char *bleStage = V5Ams::bluetoothNowPlayingStage();
   const int16_t reportedTemperature =
       isfinite(localTemperature) && localTemperature >= -40 &&
               localTemperature <= 125
@@ -149,12 +148,26 @@ void prepareStatus(uint32_t ackSequence, bool requestValid,
           : INT16_MIN;
   const MilestoneV5::StatusPayload status = {
       static_cast<uint16_t>(
-          (requestValid ? kStatusRequestValid : 0) |
-          (psramFound() ? kStatusPsramFound : 0) |
-          (V5Ams::bluetoothNowPlayingHasLiveConnection() ? 4 : 0) |
-          (WiFi.status() == WL_CONNECTED ? 8 : 0) |
-          (V5ArtworkWorker::state.load() == 1 ? 16 : 0) |
-          (thermalStop ? 32 : 0) | (otaReceiver.active() ? 64 : 0)),
+          (requestValid ? MilestoneV5::kStatusRequestValid : 0) |
+          (psramFound() ? MilestoneV5::kStatusPsramFound : 0) |
+          (V5Ams::bluetoothNowPlayingHasLiveConnection()
+               ? MilestoneV5::kStatusBleConnected
+               : 0) |
+          (WiFi.status() == WL_CONNECTED
+               ? MilestoneV5::kStatusWifiConnected
+               : 0) |
+          (V5ArtworkWorker::state.load() == 1
+               ? MilestoneV5::kStatusArtworkBusy
+               : 0) |
+          (thermalStop ? MilestoneV5::kStatusThermalStop : 0) |
+          (otaReceiver.active() ? MilestoneV5::kStatusOtaActive : 0) |
+          (!strcmp(bleStage, "advertising")
+               ? MilestoneV5::kStatusBleAdvertising
+               : 0) |
+          (V5Ams::bluetoothNowPlayingAmsReady()
+               ? MilestoneV5::kStatusBleReady
+               : 0) |
+          (!strcmp(bleStage, "error") ? MilestoneV5::kStatusBleError : 0)),
       reportedTemperature,
       ESP.getFreeHeap(),
       ESP.getFreePsram(),

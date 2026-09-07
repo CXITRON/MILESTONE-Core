@@ -38,13 +38,13 @@ public:
          signature = SD.open(base + "/manifest.sig", FILE_READ);
     if (!text || !signature || text.size() < 90 || text.size() > 255 ||
         !signature.size() || signature.size() > 512)
-      return fail("Missing ZERO manifest");
+      return fail("ZERO 매니페스트 없음");
     manifestLength = text.size();
     signatureLength = signature.size();
     if (text.read(metadata, manifestLength) != manifestLength ||
         signature.read(metadata + manifestLength, signatureLength) !=
             signatureLength)
-      return fail("ZERO manifest read failed");
+      return fail("ZERO 매니페스트 읽기 실패");
     text.close();
     signature.close();
     MilestoneV5::SignedImageManifest manifest{};
@@ -55,18 +55,18 @@ public:
         !MilestoneV5::verifyImageSignature(metadata, manifestLength,
                                            metadata + manifestLength,
                                            signatureLength))
-      return fail("ZERO signature rejected");
+      return fail("ZERO 서명 검증 실패");
     if (requiredSha && memcmp(requiredSha, manifest.sha256, 32))
-      return fail("Bundle ZERO hash mismatch");
+      return fail("묶음 ZERO 해시 불일치");
     memcpy(expected, manifest.sha256, 32);
     size = manifest.bytes;
     file = SD.open(base + "/firmware.bin", FILE_READ);
     if (!file || file.size() != size)
-      return fail("ZERO file size mismatch");
+      return fail("ZERO 파일 크기 불일치");
     mbedtls_sha256_init(&sha);
     shaActive = true;
     if (mbedtls_sha256_starts(&sha, 0))
-      return fail("ZERO hash init failed");
+      return fail("ZERO 해시 초기화 실패");
     id = esp_random();
     if (!id)
       id = 1;
@@ -76,7 +76,7 @@ public:
   }
   void cancel() {
     if (busy())
-      fail("ZERO restore cancelled");
+      fail("ZERO 복구 취소됨");
   }
   void resumeReceipt(uint32_t transfer) {
     cleanup();
@@ -90,11 +90,11 @@ public:
     if (!busy())
       return;
     if (!safe)
-      return void(fail("ZERO restore cancelled"));
+      return void(fail("ZERO 복구 취소됨"));
     if (state == State::RebootWait && now - rebootWaitStarted > 90000)
-      return void(fail("ZERO boot not confirmed"));
+      return void(fail("ZERO 부팅 확인 실패"));
     if (now - started > 600000 || now - lastActivity > 90000)
-      return void(fail("ZERO restore timeout"));
+      return void(fail("ZERO 복구 시간 초과"));
     if (state != State::Hashing)
       return;
     uint8_t buffer[2048];
@@ -102,13 +102,13 @@ public:
     if (take) {
       if (file.read(buffer, take) != take ||
           mbedtls_sha256_update(&sha, buffer, take))
-        return void(fail("ZERO SD read failed"));
+        return void(fail("ZERO SD 읽기 실패"));
       received += take;
       return;
     }
     uint8_t hash[32];
     if (mbedtls_sha256_finish(&sha, hash) || memcmp(hash, expected, 32))
-      return void(fail("ZERO SHA-256 mismatch"));
+      return void(fail("ZERO SHA-256 불일치"));
     mbedtls_sha256_free(&sha);
     shaActive = false;
     received = 0;
@@ -147,7 +147,7 @@ public:
       }
       MilestoneV5::otaPut32(p + 5, received);
       if (!file.seek(received) || file.read(p + 9, take) != take) {
-        fail("ZERO image read failed");
+        fail("ZERO 이미지 읽기 실패");
         return false;
       }
       n = 9 + take;
@@ -191,7 +191,7 @@ public:
       return true;
     }
     if (remote == R::Failed) {
-      fail("ZERO rejected restore");
+      fail("ZERO가 복구를 거부함");
       return true;
     }
     if (state == State::Begin && remote == R::Manifest) {

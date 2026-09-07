@@ -28,15 +28,15 @@ public:
               parts[2] <= 65535;
     }
     if (!valid) {
-      error = "Invalid release version";
+      error = "릴리스 버전이 올바르지 않습니다";
       return false;
     }
     if (!MILESTONE_V5_RELEASE_PUBLIC_KEY[0]) {
-      error = "Release public key is not configured";
+      error = "릴리스 공개 키가 설정되지 않았습니다";
       return false;
     }
     if (SD.totalBytes() < SD.usedBytes() + 10485760ULL + 1073741824ULL) {
-      error = "Insufficient SD reserve";
+      error = "SD 여유 공간이 부족합니다";
       return false;
     }
     base = "https://github.com/CXITRON/MILESTONE-Core/releases/" +
@@ -48,7 +48,7 @@ public:
     directory = name;
     if (SD.exists(directory) || !SD.mkdir(directory) ||
         !SD.mkdir(directory + "/main") || !SD.mkdir(directory + "/zero")) {
-      error = "Download directory unavailable";
+      error = "다운로드 폴더를 사용할 수 없습니다";
       cleanupDirectory();
       return false;
     }
@@ -88,12 +88,12 @@ public:
     if (!active)
       return;
     if (!healthy || millis() - started > 900000) {
-      stop("Download cancelled by safety or timeout");
+      stop("안전 조건 또는 시간 초과로 다운로드 취소");
       return;
     }
     if (useZero) {
       if (begun && !zeroOnline && millis() - lastReply > 60000)
-        stop("ZERO download link lost");
+        stop("ZERO 다운로드 연결 끊김");
       return;
     }
     if (!localReady)
@@ -102,14 +102,14 @@ public:
       if (!openFile())
         return;
       if (!V5DownloadWorker::start(base + asset(), limit())) {
-        stop("HTTPS prerequisites unavailable");
+        stop("HTTPS 준비 조건을 충족하지 못함");
         return;
       }
       begun = true;
     }
     int state = V5DownloadWorker::state.load(std::memory_order_acquire);
     if (state == 3) {
-      stop("HTTPS download failed");
+      stop("HTTPS 다운로드 실패");
       return;
     }
     total = V5DownloadWorker::length.load(std::memory_order_acquire);
@@ -146,7 +146,7 @@ public:
       return false;
     lastReply = millis();
     if (p[5] == 2) {
-      stop("ZERO HTTPS request failed");
+      stop("ZERO HTTPS 요청 실패");
       return true;
     }
     if (p[0] == 16) {
@@ -155,12 +155,12 @@ public:
       return true;
     }
     if (MilestoneV5::readVideoU32(p + 6) != received) {
-      stop("Download offset mismatch");
+      stop("다운로드 위치 불일치");
       return true;
     }
     total = MilestoneV5::readVideoU32(p + 10);
     if (total > limit()) {
-      stop("Download size exceeds manifest");
+      stop("다운로드 크기가 매니페스트를 초과함");
       return true;
     }
     if (p[5] == 0 && n > 14)
@@ -169,7 +169,7 @@ public:
       if (total && received == total)
         finishFile();
       else
-        stop("Incomplete download");
+        stop("다운로드가 완료되지 않음");
     }
     return true;
   }
@@ -222,19 +222,19 @@ private:
   }
   bool openFile() {
     if (SD.exists(directory + leaf())) {
-      stop("Download target already exists");
+      stop("다운로드 대상이 이미 존재함");
       return false;
     }
     file = SD.open(directory + leaf(), FILE_WRITE);
     if (!file) {
-      stop("SD download write unavailable");
+      stop("SD에 다운로드를 기록할 수 없음");
       return false;
     }
     received = total = 0;
     mbedtls_sha256_init(&sha);
     hashActive = true;
     if (mbedtls_sha256_starts(&sha, 0)) {
-      stop("SHA-256 initialization failed");
+      stop("SHA-256 초기화 실패");
       return false;
     }
     return true;
@@ -242,7 +242,7 @@ private:
   bool append(const uint8_t *p, size_t n) {
     if (n > limit() - received || file.write(p, n) != n ||
         mbedtls_sha256_update(&sha, p, n)) {
-      stop("SD download write failed");
+      stop("SD 다운로드 기록 실패");
       return false;
     }
     received += n;
@@ -262,7 +262,7 @@ private:
   void finishFile() {
     uint8_t digest[32];
     if (mbedtls_sha256_finish(&sha, digest)) {
-      stop("Download SHA-256 failed");
+      stop("다운로드 SHA-256 계산 실패");
       return;
     }
     mbedtls_sha256_free(&sha);
@@ -296,7 +296,7 @@ private:
       valid = received == image.bytes && !memcmp(digest, image.sha256, 32);
     }
     if (!valid) {
-      stop("Downloaded signature, target or hash rejected");
+      stop("서명·대상·해시 검증 실패");
       return;
     }
     ++index;
