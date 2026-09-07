@@ -1,6 +1,6 @@
 # v5 구현 진행표
 
-기준: 2026-09-06.
+기준: 2026-09-07.
 계획한 v5 소프트웨어 경로는 모두 소스에 연결됐다. v5.0.1 정식 릴리스 기준으로
 확정했으며, 아래의 호스트·컴파일 검증과 기본 배선
 실기 검증은 장시간 무선·전원 차단·업데이트 내구 시험을 대신하지 않는다.
@@ -42,19 +42,32 @@
 - `V5_SANITIZE=1`의 ASan/UBSan 조건도 통과. 환경 제약 때문에
   LeakSanitizer만 비활성화했다.
 - Arduino-ESP32 3.3.11 제품 설정으로 MAIN, ZERO, SAFE를 제품 공개키와 함께
-  빌드했다. 마지막 측정은 각각 1,438,023 / 1,344,879 / 594,096바이트이며
-  지정 파티션 한도 안이다.
-- 임시 P-256 키를 사용한 `tools/make-release.sh 5.0.0` 통합 시험에서
-  MAIN/ZERO/SAFE 앱, MAIN/ZERO 초기 USB 이미지, 서명 manifest/bundle/catalog
-  13개 자산을 만들고 모든 SHA-256·서명·offset 계약을 재검증했다.
-- 로컬 제품키로 같은 13개 자산을 다시 생성하고 서명·해시 계약을 검증했다.
+  빌드했다. v5.0.1 Release 앱 자산은 각각 1,719,488 / 1,345,344 /
+  594,064바이트이며 지정 파티션 한도 안이다.
+- 로컬 제품키로 MAIN/ZERO/SAFE 앱, MAIN/ZERO 초기 USB 이미지, 서명
+  manifest/bundle/catalog 13개 자산을 생성하고 모든 SHA-256·서명·offset
+  계약을 재검증했다.
+- `milestone-release local 5.0.1`이 커밋·태그·`origin/main`을 같은 커밋으로
+  맞추고 GitHub Release 게시와 13개 자산 재다운로드 검증을 완료했다.
 
-## 초기 설치 후 추적 검증
+## v5.0.1 배포 및 장치 확인
+
+- 공개 릴리스: <https://github.com/CXITRON/MILESTONE-Core/releases/tag/v5.0.1>
+- MAIN 제품 슬롯 `0x210000`과 ZERO 앱 슬롯 `0x10000`에 유선 업로드했으며,
+  기존 NVS를 지우지 않고 esptool의 기록 직후 해시 검증을 통과했다.
+- MAIN이 32KiB loopTask stack으로 setup과 main loop에 진입했고 기존
+  LoadProhibited/TLSF assert/반복 재부팅은 재발하지 않았다.
+- MAIN과 ZERO가 protocol v1/capability `0x0000001F`를 협상했고 ZERO에서
+  연속 유효 링크 프레임을 확인했다.
+- 복구된 TFT 배치의 픽셀 단위 육안 확인과 실제 설정 AP 탐색·저장 반복 시험은
+  아래의 장기 실기 검증 범위에 남긴다.
+
+## 배포 후 추적 검증
 
 아래 항목은 소프트웨어 누락이 아니라 실제 사용 중 계속 확인할 내구 검증이다.
 
 - 제품 P-256 공개키가 포함된 MAIN/ZERO/SAFE와 서명 카탈로그의 OTA 왕복을
-  실제 릴리스에서 확인한다. 비공개키는 기기와 저장소에 넣지 않는다.
+  실제 릴리스에서 반복 확인한다. 비공개키는 기기와 저장소에 넣지 않는다.
 - MAIN-ZERO SPI를 목표 배선 길이와 전원 조건에서 장시간 돌려 오류율·복구 시간,
   ZERO 분리 시 MAIN 단독 동작을 확인한다.
 - Personal/Open/PEAP, AP+STA, iPhone AMS, BLE 중 HTTPS 우선 전환과 복귀를
@@ -63,7 +76,8 @@
   Stable/Backup/Recovery 및 A/B rollback을 실제 Flash에서 확인한다.
 - 사진과 MVJ1의 프레임률·발열·PSRAM 여유, 앨범아트 서버 가용성, 10분 안정화와
   장시간 열 보호를 실측한다.
-- 검증 전에는 업로드·커밋·태그·GitHub Release를 만들지 않는다.
+- 복구된 TFT의 중앙정렬·상태 아이콘·MODE/AP 화면과 주변 Wi-Fi 검색·저장을
+  사용자 실기 화면에서 최종 확인한다.
 
 실기 결과로 임계값이나 핀/패널 보정이 달라지면 제품 계약을 바꾸는 것이 아니라
 해당 하드웨어 상수와 회귀 테스트를 함께 조정한다.

@@ -5,6 +5,12 @@ from the legacy v3.3.4 firmware and uses its own signed MAIN/ZERO/SAFE release
 catalog. Initial installation requires the merged USB images; subsequent
 updates use the signed companion bundle.
 
+The current public release is
+[v5.0.1](https://github.com/CXITRON/MILESTONE-Core/releases/tag/v5.0.1).
+Its 13 signed assets passed the release re-download contract, and the MAIN and
+ZERO application images were written and hash-verified on the assembled boards.
+The devices booted v5.0.1 and negotiated companion protocol v1 after upload.
+
 ## Contents
 
 - `libraries/MilestoneV5Core`: host-testable protocol, transport, settings,
@@ -75,6 +81,12 @@ MVJ1 is an experimental 128×128 JPEG-frame container, not native MP4 playback.
 It contains no audio. The runtime validates each frame's length, CRC and JPEG
 dimensions and prefetches encoded frames into PSRAM. FPS is a requested rate,
 not a hardware-verified guarantee. No live-streaming endpoint is included.
+
+The restored portal also accepts the legacy browser-generated MSM1 photo/GIF/
+video container. Those items are stored on microSD as `/media/XXXXXXXX.msm`
+with CRC-checked A/B catalogs and take precedence when enabled. MVJ1 remains the
+direct-copy video format under `/media/video/`; original MP4 files are not
+stored or decoded on the device.
 
 ## Local setup
 

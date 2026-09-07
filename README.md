@@ -1,6 +1,95 @@
 # MILESTONE Core — MILESTONE D1
 
-ESP32-S3 Zero와 ST7735 호환 128×160 SPI TFT, 택트스위치 3개를 사용하는 통합 펌웨어입니다. 128×128 CORE 화면, 컬러/흑백 MEDIA, 컬러 NOW 앨범아트는 TFT 중앙에 표시됩니다. 위 16픽셀에는 프로필별 색상의 이름과 구분선을 표시하고, 아래 16픽셀은 구분선 하나만 둔 빈 여백입니다.
+현재 제품 펌웨어는 **v5.0.1**입니다. GOOUUU ESP32-S3 N16R8 MAIN과
+Waveshare ESP32-S3-Zero ZERO를 함께 사용하며, 기존 v3.3.4의 CORE·MEDIA·NOW
+화면과 설정 동작을 듀얼 보드 구조 안에서 실행합니다.
+
+- 최신 릴리스: [MILESTONE Core v5.0.1](https://github.com/CXITRON/MILESTONE-Core/releases/tag/v5.0.1)
+- 상세 설치·복구: [v5/README.md](v5/README.md)
+- 구현 및 검증 범위: [v5/IMPLEMENTATION_STATUS.md](v5/IMPLEMENTATION_STATUS.md)
+
+## 현재 제품 구조
+
+| 구성 | 역할 |
+|---|---|
+| MAIN | CORE/MEDIA/NOW 전환, TFT, 5버튼, microSD, RTC, AHT20, 설정 AP, OTA·복구 |
+| ZERO | iPhone BLE/AMS, 저장 Wi-Fi, NTP·HTTPS, 앨범아트·OTA 데이터 전달 |
+| SAFE | MAIN의 독립 factory 복구 앱. 네트워크 없이 내부 A/B 또는 서명된 SD 이미지 복원 |
+
+CORE, MEDIA, NOW는 MAIN 안에서 재설치나 재부팅 없이 전환됩니다. ZERO가
+연결되지 않아도 MAIN의 CORE 화면, 버튼, SD와 SAFE 복구 기능은 계속 사용할 수
+있으며, BLE Now Playing과 ZERO가 맡은 인터넷 작업만 제한됩니다.
+
+### 조작
+
+| 버튼 | 기본 동작 |
+|---|---|
+| PREV | 이전 화면·미디어 |
+| NEXT | 다음 화면·미디어 |
+| OK | 선택, 정보 페이지 이동, 재생/일시정지 |
+| BACK | 취소, 미디어 종료, 설정 AP 종료 |
+| MODE | CORE/MEDIA/NOW, Wi-Fi 설정 AP, 재시작, SAFE MODE 메뉴 |
+
+MODE 메뉴와 설정 AP는 기존 v3 펌웨어 선택·설정 화면의 글꼴, 배치, 색상과
+중앙정렬 방식을 유지합니다. 설정 AP는 `MILESTONE-D1-SETUP`으로 광고되며,
+TFT에 표시되는 8자리 임의 암호 또는 사용자가 저장한 고정/개방형 설정을
+사용합니다. 포털에서 주변 2.4GHz Wi-Fi를 검색하고 연결 시험이 성공한
+네트워크만 저장합니다.
+
+### 로컬 MEDIA
+
+- 사진: microSD의 `/media/photo/*.bmp`, 최대 128×128 24비트 BMP
+- 영상: PC에서 변환한 `/media/video/*.mvj`, 128×128 컬러 JPEG 프레임 기반
+  MVJ1, 1~30fps, 오디오 없음
+- 포털 미디어: 브라우저에서 변환한 v3 호환 MSM1을 microSD에 원자적으로 저장
+- 기본 출력은 컬러이며 MEDIA 설정에서만 흑백 표시를 선택할 수 있음
+- v5에는 실시간 브라우저 스트리밍을 포함하지 않음
+
+```bash
+python3 tools/convert-v5-media.py input.mp4 output.mvj --fps 15 --seconds 60
+```
+
+### 업데이트와 설치
+
+v5 릴리스는 MAIN/ZERO/SAFE와 서명·manifest·catalog를 포함한 고정 13개 자산으로
+배포됩니다. 최초 설치는 Release의 `v5-main-initial.bin`과
+`v5-zero-initial.bin`을 사용하고, 이후 업데이트는 서명된 MAIN/ZERO 묶음을
+검증한 뒤 비활성 OTA 슬롯에 설치합니다. MAIN의 일반 Arduino 업로드는 factory
+SAFE 슬롯을 대상으로 하므로 v5 제품 설치 방식으로 사용하지 않습니다.
+
+로컬 저장소에서 정식 릴리스를 준비할 때는 프로젝트 루트에서 다음 단일 명령을
+사용합니다.
+
+```bash
+milestone-release local X.Y.Z "release note"
+```
+
+## 현재 v5 하드웨어 핀
+
+| MAIN 기능 | GPIO |
+|---|---:|
+| PREV / BACK / NEXT / MODE / OK | 4 / 5 / 7 / 14 / 15 |
+| TFT RESET / MOSI / SCK / DC / CS | 6 / 11 / 12 / 21 / 47 |
+| microSD CS / MOSI / SCK / MISO | 10 / 11 / 12 / 13 |
+| I2C SDA / SCL | 41 / 42 |
+| RGB LED | 48 |
+
+| MAIN–ZERO | MAIN GPIO | ZERO GPIO |
+|---|---:|---:|
+| SCK | 8 | 9 |
+| MAIN → ZERO | 9 | 8 |
+| ZERO → MAIN | 16 | 10 |
+| CS | 17 | 7 |
+| READY | 18 | 6 |
+
+모든 버튼은 `INPUT_PULLUP` active-low이며 두 보드는 GND를 공통으로 연결합니다.
+TFT와 microSD는 MAIN의 MOSI/SCK를 공유하고 각각 별도의 CS를 사용합니다.
+
+## 레거시 v3.3.4 단일 보드
+
+아래 문서는 보존된 v3.3.4 단일 ESP32-S3-Zero 펌웨어용입니다. v5 MAIN에 이
+보드 설정이나 3버튼 배선을 적용하지 마십시오. v3에서는 128×128 CORE 화면,
+컬러/흑백 MEDIA와 컬러 NOW 앨범아트를 TFT 중앙에 표시합니다.
 
 | TFT | ESP32-S3 Zero |
 |---|---|
