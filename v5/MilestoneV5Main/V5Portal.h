@@ -3,6 +3,9 @@
 #include "V5CoreViews.h"
 #include "V5Hardware.h"
 #include "V5LegacyMedia.h"
+#include "V5SyncMedia.h"
+#include "V5SyncPage.h"
+#include "V5SyncSocket.h"
 #include <DNSServer.h>
 #include <MilestoneV5Diagnostics.h>
 #include <MilestoneV5Features.h>
@@ -18,10 +21,12 @@
 #define MILESTONE_HAS_GENERAL_VIEWS 1
 #define MILESTONE_HAS_STREAM 0
 #define MILESTONE_HAS_ARTWORK_MANAGER 1
+#define MILESTONE_HAS_SYNC_MEDIA 1
 #define MILESTONE_V5_INTEGRATED 1
 #include "../../PortalPage.h"
 #undef MILESTONE_V5_INTEGRATED
 #undef MILESTONE_HAS_ARTWORK_MANAGER
+#undef MILESTONE_HAS_SYNC_MEDIA
 #undef MILESTONE_HAS_STREAM
 #undef MILESTONE_HAS_GENERAL_VIEWS
 #undef MILESTONE_HAS_NOW_VIEW
@@ -36,6 +41,7 @@ public:
   bool systemPending = false;
   MilestoneV5::Diagnostics diagnostics;
   V5LegacyMedia media;
+  V5SyncMedia sync;
   void note(uint32_t code, uint32_t value = 0) {
     diagnostics.note(code, value, millis(), time(nullptr));
   }
@@ -68,6 +74,7 @@ public:
     now = &metadata;
     zeroLastLinkMs = &lastLinkMs;
     media.begin(h.sdMounted);
+    sync.begin(h.sdMounted);
     system.begin();
     diagnostics.begin();
     note(1);
@@ -378,6 +385,13 @@ public:
       server.sendHeader("Cache-Control", "no-store");
       server.send_P(200, "text/html; charset=utf-8", MILESTONE_PORTAL_HTML);
     });
+    server.on("/sync", HTTP_GET, [this] {
+      if (!localRequest() || profile != MilestoneV5::Profile::kMedia)
+        return server.send(403, "text/plain", "권한이 없습니다");
+      touch();
+      server.sendHeader("Cache-Control", "no-store");
+      server.send_P(200, "text/html; charset=utf-8", MILESTONE_V5_SYNC_PAGE);
+    });
     server.on("/status", HTTP_GET, [this] {
       touch();
       String s =
@@ -659,7 +673,8 @@ public:
     server.on("/bundle", HTTP_POST, [this] {
       if (!authorize())
         return;
-      if (bundleBusy || bundleRequested || downloadBusy || downloadRequested) {
+      if (bundleBusy || bundleRequested || downloadBusy || downloadRequested ||
+          sync.occupied()) {
         server.send(409, "text/plain", "업데이트 묶음 작업이 이미 진행 중입니다");
         return;
       }
@@ -676,7 +691,8 @@ public:
     server.on("/download", HTTP_POST, [this] {
       if (!authorize())
         return;
-      if (bundleBusy || bundleRequested || downloadBusy || downloadRequested) {
+      if (bundleBusy || bundleRequested || downloadBusy || downloadRequested ||
+          sync.occupied()) {
         server.send(409, "text/plain", "업데이트 작업이 이미 진행 중입니다");
         return;
       }
@@ -688,7 +704,7 @@ public:
     server.on("/wifi", HTTP_POST, [this] {
       if (!authorize())
         return;
-      if (wifiPending || downloadBusy || bundleBusy) {
+      if (wifiPending || downloadBusy || bundleBusy || sync.occupied()) {
         server.send(409, "text/plain", "네트워크 작업이 진행 중입니다");
         return;
       }
@@ -803,6 +819,7 @@ public:
     }
     dns.start(53, "*", WiFi.softAPIP());
     server.begin();
+    syncSocket.begin(sync);
     active = true;
     openedMs = millis();
     touch();
@@ -848,6 +865,8 @@ public:
       WiFi.scanDelete();
       wifiScanRunning = false;
     }
+    sync.remove();
+    syncSocket.stop();
     server.stop();
     dns.stop();
     WiFi.softAPdisconnect(true);
@@ -863,6 +882,10 @@ public:
       return;
     dns.processNextRequest();
     server.handleClient();
+    sync.serviceIndex(millis());
+    syncSocket.service();
+    if (syncSocket.takeActivity())
+      touch();
     if (resetRequestedMs && millis() - resetRequestedMs >= 500) {
       media.clear();
       clearArtworkStorage();
@@ -888,10 +911,12 @@ private:
   WebServer server{80};
   DNSServer dns;
   V5ArtworkPortal artworkPortal;
+  V5SyncSocket syncSocket;
   String token;
   uint32_t lastActivity = 0, openedMs = 0;
   bool wifiScanRunning = false;
   bool mediaUploadRejected = false;
+  bool syncUploadRejected = false;
   uint32_t resetRequestedMs = 0;
   void touch() { lastActivity = millis(); }
   static String escape(String value) {
@@ -948,6 +973,19 @@ private:
   void sendJson(int status, const String &body) {
     server.sendHeader("Cache-Control", "no-store");
     server.send(status, "application/json; charset=utf-8", body);
+  }
+  void sendSyncStatus() {
+    const uint32_t nowMs = millis();
+    String body = "{\"state\":\"" + String(sync.stateName()) +
+                  "\",\"frames\":" + String(sync.info.frames) +
+                  ",\"fps\":" + String(sync.info.fps) +
+                  ",\"indexed_frames\":" + String(sync.indexedFrames) +
+                  ",\"written_bytes\":" + String(sync.writtenBytes) +
+                  ",\"duration_ms\":" + String(sync.durationMs()) +
+                  ",\"position_ms\":" + String(sync.positionMs(nowMs)) +
+                  ",\"device_ms\":" + String(nowMs) +
+                  ",\"error\":\"" + jsonEscape(sync.error) + "\"}";
+    sendJson(200, body);
   }
   void registerLegacyApi() {
     server.on("/api/status", HTTP_GET, [this] {
@@ -1128,6 +1166,10 @@ private:
     server.on("/api/time/sync", HTTP_POST, [this] {
       if (!authorize())
         return;
+      if (sync.occupied()) {
+        sendJson(409, "{\"error\":\"동기화 MEDIA 세션을 먼저 종료하세요.\"}");
+        return;
+      }
       timeSyncRequested = true;
       timeSyncSuccess = false;
       sendJson(202, "{\"ok\":true,\"state\":\"connecting\"}");
@@ -1135,6 +1177,10 @@ private:
     server.on("/api/profile/switch", HTTP_POST, [this] {
       if (!authorize())
         return;
+      if (sync.occupied()) {
+        sendJson(409, "{\"error\":\"동기화 MEDIA 세션을 먼저 종료하세요.\"}");
+        return;
+      }
       String target = server.arg("profile");
       if (target == "core")
         requestedProfile = MilestoneV5::Profile::kCore;
@@ -1267,6 +1313,62 @@ private:
                repaired ? "{\"ok\":true}"
                         : "{\"error\":\"미디어 저장소 복구 실패\"}");
     });
+    server.on("/api/sync/status", HTTP_GET, [this] {
+      if (!authorize())
+        return;
+      sendSyncStatus();
+    });
+    server.on(
+        "/api/sync/upload", HTTP_POST,
+        [this] {
+          const bool accepted = !syncUploadRejected && sync.finishUpload();
+          syncUploadRejected = false;
+          if (!accepted) {
+            sendJson(400, "{\"error\":\"" + jsonEscape(sync.error) + "\"}");
+            return;
+          }
+          sendJson(202, "{\"ok\":true,\"state\":\"indexing\"}");
+        },
+        [this] {
+          HTTPUpload &part = server.upload();
+          if (part.status == UPLOAD_FILE_START) {
+            uint32_t expected = 0;
+            syncUploadRejected = !localRequest() ||
+                                 profile != MilestoneV5::Profile::kMedia ||
+                                 bundleBusy || downloadBusy || wifiPending ||
+                                 !unsignedInteger(server.arg("size"), expected) ||
+                                 !sync.beginUpload(expected);
+            touch();
+          } else if (part.status == UPLOAD_FILE_WRITE) {
+            if (!syncUploadRejected &&
+                !sync.writeUpload(part.buf, part.currentSize))
+              syncUploadRejected = true;
+            touch();
+          } else if (part.status == UPLOAD_FILE_ABORTED) {
+            sync.abortUpload();
+            syncUploadRejected = true;
+          }
+        });
+    server.on("/api/sync/control", HTTP_POST, [this] {
+      if (!authorize())
+        return;
+      uint32_t position = 0;
+      const String running = server.arg("running");
+      if (profile != MilestoneV5::Profile::kMedia ||
+          !unsignedInteger(server.arg("position"), position) ||
+          (running != "0" && running != "1") ||
+          !sync.control(position, running == "1", millis())) {
+        sendJson(409, "{\"error\":\"동기화 영상이 준비되지 않았습니다\"}");
+        return;
+      }
+      sendSyncStatus();
+    });
+    server.on("/api/sync/remove", HTTP_POST, [this] {
+      if (!authorize())
+        return;
+      sync.remove();
+      sendJson(200, "{\"ok\":true}");
+    });
     server.on("/api/portal/close", HTTP_POST, [this] {
       if (!authorize())
         return;
@@ -1276,7 +1378,7 @@ private:
     server.on("/api/update/check", HTTP_POST, [this] {
       if (!authorize())
         return;
-      if (downloadBusy || downloadRequested || bundleBusy) {
+      if (downloadBusy || downloadRequested || bundleBusy || sync.occupied()) {
         sendJson(409, "{\"error\":\"업데이트 작업이 이미 진행 중입니다.\"}");
         return;
       }
@@ -1288,7 +1390,7 @@ private:
     server.on("/api/update/install", HTTP_POST, [this] {
       if (!authorize())
         return;
-      if (!downloadReady || bundleBusy || bundleRequested) {
+      if (!downloadReady || bundleBusy || bundleRequested || sync.occupied()) {
         sendJson(409, "{\"error\":\"먼저 서명된 업데이트 묶음을 확인하세요.\"}");
         return;
       }
@@ -1579,6 +1681,10 @@ private:
   void handleWifiScan() {
     if (!authorize())
       return;
+    if (sync.occupied()) {
+      sendJson(409, "{\"error\":\"동기화 MEDIA 세션을 먼저 종료하세요.\"}");
+      return;
+    }
     int result = WiFi.scanComplete();
     if (result == WIFI_SCAN_FAILED) {
       WiFi.mode(WIFI_AP_STA);
@@ -1632,7 +1738,7 @@ private:
   void handleWifiTest() {
     if (!authorize())
       return;
-    if (wifiPending || downloadBusy || bundleBusy) {
+    if (wifiPending || downloadBusy || bundleBusy || sync.occupied()) {
       sendJson(409, "{\"error\":\"다른 네트워크 작업이 진행 중입니다.\"}");
       return;
     }

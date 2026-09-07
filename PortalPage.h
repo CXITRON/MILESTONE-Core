@@ -6,6 +6,9 @@
 #ifndef MILESTONE_HAS_ARTWORK_MANAGER
 #define MILESTONE_HAS_ARTWORK_MANAGER 0
 #endif
+#ifndef MILESTONE_HAS_SYNC_MEDIA
+#define MILESTONE_HAS_SYNC_MEDIA 0
+#endif
 #ifndef MILESTONE_V5_INTEGRATED
 #define MILESTONE_V5_INTEGRATED 0
 #endif
@@ -190,6 +193,11 @@ R"HTML(
 #if MILESTONE_HAS_STREAM
 R"HTML(
 <section id="stream_card" class="card"><h2>실시간 스트리밍</h2><div class="status">스트리밍은 성능 격리를 위해 전용 페이지에서 실행합니다. 영상 전체를 휴대폰/PC에서 먼저 변환한 뒤 ESP32 STREAM_MODE로 전송합니다.</div><button type="button" class="primary" style="margin-top:10px" onclick="location.href='/stream'">MILESTONE Stream 열기</button></section>
+)HTML"
+#endif
+#if MILESTONE_HAS_SYNC_MEDIA
+R"HTML(
+<section id="sync_media_card" class="card"><h2>오디오 동기화 MEDIA</h2><div class="status">영상 전체를 먼저 microSD 임시 영역에 저장한 뒤, 이 브라우저의 원본 오디오 시간에 맞춰 기기 화면을 재생합니다. 재생 중에는 영상 프레임을 전송하지 않습니다.</div><button type="button" class="primary" style="margin-top:10px" onclick="location.href='/sync'">동기화 MEDIA 열기</button></section>
 )HTML"
 #endif
 #endif

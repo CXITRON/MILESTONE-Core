@@ -1,10 +1,10 @@
 # MILESTONE Core — MILESTONE D1
 
-현재 제품 펌웨어는 **v5.0.1**입니다. GOOUUU ESP32-S3 N16R8 MAIN과
+현재 제품 펌웨어는 **v5.1.0**입니다. GOOUUU ESP32-S3 N16R8 MAIN과
 Waveshare ESP32-S3-Zero ZERO를 함께 사용하며, 기존 v3.3.4의 CORE·MEDIA·NOW
 인터페이스를 듀얼 보드 구조 안에서 실행합니다.
 
-- 최신 릴리스: [MILESTONE Core v5.0.1](https://github.com/CXITRON/MILESTONE-Core/releases/tag/v5.0.1)
+- 최신 릴리스: [MILESTONE Core v5.1.0](https://github.com/CXITRON/MILESTONE-Core/releases/tag/v5.1.0)
 - 설치·OTA·복구: [v5/README.md](v5/README.md)
 - 구현·검증 범위: [v5/IMPLEMENTATION_STATUS.md](v5/IMPLEMENTATION_STATUS.md)
 - v3.3.4 설치·사용법·변경 이력: [docs/LEGACY_V3.md](docs/LEGACY_V3.md)
@@ -43,8 +43,10 @@ TFT에 표시되는 8자리 임의 암호 또는 사용자가 저장한 고정/�
 - 영상: `/media/video/*.mvj`, 128×128 컬러 JPEG 프레임 기반 MVJ1,
   1~30fps, 오디오 없음
 - 포털 미디어: 브라우저에서 변환한 v3 호환 MSM1을 microSD에 원자적으로 저장
+- 동기화 MEDIA: 브라우저에서 전체 영상을 MVJ1으로 변환·임시 업로드한 뒤,
+  브라우저 원본 오디오 시간을 기준으로 SD 영상 재생
 - 기본 출력은 컬러이며 MEDIA 설정에서만 흑백 표시를 선택할 수 있음
-- v5에는 실시간 브라우저 스트리밍을 포함하지 않음
+- 재생 중에는 영상 프레임을 전송하지 않으며 제어 신호만 교환함
 
 ```bash
 python3 tools/convert-v5-media.py input.mp4 output.mvj --fps 15 --seconds 60
@@ -84,6 +86,20 @@ milestone-release local X.Y.Z "release note"
 
 모든 버튼은 `INPUT_PULLUP` active-low이며 두 보드는 GND를 공통으로 연결합니다.
 TFT와 microSD는 MAIN의 MOSI/SCK를 공유하고 각각 별도의 CS를 사용합니다.
+
+## v5.1.0 업데이트 안내
+
+v5.1.0은 MEDIA에 브라우저 오디오와 microSD 영상을 결합한 단계형 동기 재생을
+추가합니다. 실시간 프레임 스트리밍과 달리 변환·업로드를 먼저 완료한 뒤
+재생하므로 무선 지연이 화면 전송량에 직접 누적되지 않습니다.
+
+- 브라우저에서 원본 전체를 128×128 컬러 MVJ1, 1~30fps로 변환
+- microSD 임시 영역에 업로드 후 프레임 길이·CRC·JPEG 크기 전수 검증
+- 프레임 위치 인덱스를 별도로 생성해 오디오 시간 변경과 탐색에 즉시 대응
+- 재생 중에는 브라우저 오디오를 기준으로 작은 WebSocket 제어 패킷만 교환
+- 연결이 2.5초 끊기면 MAIN 영상을 자동 일시정지하고, 기기 OK로 재생 토글 요청
+- BACK/MODE/AP 종료 또는 재부팅 시 임시 영상·인덱스와 동기 세션 삭제
+- 휴대폰 브라우저 메모리 보호를 위한 변환본 256 MiB 제한
 
 ## v5.0.1 업데이트 안내
 

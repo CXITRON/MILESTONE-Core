@@ -510,6 +510,8 @@ void serviceButtons(uint32_t now) {
     if (mode || back) {
       portal.close();
       redraw = true;
+    } else if (ok && portal.sync.activePlayback()) {
+      portal.sync.requestBrowserToggle();
     }
     return;
   }
@@ -1096,6 +1098,7 @@ void loop() {
       setCpuFrequencyMhz(thermal.throttled ? 80 : 240);
     if (temperatureSafe) {
       video.stop();
+      portal.sync.remove();
       safeModeActive = true;
       photoVisible = false;
     }
@@ -1150,6 +1153,14 @@ void loop() {
       hardware.corruptFiles[selectedPhoto] = true;
       hardware.body("미디어 오류", video.error, "BACK 목록으로");
     }
+  }
+  if (!safeModeActive && !bundleUpdate.critical() && !modeMenu.isOpen() &&
+      portal.active && profiles.active() == MilestoneV5::Profile::kMedia &&
+      portal.sync.activePlayback()) {
+    const bool rendered =
+        portal.sync.servicePlayback(hardware.display, now, hardware.monochrome);
+    if (!rendered && portal.sync.state == V5SyncMedia::State::Error)
+      redraw = true;
   }
   if (!safeModeActive && !bundleUpdate.critical() && !modeMenu.isOpen() &&
       !portal.active && profiles.active() == MilestoneV5::Profile::kMedia &&

@@ -101,6 +101,7 @@ public:
     const char *directories[] = {"/media",
                                  "/media/photo",
                                  "/media/video",
+                                 "/media/sync",
                                  "/now",
                                  "/now/art-cache",
                                  "/logs",

@@ -1,4 +1,4 @@
-# MILESTONE v5.0.1
+# MILESTONE v5.1.0
 
 This is the release source for the dual-ESP v5 hardware. It remains separate
 from the legacy v3.3.4 firmware and uses its own signed MAIN/ZERO/SAFE release
@@ -6,10 +6,12 @@ catalog. Initial installation requires the merged USB images; subsequent
 updates use the signed companion bundle.
 
 The current public release is
-[v5.0.1](https://github.com/CXITRON/MILESTONE-Core/releases/tag/v5.0.1).
+[v5.1.0](https://github.com/CXITRON/MILESTONE-Core/releases/tag/v5.1.0).
 Its 13 signed assets passed the release re-download contract, and the MAIN and
 ZERO application images were written and hash-verified on the assembled boards.
-The devices booted v5.0.1 and negotiated companion protocol v1 after upload.
+The assembled boards previously booted v5.0.1 and negotiated companion
+protocol v1 after upload. The v5.1.0 staged sync-media path is software-tested;
+browser/device playback remains part of the release hardware check.
 
 ## Contents
 
@@ -80,13 +82,32 @@ python3 tools/convert-v5-media.py input.mp4 output.mvj --fps 15 --seconds 60
 MVJ1 is an experimental 128×128 JPEG-frame container, not native MP4 playback.
 It contains no audio. The runtime validates each frame's length, CRC and JPEG
 dimensions and prefetches encoded frames into PSRAM. FPS is a requested rate,
-not a hardware-verified guarantee. No live-streaming endpoint is included.
+not a hardware-verified guarantee. No live video-frame streaming endpoint is
+included.
 
 The restored portal also accepts the legacy browser-generated MSM1 photo/GIF/
 video container. Those items are stored on microSD as `/media/XXXXXXXX.msm`
 with CRC-checked A/B catalogs and take precedence when enabled. MVJ1 remains the
 direct-copy video format under `/media/video/`; original MP4 files are not
 stored or decoded on the device.
+
+### Staged browser-audio sync media
+
+While the MEDIA profile is active, open the setup AP and select `오디오 동기화
+MEDIA`. The browser converts the complete original video to MVJ1, uploads it to
+`/media/sync/`, and waits while MAIN validates every frame and builds an MVX1
+seek index. The original audio then plays in the browser while MAIN reads video
+frames from microSD according to the browser audio position. Playback traffic
+contains only bounded control/status packets over a one-client WebSocket; video
+frames are never carried during playback.
+
+The converted browser blob is limited to 256 MiB to avoid exhausting phone
+memory, and MAIN also reserves 64 MiB of free SD capacity. Lower FPS or JPEG
+quality when that browser limit is reached. Keep the browser in the foreground:
+screen lock, background suspension, AP loss, or 2.5 seconds without control
+updates pauses device video. BACK, MODE, the portal close button, thermal stop,
+or reboot removes the temporary video/index. This path is intentionally
+ephemeral and does not alter persistent `/media/video/` files.
 
 ## Local setup
 
@@ -138,7 +159,7 @@ nor publishes a release, and refuses to overwrite an existing output directory:
 
 ```bash
 python3 tools/prepare-v5-sd-restore.py firmware.bin new-restore-directory \
-  --target ZERO --version 5.0.1 \
+  --target ZERO --version 5.1.0 \
   --private-key /path/to/private.pem --public-key /path/to/public.pem
 ```
 
@@ -163,7 +184,7 @@ Prepare an offline bundle from verified board binaries with the same helper:
 
 ```bash
 python3 tools/prepare-v5-sd-restore.py main.bin new-bundle-directory \
-  --bundle --zero-source zero.bin --version 5.0.1 \
+  --bundle --zero-source zero.bin --version 5.1.0 \
   --private-key /path/to/private.pem --public-key /path/to/public.pem
 ```
 
@@ -204,7 +225,7 @@ release build uses the existing release backend:
 ```bash
 MILESTONE_V5_PRIVATE_KEY=/secure/private.pem \
 MILESTONE_V5_PUBLIC_KEY=/secure/public.pem \
-./tools/make-release.sh 5.0.1 "MILESTONE v5.0.1"
+./tools/make-release.sh 5.1.0 "MILESTONE v5.1.0"
 ```
 
 This creates and verifies 13 assets: board applications, signed manifests and

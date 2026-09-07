@@ -17,4 +17,21 @@ bool decodeVideoHeader(const uint8_t *p, size_t n, VideoInfo &info) {
   info = v;
   return true;
 }
+uint32_t videoFrameAtMs(const VideoInfo &info, uint32_t positionMs) {
+  if (!info.frames || !info.fps)
+    return 0;
+  const uint64_t frame = uint64_t(positionMs) * info.fps / 1000U;
+  return frame < info.frames ? static_cast<uint32_t>(frame) : info.frames - 1U;
+}
+uint32_t synchronizedVideoPositionMs(uint32_t anchorPositionMs,
+                                     uint32_t anchorLocalMs, uint32_t nowMs,
+                                     uint32_t durationMs, bool running) {
+  const uint64_t value = uint64_t(anchorPositionMs) +
+                         (running ? uint32_t(nowMs - anchorLocalMs) : 0U);
+  return value < durationMs ? static_cast<uint32_t>(value) : durationMs;
+}
+bool synchronizedVideoControlStale(uint32_t nowMs, uint32_t lastControlMs,
+                                   uint32_t timeoutMs, bool running) {
+  return running && uint32_t(nowMs - lastControlMs) > timeoutMs;
+}
 } // namespace MilestoneV5

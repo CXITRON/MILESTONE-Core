@@ -1,8 +1,8 @@
 # v5 구현 진행표
 
 기준: 2026-09-07.
-계획한 v5 소프트웨어 경로는 모두 소스에 연결됐다. v5.0.1 정식 릴리스 기준으로
-확정했으며, 아래의 호스트·컴파일 검증과 기본 배선
+계획한 v5 소프트웨어 경로는 모두 소스에 연결됐다. 현재 소스 기준은 v5.1.0이며,
+아래의 호스트·컴파일 검증과 v5.0.1 기본 배선
 실기 검증은 장시간 무선·전원 차단·업데이트 내구 시험을 대신하지 않는다.
 
 ## 반영 완료 범위
@@ -16,7 +16,8 @@
 | 상태 띠·LED | V5Hardware, ZERO | 외부 환경 상단, 두 칩 내부 온도 하단, 무선 의미 아이콘, 보드별 로컬 상태 LED와 주야간 밝기 |
 | 환경 설정·로그 | V5Environment/V5EnvironmentLog/V5Portal | AHT20 0x38·CRC-8, 섭씨/화씨·온습도 보정·주기·표시 mask·경고/위험 임계값·재검색, 일자별 CSV와 CRC write-ahead journal; BMP280 기압 제외 |
 | 열 보호 | ThermalPolicy, 세 `.ino` | MAIN/ZERO/SAFE의 경고·80MHz 감속·중지 히스테리시스와 센서 오류 보호 |
-| 로컬 MEDIA | V5Video/V5Hardware | BMP 사진, MVJ1 JPEG 영상, 목록·이전/다음·재생/일시정지·반복·정렬·흑백·PSRAM 선읽기·손상 항목 차단; 실시간 스트리밍 미포함 |
+| 로컬 MEDIA | V5Video/V5Hardware | BMP 사진, MVJ1 JPEG 영상, 목록·이전/다음·재생/일시정지·반복·정렬·흑백·PSRAM 선읽기·손상 항목 차단; 실시간 프레임 스트리밍 미포함 |
+| 단계형 동기 MEDIA | V5SyncMedia/V5SyncSocket/V5SyncPage | 브라우저 전체 변환→SD 임시 업로드→CRC·JPEG 전수검증과 MVX1 인덱스→브라우저 오디오 기준 재생, 2.5초 제어 timeout, BACK/AP 종료 시 정리 |
 | PC 변환 | convert-v5-media.py | ffmpeg 로컬 변환, 128×128 MVJ1 크기·CRC·프레임 제한과 기존 출력 덮어쓰기 거부 |
 | BLE NOW | V5AmsRuntime/V5Ams | AMS 연결·보안·재요청·광고 복구, bounded UTF-8 메타데이터, 4개 NOW 배치와 진행률 |
 | Wi-Fi·NTP | WifiStore/V5Network/V5Radio | 최대 8개 Personal/Open/PEAP A/B 자격 증명, 15초 연결 시험과 2초 안정 후 저장, 양 보드 복제, 제한 재시도·절전·NTP→RTC |
@@ -38,7 +39,8 @@
   복구 계약 통과.
 - `./tools/test-v5.sh`: wire CRC/순서/재시도/lease, 설정·날짜·RTC·환경·열,
   MVJ1/MAC1, OTA parser/수신기, bundle journal과 Stable index, Wi-Fi·시스템
-  A/B, artwork A/B index, HTTPS 저장 흐름, 임시 P-256 키 서명·변조 거부 통과.
+  A/B, artwork A/B index, HTTPS 저장 흐름, 단계형 동기 MEDIA 계약,
+  임시 P-256 키 서명·변조 거부 통과.
 - `V5_SANITIZE=1`의 ASan/UBSan 조건도 통과. 환경 제약 때문에
   LeakSanitizer만 비활성화했다.
 - Arduino-ESP32 3.3.11 제품 설정으로 MAIN, ZERO, SAFE를 제품 공개키와 함께
