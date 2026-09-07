@@ -1,10 +1,10 @@
 # MILESTONE Core — MILESTONE D1
 
-현재 제품 펌웨어는 **v5.1.2**입니다. GOOUUU ESP32-S3 N16R8 MAIN과
+현재 제품 펌웨어는 **v5.1.3**입니다. GOOUUU ESP32-S3 N16R8 MAIN과
 Waveshare ESP32-S3-Zero ZERO를 함께 사용하며, 기존 v3.3.4의 CORE·MEDIA·NOW
 인터페이스를 듀얼 보드 구조 안에서 실행합니다.
 
-- 최신 릴리스: [MILESTONE Core v5.1.2](https://github.com/CXITRON/MILESTONE-Core/releases/tag/v5.1.2)
+- 최신 릴리스: [MILESTONE Core v5.1.3](https://github.com/CXITRON/MILESTONE-Core/releases/tag/v5.1.3)
 - 설치·OTA·복구: [v5/README.md](v5/README.md)
 - 구현·검증 범위: [v5/IMPLEMENTATION_STATUS.md](v5/IMPLEMENTATION_STATUS.md)
 - v3.3.4 설치·사용법·변경 이력: [docs/LEGACY_V3.md](docs/LEGACY_V3.md)
@@ -86,6 +86,17 @@ milestone-release local X.Y.Z "release note"
 
 모든 버튼은 `INPUT_PULLUP` active-low이며 두 보드는 GND를 공통으로 연결합니다.
 TFT와 microSD는 MAIN의 MOSI/SCK를 공유하고 각각 별도의 CS를 사용합니다.
+
+## v5.1.3 업데이트 안내
+
+v5.1.3은 v3 화면 구성을 복원하면서 확인된 128×128 본문 배치와 반응성 문제를
+정리한 표시 안정화 릴리스입니다.
+
+- 모드 메뉴의 Wi-Fi 설정·다시 시작·안전 모드 한글 항목이 화면 밖으로 나가던 2배 확대 제거
+- 한글 메뉴 항목을 선택 영역 안에서 상하 중앙에 보이도록 기준선 보정
+- 본문 제목·안내 구분선을 좌우 끝까지 128px로 확장
+- 기기 세부 정보 화면을 매초 전체 재생성하지 않도록 해 버튼 랙과 불필요한 SD/Wi-Fi 조회 제거
+- RTC 미확정 시 시계·메시지·대시보드 화면을 v3의 안내 문구와 배치로 복원
 
 ## v5.1.2 업데이트 안내
 

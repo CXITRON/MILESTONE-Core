@@ -71,5 +71,10 @@ assert "d.fields.leaseId, ++txSequence" in zero
 assert "result == ESP_ERR_TIMEOUT" in zero
 assert "transactionQueued = false;" in zero
 assert "ZeroPins::kLinkReady), 0" in zero
+assert "legacyAutoText(selected, 68, color);" in main
+assert "coreViews.view != 6" in main
+assert "glyphs.drawHLine(0, y, 128);" in hardware
+assert "canvas.drawHLine(0, y, 128);" in core_views
+assert 'centered(h, "시간 미확정", 66' in core_views
 
 print("v5 legacy parity source contract passed")

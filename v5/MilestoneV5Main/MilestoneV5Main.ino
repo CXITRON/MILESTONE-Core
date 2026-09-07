@@ -179,7 +179,10 @@ void renderModeMenu() {
   if (profile)
     hardware.legacyText(selected, 73, u8g2_font_logisoso28_tf, color);
   else
-    hardware.legacyAutoText(selected, 70, color, true);
+    // Korean action names already occupy most of the 128 px width at 1x.
+    // X2 made Wi-Fi setup/restart spill past both edges. The 68 px baseline
+    // optically centers the Korean font in the same selection band.
+    hardware.legacyAutoText(selected, 68, color);
   const char *hint = item == MilestoneV5::ModeMenuItem::kSetup
                          ? "OK: AP OPEN"
                      : item == MilestoneV5::ModeMenuItem::kRestart
@@ -1125,7 +1128,13 @@ void loop() {
     hardware.led.setBrightness(s.ledEnabled ? (night ? s.ledNight : s.ledDay)
                                             : 0);
     hardware.localLed(safeModeActive, portal.active, radio.busy);
-    if (profiles.active() == MilestoneV5::Profile::kCore || safeModeActive)
+    // Device information is intentionally static until the user changes its
+    // page. Rebuilding it every second repeatedly queried Wi-Fi/SD/heap state
+    // and made button input visibly lag, while status bands already refresh
+    // independently.
+    if ((profiles.active() == MilestoneV5::Profile::kCore &&
+         coreViews.view != 6) ||
+        safeModeActive)
       redraw = true;
   }
   static uint32_t lastBodyRender = 0;

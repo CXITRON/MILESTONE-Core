@@ -199,7 +199,7 @@ public:
                h.rtc.day);
     } else {
       clock = "--:--";
-      strcpy(date, "날짜 미설정");
+      strcpy(date, "날짜 미확정");
     }
     String dday = "D --?";
     if (h.rtcValid && dateSet) {
@@ -237,32 +237,49 @@ public:
       break;
     case 3:
       title(h, "현재 시각", ox);
-      centered(h, clock, 61,
-               seconds ? u8g2_font_logisoso20_tf : u8g2_font_logisoso28_tf,
-               colors[0], ox);
-      centered(h, date, 83, u8g2_font_6x10_tf, colors[1], ox);
-      centered(h, weekday(h) + "요일 · KST", 113,
-               u8g2_font_unifont_t_korean2, colors[1], ox);
+      if (h.rtcValid) {
+        centered(h, clock, 61,
+                 seconds ? u8g2_font_logisoso20_tf
+                         : u8g2_font_logisoso28_tf,
+                 colors[0], ox);
+        centered(h, date, 83, u8g2_font_6x10_tf, colors[1], ox);
+        centered(h, weekday(h) + "요일 · KST", 113,
+                 u8g2_font_unifont_t_korean2, colors[1], ox);
+      } else {
+        centered(h, "시간 미확정", 66, u8g2_font_unifont_t_korean2,
+                 colors[1], ox);
+        centered(h, "MODE: MENU", 92, u8g2_font_6x10_tf, colors[5], ox);
+      }
       break;
     case 4:
       title(h, date, ox);
-      centered(h, clock, 57,
-               seconds ? u8g2_font_logisoso20_tf : u8g2_font_logisoso28_tf,
-               colors[0], ox);
+      if (h.rtcValid)
+        centered(h, clock, 57,
+                 seconds ? u8g2_font_logisoso20_tf
+                         : u8g2_font_logisoso28_tf,
+                 colors[0], ox);
+      else
+        centered(h, "시간 미확정", 53, u8g2_font_unifont_t_korean2,
+                 colors[1], ox);
       rule(h, 68, colors[5]);
       messageBlock(h, 105, 94, 118, colors[2], ox);
       break;
     case 5:
       title(h, label, ox);
-      centered(h, dday, 45,
-               ddayText ? u8g2_font_unifont_t_korean2
-                        : u8g2_font_logisoso20_tf,
-               colors[3], ox);
-      centered(h, clock, 72,
-               seconds ? u8g2_font_6x10_tf : u8g2_font_logisoso20_tf,
-               colors[0], ox);
-      centered(h, String(date) + " " + weekday(h), 96,
-               u8g2_font_unifont_t_korean2, colors[1], ox);
+      if (h.rtcValid) {
+        centered(h, dday, 45,
+                 ddayText ? u8g2_font_unifont_t_korean2
+                          : u8g2_font_logisoso20_tf,
+                 colors[3], ox);
+        centered(h, clock, 72,
+                 seconds ? u8g2_font_6x10_tf : u8g2_font_logisoso20_tf,
+                 colors[0], ox);
+        centered(h, String(date) + " " + weekday(h), 96,
+                 u8g2_font_unifont_t_korean2, colors[1], ox);
+      } else {
+        centered(h, "시간 미확정", 78, u8g2_font_unifont_t_korean2,
+                 colors[1], ox);
+      }
       rule(h, 101, colors[5]);
       scrollingLine(h, message, 123, colors[2], ox, 1, 126, true);
       break;
@@ -403,7 +420,7 @@ private:
   }
   void rule(V5Hardware &h, int y, uint16_t color) {
     canvas.clearBuffer();
-    canvas.drawHLine(4, y, 120);
+    canvas.drawHLine(0, y, 128);
     paint(h, color);
   }
   void scrollingLine(V5Hardware &h, String text, int baseline,

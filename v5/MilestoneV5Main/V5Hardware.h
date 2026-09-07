@@ -365,7 +365,7 @@ public:
             const String &line3 = "") {
     display.fillRect(0, 16, 128, 128, 0);
     textLine(17, title, 0xFFFF);
-    display.drawFastHLine(4, 35, 120, 0x7BEF);
+    display.drawFastHLine(0, 35, 128, 0x7BEF);
     textLine(48, line1);
     textLine(72, line2);
     textLine(96, line3);
@@ -427,7 +427,7 @@ public:
 
   void legacyRule(int y, uint16_t color = 0x7BEF) {
     glyphs.clearBuffer();
-    glyphs.drawHLine(4, y, 120);
+    glyphs.drawHLine(0, y, 128);
     display.blitMono(glyphs.getBufferPtr(), 16, color);
   }
 
