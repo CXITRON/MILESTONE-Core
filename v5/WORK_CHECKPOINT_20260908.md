@@ -1,6 +1,23 @@
 # v5.1.6 이후 실기 수정 체크포인트
 
-사용자 추가 지시에 따라 v5.1.7 릴리스·업로드 진행 중. 기존 UI 레이아웃과 서명키/파티션 유지.
+사용자 추가 지시에 따라 v5.1.7 릴리스·업로드 완료. 기존 UI 레이아웃과 서명키/파티션 유지.
+
+## 최종 상태 (아래 초기 체크포인트보다 우선)
+
+- 공식 milestone-release로 5.1.7 게시, 커밋/태그 `10385bd`.
+  MAIN/ZERO/SAFE 전체 빌드·회귀 테스트·서명·13개 게시 자산 다운로드 검증 통과.
+- MAIN app0 0x210000, SAFE 0x10000, ZERO app0 0x10000에 정식 BIN 기록 및 해시 검증 완료.
+  NVS/파티션/OTA 선택/app1 보존. ZERO는 ROM `--no-stub` 사용.
+- MAIN과 ZERO 모두 UART에서 5.1.7 부팅 확인. SPI v1 협상과 BLE 광고 정상.
+- 자동 OTA가 ZERO를 거쳐 서명을 검증하고 `OTA check complete: current (5.1.7)`로
+  완료됨. 이후 BLE 광고 복귀 확인. 관찰 중 패닉·재부팅 없음.
+- ZERO ROM 전체 app0 백업/실기 digest 비교 성공. 백업 SHA256:
+  `33f56c8d8a94b237847cde99406da6af3991b4893349547c31b22289554dbba7`.
+- 최종 BIN SHA256 MAIN `fb4a6ec3296c748bbc5bf2cea50f0cf13135ec7f94920b2f5fa5c745884de2dc`,
+  ZERO `8d47fdfb268c6a5f8610ad4f72249bb0ff22445af14f3a2502df6a3a7f02ed46`,
+  SAFE `aac0c5ba3d121d1c57b02714a311760dc89cc4b5546fe6c89ca751e1242a6447`.
+- Sync 모바일 장시간/20FPS 실측, AP 수동 확인 전 경로 및 CORE 물리 UI 확인은
+  여전히 별도 실기 acceptance가 필요. 릴리스·업로드 완료와 구분할 것.
 
 ## 확인한 원인과 수정
 

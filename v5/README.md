@@ -101,13 +101,29 @@ frames from microSD according to the browser audio position. Playback traffic
 contains only bounded control/status packets over a one-client WebSocket; video
 frames are never carried during playback.
 
-The converted browser blob is limited to 256 MiB and uploaded in retryable
-64 KiB requests. Lower FPS or JPEG quality when that browser limit is reached.
+Frames are converted and uploaded in bounded batches of approximately 256 KiB;
+the browser no longer retains the complete converted film. Playback still waits
+until the whole upload and index verification finish. Limits are 6 hours,
+432,000 frames and 2 GiB minus one byte. The converter offers up to 20 FPS;
+the decoder retains compatibility with existing MVJ1 files up to 30 FPS.
+SD/JPEG/TFT microsecond timing counters are exposed in `/api/sync/status` and
+MAIN UART0 logs. Sustained maximum FPS still requires device measurement.
 Keep the browser in the foreground:
 screen lock, background suspension, AP loss, or 2.5 seconds without control
 updates pauses device video. BACK, MODE, the portal close button, thermal stop,
 or reboot removes the temporary video/index. This path is intentionally
 ephemeral and does not alter persistent `/media/video/` files.
+
+### ZERO USB backup transport
+
+If the native USB flasher reports `Packet content transfer stopped` during
+`read-flash`, retry with esptool's global `--no-stub` option. On the tested ZERO,
+the default stub repeatedly stopped near address 0x4b000; ROM read completed
+the entire 1,966,080-byte app0 and `verify-flash` matched its digest. ROM
+`write-flash` also completed and verified successfully. This changes the host
+transport, not firmware, flash partitions or signing keys. Confirm the port and
+partition offsets before using any write command; keep failed partial backups
+out of recovery workflows.
 
 ## Local setup
 
