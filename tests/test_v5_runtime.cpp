@@ -1,4 +1,6 @@
 #include "MilestoneV5Runtime.h"
+#include "MilestoneV5ImageSize.h"
+#include <cstring>
 
 #include <iostream>
 
@@ -94,6 +96,20 @@ void testEnabledViewSelection() {
 }  // namespace
 
 int main() {
+  uint8_t image[96] = {};
+  image[0] = 0xe9; image[1] = 1; image[23] = 1; image[28] = 16;
+  unsigned reads = 0;
+  auto reader = [&](uint32_t offset, uint8_t *out, size_t size) {
+    ++reads;
+    if (offset + size > sizeof(image)) return false;
+    memcpy(out, image + offset, size); return true;
+  };
+  EXPECT_EQ(MilestoneV5::displayImageSize(sizeof(image), reader), 96U);
+  EXPECT_EQ(reads, 2U);
+  image[31] = 0xff;
+  EXPECT_EQ(MilestoneV5::displayImageSize(sizeof(image), reader), 0U);
+  image[1] = 17;
+  EXPECT_EQ(MilestoneV5::displayImageSize(sizeof(image), reader), 0U);
   testRadioBroker();
   testProfileController();
   testTaskLease();

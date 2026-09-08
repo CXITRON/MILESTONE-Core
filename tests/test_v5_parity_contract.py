@@ -87,6 +87,8 @@ assert "MEDIA_FILE_LIMIT=4*1024*1024" in page
 assert '"media_limit_bytes\\\":268435456' in portal
 assert "SD.totalBytes()" not in core_views
 assert "SD.usedBytes()" not in core_views
+assert "ESP.getSketchSize()" not in core_views
+assert "ESP.getFreeSketchSpace()" not in core_views
 assert "WiFi.status()" not in core_views
 assert "centered(h, clock, 72, u8g2_font_6x10_tf" in core_views
 assert 'legacyAutoText("BACK: 재생 종료", 70);' in main

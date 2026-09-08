@@ -4,6 +4,7 @@
 #include <MilestoneV5Now.h>
 #include <MilestoneV5Protocol.h>
 #include <MilestoneV5Runtime.h>
+#include <MilestoneV5ImageSize.h>
 #include <MilestoneV5Version.h>
 #include <Preferences.h>
 #include <U8g2lib.h>
@@ -29,6 +30,13 @@ public:
   bool dirty = false;
   bool dateSet = false;
   void begin() {
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    const esp_partition_t *next = esp_ota_get_next_update_partition(nullptr);
+    otaSlotBytes = next ? next->size : 0;
+    appImageBytes = running ? MilestoneV5::displayImageSize(
+        running->size, [running](uint32_t offset, uint8_t *out, size_t size) {
+          return esp_partition_read(running, offset, out, size) == ESP_OK;
+        }) : 0;
     Preferences p;
     if (!p.begin("v5_core", true))
       return;
@@ -325,8 +333,8 @@ public:
       } else if (infoPage == 3) {
         infoHeader(h, "STORAGE", 4);
         infoLine(h, 29, "FLASH", bytes(ESP.getFlashChipSize()));
-        infoLine(h, 47, "APP", bytes(ESP.getSketchSize()));
-        infoLine(h, 65, "OTA FREE", bytes(ESP.getFreeSketchSpace()));
+        infoLine(h, 47, "APP", appImageBytes ? bytes(appImageBytes) : "UNKNOWN");
+        infoLine(h, 65, "OTA FREE", bytes(otaSlotBytes));
         infoLine(h, 83, "SD", h.sdMounted ? "MOUNTED" : "MISSING");
         // Never perform filesystem capacity walks while painting a frame.
         // A slow or marginal card must not stall buttons, SPI heartbeat or UI.
@@ -414,6 +422,7 @@ public:
   }
 
 private:
+  uint32_t appImageBytes = 0, otaSlotBytes = 0;
   U8G2_SH1107_128X128_F_SW_I2C canvas{U8G2_R0, U8X8_PIN_NONE,
                                       U8X8_PIN_NONE, U8X8_PIN_NONE};
   uint32_t changed = 0, lastCycle = 0;
