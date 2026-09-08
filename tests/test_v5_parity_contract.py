@@ -92,5 +92,8 @@ assert "centered(h, clock, 72, u8g2_font_6x10_tf" in core_views
 assert 'legacyAutoText("BACK: 재생 종료", 70);' in main
 assert 'legacyText("PREV", 104' in main
 assert 'legacyText("NEXT", 104' in main
+assert "selectEnabledView(prev ? -1 : 1)" in core_views
+assert "ensureEnabledView();" in portal
+assert "fps=Math.min(MEDIA_MAX_FPS" in page
 
 print("v5 legacy parity source contract passed")

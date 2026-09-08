@@ -82,6 +82,15 @@ void testOptionalFaultIsolation() {
   EXPECT_TRUE(!MilestoneV5::faultRequiresFirmwareRollback(
       MilestoneV5::OptionalFault::kMediaCorrupt));
 }
+
+void testEnabledViewSelection() {
+  EXPECT_EQ(MilestoneV5::nextEnabledIndex(0, 0x24, 7, 1), 2);
+  EXPECT_EQ(MilestoneV5::nextEnabledIndex(2, 0x24, 7, 1), 5);
+  EXPECT_EQ(MilestoneV5::nextEnabledIndex(2, 0x24, 7, -1), 5);
+  EXPECT_EQ(MilestoneV5::nextEnabledIndex(5, 0x24, 7, -1), 2);
+  EXPECT_EQ(MilestoneV5::nextEnabledIndex(3, 0x08, 7, 1), 3);
+  EXPECT_EQ(MilestoneV5::nextEnabledIndex(3, 0, 7, 1), 3);
+}
 }  // namespace
 
 int main() {
@@ -89,6 +98,7 @@ int main() {
   testProfileController();
   testTaskLease();
   testOptionalFaultIsolation();
+  testEnabledViewSelection();
   if (failures != 0) return 1;
   std::cout << "MILESTONE v5 runtime tests passed\n";
   return 0;

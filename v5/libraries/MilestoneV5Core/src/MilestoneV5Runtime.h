@@ -42,6 +42,8 @@ struct TaskAssignment {
 
 TaskPriority taskPriority(TaskKind task);
 TaskAssignment assignNetworkTask(TaskKind task, const RadioState &state);
+uint8_t nextEnabledIndex(uint8_t current, uint32_t enabledMask,
+                         uint8_t itemCount, int8_t direction);
 
 class TaskLeaseController {
 public:

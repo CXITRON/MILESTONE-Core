@@ -3,6 +3,7 @@
 #include <MilestoneV5Calendar.h>
 #include <MilestoneV5Now.h>
 #include <MilestoneV5Protocol.h>
+#include <MilestoneV5Runtime.h>
 #include <MilestoneV5Version.h>
 #include <Preferences.h>
 #include <U8g2lib.h>
@@ -77,6 +78,7 @@ public:
       colors[5] = uint16_t(data[242]) | uint16_t(data[243]) << 8;
     }
     view = data[4];
+    ensureEnabledView();
     infoPage = data[5];
     year = unsigned(data[6]) | unsigned(data[7]) << 8;
     month = data[8];
@@ -142,7 +144,7 @@ public:
   }
   void button(bool prev, bool next, bool ok, uint32_t now) {
     if (prev || next) {
-      view = (view + (prev ? 6 : 1)) % 7;
+      selectEnabledView(prev ? -1 : 1);
       dirty = true;
       changed = now;
       lastCycle = now;
@@ -152,6 +154,18 @@ public:
       dirty = true;
       changed = now;
     }
+  }
+  bool selectEnabledView(int direction = 1) {
+    if (!cycleMask)
+      return false;
+    const uint8_t selected = MilestoneV5::nextEnabledIndex(
+        view, cycleMask, 7, direction < 0 ? -1 : 1);
+    const bool changed = selected != view;
+    view = selected;
+    return changed || bool(cycleMask & (1U << view));
+  }
+  bool ensureEnabledView() {
+    return (cycleMask & (1U << view)) || selectEnabledView(1);
   }
   void service(uint32_t now) {
     if (dirty && now - changed >= 1500) {

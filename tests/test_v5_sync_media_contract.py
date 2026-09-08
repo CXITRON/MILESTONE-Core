@@ -29,11 +29,17 @@ assert 'memcmp(payload, "MSC1", 4)' in socket
 assert "length == 9 || length == 10" in socket
 assert "controlSequence" in socket and "accepted ? 1 : 0" in socket
 assert "never carry video data" in socket
-assert "BROWSER_LIMIT=256*1024*1024" in page
-assert "chunkSize=64*1024" in page
-assert "offset=${offset}&final=${final}" in page
+assert "async function convertAndStore()" in page
+assert "batchBytes>=256*1024" in page
+assert "duration>21600" in page
+assert "count>432000" in page
+assert "fps=Math.min(20" in page
+assert "total=0&offset=${offset}&final=${final?1:0}&stream=1" in page
 assert 'server.arg("total")' in portal
 assert 'server.arg("offset")' in portal
+assert 'server.arg("stream") == "1"' in portal
+assert "sync.beginUpload(expected, streaming)" in portal
+assert "uploadOpenEnded" in runtime
 assert "SD.usedBytes()" not in runtime
 assert "new WebSocket" in page
 assert "audio.currentTime" not in page  # timeline is read from the selected video element
@@ -44,8 +50,10 @@ assert "await api('/api/sync/control'" in page
 assert "portal.sync.servicePlayback" in main
 assert "display.flushRegion(16, 128);" in runtime
 assert "invalidateDisplayedFrame" in runtime
-assert "portal.sync.invalidateDisplayedFrame();" in main
+assert "The synchronized player owns all 128 body rows" in main
+assert "portal.sync.invalidateDisplayedFrame();" not in main
 assert "renderedFrames" in runtime and "controlCount" in runtime
+assert "Serial0.printf(" in main and '"SYNC state=%s' in main
 assert "void flushRegion(int y, int height)" in (root / "v5/MilestoneV5Main/V5Tft.h").read_text()
 assert "if (mode || back)" in main and "portal.close();" in main
 

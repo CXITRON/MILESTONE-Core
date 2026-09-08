@@ -26,12 +26,14 @@ uint32_t videoFrameAtMs(const VideoInfo &info, uint32_t positionMs) {
 uint32_t synchronizedVideoPositionMs(uint32_t anchorPositionMs,
                                      uint32_t anchorLocalMs, uint32_t nowMs,
                                      uint32_t durationMs, bool running) {
+  const int32_t elapsed = static_cast<int32_t>(nowMs - anchorLocalMs);
   const uint64_t value = uint64_t(anchorPositionMs) +
-                         (running ? uint32_t(nowMs - anchorLocalMs) : 0U);
+                         (running && elapsed > 0 ? uint32_t(elapsed) : 0U);
   return value < durationMs ? static_cast<uint32_t>(value) : durationMs;
 }
 bool synchronizedVideoControlStale(uint32_t nowMs, uint32_t lastControlMs,
                                    uint32_t timeoutMs, bool running) {
-  return running && uint32_t(nowMs - lastControlMs) > timeoutMs;
+  const int32_t elapsed = static_cast<int32_t>(nowMs - lastControlMs);
+  return running && elapsed > 0 && uint32_t(elapsed) > timeoutMs;
 }
 } // namespace MilestoneV5

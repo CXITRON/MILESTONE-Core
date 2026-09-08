@@ -36,9 +36,10 @@ public:
     controlCount = renderedFrames = lastRenderedMs = 0;
   }
 
-  bool beginUpload(uint32_t expected) {
+  bool beginUpload(uint32_t expected, bool openEnded = false) {
     remove();
-    if (!available || expected < 16 || expected > kMaximumBytes) {
+    if (!available || (!openEnded && expected < 16) ||
+        expected > kMaximumBytes) {
       return fail("동기화 영상 크기가 올바르지 않습니다");
     }
     // Do not walk the FAT allocation table before an upload. On a slow or
@@ -50,14 +51,17 @@ public:
       return fail("동기화 임시 파일을 만들 수 없습니다");
     expectedBytes = expected;
     writtenBytes = 0;
+    uploadOpenEnded = openEnded;
     state = State::Uploading;
     error = "";
     return true;
   }
 
   bool writeUpload(const uint8_t *data, size_t size) {
+    const uint32_t limit = uploadOpenEnded ? kMaximumBytes : expectedBytes;
     if (state != State::Uploading || !upload || !data ||
-        size > expectedBytes - writtenBytes || upload.write(data, size) != size) {
+        writtenBytes > limit || size > limit - writtenBytes ||
+        upload.write(data, size) != size) {
       abortUpload();
       return fail("동기화 영상 기록에 실패했습니다");
     }
@@ -66,12 +70,15 @@ public:
   }
 
   bool finishUpload() {
-    if (state != State::Uploading || !upload || writtenBytes != expectedBytes) {
+    if (state != State::Uploading || !upload || writtenBytes < 16 ||
+        (!uploadOpenEnded && writtenBytes != expectedBytes)) {
       abortUpload();
       return fail("동기화 영상 크기가 일치하지 않습니다");
     }
     upload.flush();
     upload.close();
+    expectedBytes = writtenBytes;
+    uploadOpenEnded = false;
     source = SD.open(kUploadPath, FILE_READ);
     uint8_t header[16];
     if (!source || source.read(header, sizeof(header)) != sizeof(header) ||
@@ -173,6 +180,7 @@ public:
     requestedFrame = target;
     if (target == displayedFrame)
       return false;
+    const uint32_t frameStartedUs = micros();
     uint8_t entry[4], record[8];
     if (!playIndex.seek(16U + target * 4U) ||
         playIndex.read(entry, sizeof(entry)) != sizeof(entry) ||
@@ -185,6 +193,8 @@ public:
         MilestoneV5::crc32(encoded, length) !=
             MilestoneV5::readVideoU32(record + 4))
       return playbackFail("동기화 프레임 CRC가 일치하지 않습니다");
+    readUs = micros() - frameStartedUs;
+    const uint32_t decodeStartedUs = micros();
     esp_jpeg_image_cfg_t cfg{};
     cfg.indata = encoded;
     cfg.indata_size = length;
@@ -207,8 +217,16 @@ public:
                             ((c & 31) * 255 / 31 * 29)) >> 8;
         rgb[i] = ((y & 248) << 8) | ((y & 252) << 3) | (y >> 3);
       }
+    decodeUs = micros() - decodeStartedUs;
+    const uint32_t outputStartedUs = micros();
     display.rgb565(rgb, 16, 128);
     display.flushRegion(16, 128);
+    outputUs = micros() - outputStartedUs;
+    frameUs = micros() - frameStartedUs;
+    if (frameUs > maxFrameUs)
+      maxFrameUs = frameUs;
+    if (displayedFrame != UINT32_MAX && target > displayedFrame + 1)
+      skippedFrames += target - displayedFrame - 1;
     displayedFrame = target;
     ++renderedFrames;
     lastRenderedMs = now;
@@ -234,6 +252,7 @@ public:
     state = State::Idle;
     error = "";
     expectedBytes = writtenBytes = indexedFrames = 0;
+    uploadOpenEnded = false;
     requestedFrame = displayedFrame = UINT32_MAX;
     controlCount = renderedFrames = lastRenderedMs = 0;
     info = {};
@@ -286,6 +305,9 @@ public:
   uint32_t requestedFrame = UINT32_MAX, controlCount = 0, renderedFrames = 0,
            lastRenderedMs = 0;
   uint8_t browserEventSequence = 0;
+  bool uploadOpenEnded = false;
+  uint32_t readUs = 0, decodeUs = 0, outputUs = 0, frameUs = 0,
+           maxFrameUs = 0, skippedFrames = 0;
 
 private:
   static constexpr const char *kDirectory = "/media/sync";

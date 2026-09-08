@@ -24,6 +24,7 @@ void prepare() {
   V5DownloadWorker::fixtures.clear();
   V5DownloadWorker::requests.clear();
   V5DownloadWorker::state = 0;
+  V5DownloadWorker::failure = V5DownloadWorker::kFailureNone;
   fixture("v5-bundle.txt", "MILESTONE-V5 BUNDLE 5.0.0 " + sha + " NONE\n");
   V5DownloadWorker::fixtures["v5-bundle.sig"] = {42};
   fixture("v5-main-manifest.txt",
@@ -79,6 +80,8 @@ int main(int argc, char **argv) {
   assert(current.checkedVersion == String("5.0.0"));
   assert(current.directory.isEmpty());
   assert(V5DownloadWorker::requests.size() == 2);
+  assert(!current.begin("../invalid", false));
+  assert(!current.upToDate && !current.ready && !current.error.isEmpty());
   prepare();
   V5DownloadWorker::fixtures["v5-main.bin"][0] ^= 1;
   V5BundleDownload corrupt;
@@ -127,4 +130,19 @@ int main(int argc, char **argv) {
   assert(!zeroNeverRequested.active && !zeroNeverRequested.ready);
   assert(zeroNeverRequested.error ==
          String("ZERO 다운로드 시작 응답 시간 초과"));
+  prepare();
+  V5BundleDownload localPreparationTimeout;
+  assert(localPreparationTimeout.begin("5.0.0", false));
+  FakeOta::now += 90001;
+  localPreparationTimeout.service(false, true, false);
+  assert(!localPreparationTimeout.active);
+  assert(localPreparationTimeout.error ==
+         String("MAIN Wi-Fi 또는 NTP 준비 시간 초과"));
+  prepare();
+  V5DownloadWorker::fixtures.erase("v5-bundle.txt");
+  V5BundleDownload httpFailure;
+  assert(httpFailure.begin("5.0.0", false));
+  httpFailure.service(true, true, false);
+  assert(!httpFailure.active);
+  assert(httpFailure.error == String("HTTPS 연결 또는 응답 실패"));
 }

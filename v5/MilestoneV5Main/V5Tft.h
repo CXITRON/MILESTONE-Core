@@ -105,10 +105,18 @@ public:
     startWrite();
     setWindow(0, y, 127, y + height - 1);
     const size_t first = size_t(y) * 128U;
-    const size_t count = size_t(height) * 128U;
-    for (size_t i = 0; i < count; ++i) {
-      writeColor(frame_[first + i], 1);
-      front_[first + i] = frame_[first + i];
+    uint8_t rowBytes[256];
+    for (int row = 0; row < height; ++row) {
+      const size_t offset = first + size_t(row) * 128U;
+      for (unsigned col = 0; col < 128; ++col) {
+        const uint16_t original = frame_[offset + col];
+        const uint16_t color = toneColor(original);
+        rowBytes[col * 2] = color >> 8;
+        rowBytes[col * 2 + 1] = color;
+        front_[offset + col] = original;
+      }
+      // One bounded row transfer replaces 256 separately locked byte calls.
+      spi_.writeBytes(rowBytes, sizeof(rowBytes));
     }
     endWrite();
     flushing_ = false;
@@ -294,10 +302,13 @@ private:
     spi_.transfer(y1);
     rawCommand(0x2C);
   }
-  void writeColor(uint16_t color, uint32_t count) {
-    color = (uint16_t(tone_[((color >> 11) & 31) * 2] >> 3) << 11) |
+  uint16_t toneColor(uint16_t color) const {
+    return (uint16_t(tone_[((color >> 11) & 31) * 2] >> 3) << 11) |
             (uint16_t(tone_[(color >> 5) & 63] >> 2) << 5) |
             (tone_[(color & 31) * 2] >> 3);
+  }
+  void writeColor(uint16_t color, uint32_t count) {
+    color = toneColor(color);
     const uint8_t hi = color >> 8, lo = color;
     while (count--) {
       spi_.transfer(hi);

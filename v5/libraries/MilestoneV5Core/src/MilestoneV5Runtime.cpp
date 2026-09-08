@@ -48,6 +48,21 @@ TaskAssignment assignNetworkTask(TaskKind task, const RadioState &state) {
   return result;
 }
 
+uint8_t nextEnabledIndex(uint8_t current, uint32_t enabledMask,
+                         uint8_t itemCount, int8_t direction) {
+  if (!itemCount || itemCount > 32 || current >= itemCount || !enabledMask ||
+      !direction)
+    return current;
+  for (uint8_t step = 1; step <= itemCount; ++step) {
+    int candidate = (int(current) + int(direction) * int(step)) % itemCount;
+    if (candidate < 0)
+      candidate += itemCount;
+    if (enabledMask & (uint32_t(1) << candidate))
+      return uint8_t(candidate);
+  }
+  return current;
+}
+
 TaskLeaseController::TaskLeaseController()
     : active_(false), leaseId_(0), task_(TaskKind::kMaintenance),
       owner_(Board::kNone), deadlineMs_(0) {}

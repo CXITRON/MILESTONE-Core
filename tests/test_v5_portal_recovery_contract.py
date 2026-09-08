@@ -32,6 +32,16 @@ assert "kZeroStartReplyTimeoutMs = 15000" in (root / "v5/MilestoneV5Main/V5Bundl
 assert "Automatic signed update check queued" in main
 assert "WiFi.softAPgetStationNum() > 0 && !useZero" in main
 assert "downloadError" in portal and '"error"' in portal
+assert "updateCheckInFlight && !bundleDownload.active" in main
+assert "bundleDownload.ready || bundleDownload.upToDate" in main
+assert "updateResultVisible = true" in main
+assert '"available"' in portal and '"current"' in portal and '"idle"' in portal
+assert "OTA check complete: current" in main
+assert "Serial0.printf(\"OTA check" in main
+download = (root / "v5/MilestoneV5Main/V5BundleDownload.h").read_text()
+assert "kLocalPreparationTimeoutMs = 90000" in download
+assert "kStageProgressTimeoutMs = 180000" in download
+assert "V5DownloadWorker::failureText()" in download
 
 # Stored credentials must not be replayed as a provisioning test on every
 # boot. SNTP teardown is legal only after that board has started SNTP/lwIP.

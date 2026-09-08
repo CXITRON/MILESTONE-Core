@@ -1,10 +1,10 @@
 # MILESTONE Core — MILESTONE D1
 
-현재 제품 펌웨어는 **v5.1.6**입니다. GOOUUU ESP32-S3 N16R8 MAIN과
+현재 제품 펌웨어는 **v5.1.7**입니다. GOOUUU ESP32-S3 N16R8 MAIN과
 Waveshare ESP32-S3-Zero ZERO를 함께 사용하며, 기존 v3.3.4의 CORE·MEDIA·NOW
 인터페이스를 듀얼 보드 구조 안에서 실행합니다.
 
-- 최신 릴리스: [MILESTONE Core v5.1.6](https://github.com/CXITRON/MILESTONE-Core/releases/tag/v5.1.6)
+- 최신 릴리스: [MILESTONE Core v5.1.7](https://github.com/CXITRON/MILESTONE-Core/releases/tag/v5.1.7)
 - 설치·OTA·복구: [v5/README.md](v5/README.md)
 - 구현·검증 범위: [v5/IMPLEMENTATION_STATUS.md](v5/IMPLEMENTATION_STATUS.md)
 - v3.3.4 설치·사용법·변경 이력: [docs/LEGACY_V3.md](docs/LEGACY_V3.md)
@@ -44,8 +44,11 @@ TFT에 표시되는 8자리 임의 암호 또는 사용자가 저장한 고정/�
   1~30fps, 오디오 없음
 - 포털 미디어: 브라우저에서 변환한 v3 호환 MSM1을 microSD에 원자적으로 저장
 - 포털 미디어 한도: v5 항목당 4 MiB·최대 4,096프레임
-- 동기화 MEDIA: 브라우저에서 전체 영상을 MVJ1으로 변환·임시 업로드한 뒤,
-  브라우저 원본 오디오 시간을 기준으로 SD 영상 재생(최대 256 MiB)
+- 동기화 MEDIA: MVJ1 프레임을 작은 묶음으로 순차 변환·임시 업로드한 뒤,
+  전체 저장이 끝나면 브라우저 원본 오디오 시간을 기준으로 SD 영상 재생
+  (최대 6시간·432,000프레임·2GiB 미만)
+- v5 포털 저장형/Sync에서 최대 20 FPS 선택 가능. 지속 가능한 출력 FPS는
+  SD·영상·부하에 따라 달라지며 Sync는 시간 기준으로 프레임을 건너뜀
 - 기본 출력은 컬러이며 MEDIA 설정에서만 흑백 표시를 선택할 수 있음
 - 재생 중에는 영상 프레임을 전송하지 않으며 제어 신호만 교환함
 
@@ -87,6 +90,20 @@ milestone-release local X.Y.Z "release note"
 
 모든 버튼은 `INPUT_PULLUP` active-low이며 두 보드는 GND를 공통으로 연결합니다.
 TFT와 microSD는 MAIN의 MOSI/SCK를 공유하고 각각 별도의 CS를 사용합니다.
+
+## v5.1.7 업데이트 안내
+
+- Sync 제어 수신 시각보다 이전 루프 시각을 사용해 새 재생 명령을 즉시
+  시간 초과로 처리하던 오류 수정. 재생·일시정지와 millis wrap 회귀 검사 추가
+- OTA 시작 실패와 최신 버전 완료를 명시적으로 종료하고 TFT/Portal에
+  업데이트 존재·확인 실패·현재 최신 결과 표시, UART0 시작/완료/원인 로그 추가
+- CORE NEXT/PREV 및 부팅 복원에 화면 선택 마스크 적용. 모두 해제한 설정은 거절
+- Sync 전체 변환본 메모리 누적을 제한된 묶음의 순차 SD 업로드로 교체.
+  기존 MVJ1/MSM1 호환 유지, MSM1 4MiB·4096프레임 한도 유지
+- v5 저장형 15·20 FPS 선택 추가, TFT 행 단위 전송과 SD/JPEG/TFT 처리시간 진단 추가
+- 호스트 회귀 테스트 및 MAIN/ZERO/SAFE 빌드 검증. 수정 MAIN의 자동 OTA는
+  ZERO 위임·서명 검증·최신 결과와 BLE 복귀를 실기 확인.
+  장시간 Sync, 최대 FPS, AP 수동 확인의 전체 실기 검증은 추가 확인 필요
 
 ## v5.1.6 업데이트 안내
 

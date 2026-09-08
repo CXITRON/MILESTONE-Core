@@ -81,6 +81,7 @@ public:
         rgb[i] = ((y & 248) << 8) | ((y & 252) << 3) | (y >> 3);
       }
     display.rgb565(rgb, 16, 128);
+    display.flushRegion(16, 128);
     ++frame;
     next = now + 1000 / info.fps;
     prefetched = false;

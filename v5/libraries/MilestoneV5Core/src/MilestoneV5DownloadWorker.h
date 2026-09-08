@@ -13,6 +13,20 @@ constexpr uint32_t capacity = 16384;
 std::atomic<int> state{0}; // idle, running, complete, failed
 std::atomic<bool> cancel{false};
 std::atomic<uint32_t> produced{0}, consumed{0}, length{0};
+enum Failure : uint8_t {
+  kFailureNone,
+  kFailureInvalidRequest,
+  kFailureWifi,
+  kFailureClock,
+  kFailureHeap,
+  kFailurePsram,
+  kFailureTask,
+  kFailureHttp,
+  kFailureLength,
+  kFailureStalled,
+  kFailureCancelled
+};
+std::atomic<uint8_t> failure{kFailureNone};
 uint8_t *ring = nullptr;
 String url;
 uint32_t limit = 0;
@@ -27,6 +41,7 @@ bool trustedUrl(const String &value) {
 }
 void run(void *) {
   bool ok = false;
+  uint8_t why = kFailureHttp;
   {
     NetworkClientSecure client;
     client.setCACert(MILESTONE_UPDATE_ROOT_CA);
@@ -57,6 +72,7 @@ void run(void *) {
     }
     const int size = http.getSize();
     if (code == 200 && size > 0 && uint32_t(size) <= limit) {
+      why = kFailureStalled;
       length.store(size, std::memory_order_release);
       uint32_t offset = 0, lastData = millis(), started = millis();
       auto *stream = http.getStreamPtr();
@@ -86,23 +102,42 @@ void run(void *) {
           vTaskDelay(1);
       }
       ok = offset == uint32_t(size) && !cancel.load();
-    }
+    } else if (code == 200)
+      why = kFailureLength;
     http.end();
   }
+  if (cancel.load())
+    why = kFailureCancelled;
+  failure.store(ok ? uint8_t(kFailureNone) : why, std::memory_order_release);
   state.store(ok ? 2 : 3, std::memory_order_release);
   vTaskDelete(nullptr);
 }
 bool start(const String &source, uint32_t maximum) {
+  failure.store(kFailureNone, std::memory_order_release);
   if (state.load(std::memory_order_acquire) == 1 || source.length() > 420 ||
-      !trustedUrl(source) || !maximum || maximum > 8 * 1024 * 1024 ||
-      WiFi.status() != WL_CONNECTED || time(nullptr) < 1704067200 ||
-      ESP.getFreeHeap() < 90000 || ESP.getMaxAllocHeap() < 40000)
+      !trustedUrl(source) || !maximum || maximum > 8 * 1024 * 1024) {
+    failure.store(kFailureInvalidRequest);
     return false;
+  }
+  if (WiFi.status() != WL_CONNECTED) {
+    failure.store(kFailureWifi);
+    return false;
+  }
+  if (time(nullptr) < 1704067200) {
+    failure.store(kFailureClock);
+    return false;
+  }
+  if (ESP.getFreeHeap() < 90000 || ESP.getMaxAllocHeap() < 40000) {
+    failure.store(kFailureHeap);
+    return false;
+  }
   if (!ring)
     ring = static_cast<uint8_t *>(
         heap_caps_malloc(capacity, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-  if (!ring)
+  if (!ring) {
+    failure.store(kFailurePsram);
     return false;
+  }
   url = source;
   limit = maximum;
   produced.store(0);
@@ -112,10 +147,26 @@ bool start(const String &source, uint32_t maximum) {
   state.store(1, std::memory_order_release);
   if (xTaskCreatePinnedToCore(run, "v5-download", 16384, nullptr, 1, nullptr,
                               0) != pdPASS) {
+    failure.store(kFailureTask);
     state.store(3);
     return false;
   }
   return true;
+}
+const char *failureText(uint8_t code = failure.load(std::memory_order_acquire)) {
+  switch (code) {
+  case kFailureInvalidRequest: return "HTTPS 요청값 검증 실패";
+  case kFailureWifi: return "Wi-Fi 연결이 준비되지 않음";
+  case kFailureClock: return "TLS 검증용 시각이 준비되지 않음";
+  case kFailureHeap: return "HTTPS용 내부 heap이 부족함";
+  case kFailurePsram: return "HTTPS 수신용 PSRAM이 부족함";
+  case kFailureTask: return "HTTPS 작업 생성 실패";
+  case kFailureHttp: return "HTTPS 연결 또는 응답 실패";
+  case kFailureLength: return "HTTPS 응답 크기가 올바르지 않음";
+  case kFailureStalled: return "HTTPS 수신이 중단되거나 시간 초과됨";
+  case kFailureCancelled: return "HTTPS 작업이 취소됨";
+  default: return "HTTPS 다운로드 실패";
+  }
 }
 size_t read(uint32_t offset, uint8_t *out, size_t maximum) {
   if (!out || offset != consumed.load(std::memory_order_acquire))

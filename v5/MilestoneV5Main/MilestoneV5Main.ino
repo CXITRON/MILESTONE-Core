@@ -64,6 +64,11 @@ bool restoreArmed = false;
 uint32_t lastRtcSyncMs = 0;
 bool rtcSynced = false;
 bool bootUpdateCheckAttempted = false;
+enum class UpdateCheckResult : uint8_t { None, Available, Current, Failed };
+UpdateCheckResult updateCheckResult = UpdateCheckResult::None;
+bool updateCheckInFlight = false, updateCheckWasAutomatic = false,
+     updateResultVisible = false;
+String updateResultVersion, updateResultError;
 MilestoneV5::ProfileController profiles(MilestoneV5::Profile::kCore);
 uint8_t txSlot[MilestoneV5::kSpiSlotSize] = {};
 uint8_t rxSlot[MilestoneV5::kSpiSlotSize] = {};
@@ -161,6 +166,20 @@ void renderPortalScreen() {
   hardware.legacyText("BACK: CLOSE", 123, u8g2_font_5x8_tf, 0xBE3A);
 }
 
+void renderUpdateCheckResult() {
+  const char *title = updateCheckResult == UpdateCheckResult::Available
+                          ? "업데이트 있음"
+                      : updateCheckResult == UpdateCheckResult::Current
+                          ? "현재 최신 버전"
+                          : "업데이트 확인 실패";
+  const String detail = updateCheckResult == UpdateCheckResult::Failed
+                            ? updateResultError
+                            : String("v") + updateResultVersion;
+  hardware.body(title, detail,
+                updateCheckWasAutomatic ? "자동 확인 완료" : "수동 확인 완료",
+                "아무 버튼: 닫기");
+}
+
 void renderModeMenu() {
   const auto item = modeMenu.selected();
   const bool profile = item == MilestoneV5::ModeMenuItem::kCore ||
@@ -229,6 +248,16 @@ void renderBody() {
         sdUpdate.state == V5SdUpdate::State::Hashing ? "SD 이미지 검증 중"
                                                      : "비활성 슬롯 기록 중",
         String(sdUpdate.done) + " / " + sdUpdate.size, "전원을 끄지 마세요");
+  } else if (updateResultVisible) {
+    renderUpdateCheckResult();
+  } else if (portal.active &&
+             profiles.active() == MilestoneV5::Profile::kMedia &&
+             portal.sync.activePlayback()) {
+    // The synchronized player owns all 128 body rows while it is active.
+    // A generic UI redraw here would repaint the MEDIA picker/thumbnail over
+    // the decoded frame. Status bands are refreshed independently.
+    redraw = false;
+    return;
   } else if (portal.active) {
     renderPortalScreen();
   } else if (modeMenu.isOpen()) {
@@ -467,7 +496,7 @@ void serviceButtons(uint32_t now) {
   const bool updating = sdUpdate.state == V5SdUpdate::State::Hashing ||
                         sdUpdate.state == V5SdUpdate::State::Writing ||
                         zeroUpdate.busy() || bundleUpdate.critical();
-  if (boot && !safeModeActive && !updating) {
+  if (boot && !updateResultVisible && !safeModeActive && !updating) {
     photoVisible = false;
     if (radio.busy)
       radio.requestPortal = true;
@@ -494,6 +523,11 @@ void serviceButtons(uint32_t now) {
     return;
   if (now - bootStartedMs < 3000)
     return;
+  if (updateResultVisible && (boot || mode || back || prev || next || ok)) {
+    updateResultVisible = false;
+    redraw = true;
+    return;
+  }
   if (portal.bundleRequested) {
     if (back || boot) {
       portal.bundleRequested = false;
@@ -1056,6 +1090,7 @@ void loop() {
     if (hardware.sdMounted && store.load(credentials)) {
       portal.downloadVersion = "latest";
       portal.downloadRequested = true;
+      portal.downloadAutomatic = true;
       portal.downloadReady = false;
       portal.downloadCurrent = false;
       portal.downloadError = "";
@@ -1065,6 +1100,13 @@ void loop() {
   }
   if (portal.downloadRequested) {
     portal.downloadRequested = false;
+    updateCheckInFlight = true;
+    updateCheckWasAutomatic = portal.downloadAutomatic;
+    portal.downloadOrigin = updateCheckWasAutomatic ? "automatic" : "manual";
+    Serial.printf("OTA check start: origin=%s selector=%s\n",
+                  portal.downloadOrigin.c_str(), portal.downloadVersion.c_str());
+    Serial0.printf("OTA check start: origin=%s selector=%s\n",
+                   portal.downloadOrigin.c_str(), portal.downloadVersion.c_str());
     const bool zeroFresh =
         lastValidLinkMs != 0 &&
         now - lastValidLinkMs <= MilestoneV5::kLinkStaleMs &&
@@ -1082,6 +1124,10 @@ void loop() {
       bundleDownload.reject("업데이트 확인을 시작할 수 없습니다");
     }
   }
+  if (bundleDownload.active && !bundleDownload.useZero &&
+      radio.requestPortal)
+    bundleDownload.stop(
+        "설정 AP 진입 요청으로 MAIN 자동 업데이트 확인이 취소되었습니다");
   radio.downloadWanted = bundleDownload.active && !bundleDownload.useZero;
   radio.service(now, portal, hardware, artwork, lastValidLinkMs != 0,
                 zeroStatus.stateFlags,
@@ -1092,8 +1138,24 @@ void loop() {
                          lastValidLinkMs != 0 &&
                              now - lastValidLinkMs <=
                                  MilestoneV5::kLinkStaleMs);
-  if (portal.downloadBusy && !bundleDownload.active) {
-    portal.note(8, bundleDownload.ready ? 0 : 1);
+  if (updateCheckInFlight && !bundleDownload.active) {
+    const bool success = bundleDownload.ready || bundleDownload.upToDate;
+    portal.note(8, success ? 0 : 1);
+    updateCheckResult = bundleDownload.ready
+                            ? UpdateCheckResult::Available
+                        : bundleDownload.upToDate
+                            ? UpdateCheckResult::Current
+                            : UpdateCheckResult::Failed;
+    updateResultVersion = bundleDownload.checkedVersion.isEmpty()
+                              ? String(MilestoneV5::FIRMWARE_VERSION)
+                              : bundleDownload.checkedVersion;
+    updateResultError = bundleDownload.error.isEmpty()
+                            ? String("알 수 없는 업데이트 확인 오류")
+                            : bundleDownload.error;
+    portal.downloadLastCheck = String("uptime ") + millis() / 1000UL + "s";
+    updateResultVisible = true;
+    updateCheckInFlight = false;
+    redraw = true;
     if (bundleDownload.ready)
       Serial.printf("OTA check complete: update %s available\n",
                     bundleDownload.checkedVersion.c_str());
@@ -1102,8 +1164,16 @@ void loop() {
                     bundleDownload.checkedVersion.c_str());
     else
       Serial.printf("OTA check failed: %s\n", bundleDownload.error.c_str());
+    if (bundleDownload.ready)
+      Serial0.printf("OTA check complete: update %s available\n",
+                     bundleDownload.checkedVersion.c_str());
+    else if (bundleDownload.upToDate)
+      Serial0.printf("OTA check complete: current (%s)\n",
+                     bundleDownload.checkedVersion.c_str());
+    else
+      Serial0.printf("OTA check failed: %s\n", bundleDownload.error.c_str());
   }
-  portal.downloadBusy = bundleDownload.active;
+  portal.downloadBusy = bundleDownload.active || updateCheckInFlight;
   portal.downloadReady = bundleDownload.ready;
   portal.downloadCurrent = bundleDownload.upToDate;
   portal.downloadError = bundleDownload.error;
@@ -1201,9 +1271,6 @@ void loop() {
   if (redraw && ((!zeroUpdate.busy() && !bundleUpdate.critical()) ||
                  now - lastBodyRender >= 100)) {
     renderBody();
-    if (portal.active && profiles.active() == MilestoneV5::Profile::kMedia &&
-        portal.sync.activePlayback())
-      portal.sync.invalidateDisplayedFrame();
     lastBodyRender = now;
   }
   if (!safeModeActive && !bundleUpdate.critical() && !modeMenu.isOpen() &&
@@ -1220,7 +1287,9 @@ void loop() {
       portal.active && profiles.active() == MilestoneV5::Profile::kMedia &&
       portal.sync.activePlayback()) {
     const bool rendered =
-        portal.sync.servicePlayback(hardware.display, now, hardware.monochrome);
+        // Portal callbacks stamp controls after this loop's initial `now`.
+        // Sample again or the new control appears almost 2^32 ms old.
+        portal.sync.servicePlayback(hardware.display, millis(), hardware.monochrome);
     if (!rendered && portal.sync.state == V5SyncMedia::State::Error)
       redraw = true;
     static uint32_t lastSyncDiagnosticMs = 0;
@@ -1235,6 +1304,22 @@ void loop() {
           static_cast<unsigned long>(portal.sync.displayedFrame),
           static_cast<unsigned long>(portal.sync.renderedFrames),
           portal.sync.error.c_str());
+      Serial0.printf(
+          "SYNC state=%s pos=%lu control=%lu target=%lu displayed=%lu rendered=%lu error=%s\n",
+          portal.sync.stateName(),
+          static_cast<unsigned long>(portal.sync.positionMs(now)),
+          static_cast<unsigned long>(portal.sync.controlCount),
+          static_cast<unsigned long>(portal.sync.requestedFrame),
+          static_cast<unsigned long>(portal.sync.displayedFrame),
+          static_cast<unsigned long>(portal.sync.renderedFrames),
+          portal.sync.error.c_str());
+      Serial0.printf("SYNC cost_us read=%lu decode=%lu tft=%lu total=%lu max=%lu skipped=%lu\n",
+                     (unsigned long)portal.sync.readUs,
+                     (unsigned long)portal.sync.decodeUs,
+                     (unsigned long)portal.sync.outputUs,
+                     (unsigned long)portal.sync.frameUs,
+                     (unsigned long)portal.sync.maxFrameUs,
+                     (unsigned long)portal.sync.skippedFrames);
     }
   }
   if (!safeModeActive && !bundleUpdate.critical() && !modeMenu.isOpen() &&

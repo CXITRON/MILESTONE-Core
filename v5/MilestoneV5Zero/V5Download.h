@@ -6,6 +6,7 @@ class V5RemoteDownload {
 public:
   uint32_t id = 0, lastRequest = 0, startedAt = 0;
   bool active = false, launched = false, failed = false;
+  uint8_t failureCode = V5DownloadWorker::kFailureNone;
   String source;
   uint32_t limit = 0;
   void service(bool healthy) {
@@ -14,6 +15,8 @@ public:
     if (!healthy || millis() - lastRequest > 15000 ||
         millis() - startedAt > 600000) {
       V5DownloadWorker::cancel.store(true);
+      failureCode = !healthy ? V5DownloadWorker::kFailureCancelled
+                             : V5DownloadWorker::kFailureStalled;
       failed = true;
     }
     if (failed) {
@@ -23,12 +26,17 @@ public:
     }
     if (!launched) {
       if (millis() - startedAt > 60000) {
+        if (failureCode == V5DownloadWorker::kFailureNone)
+          failureCode = V5DownloadWorker::kFailureWifi;
         failed = true;
         return;
       }
       if (!V5Ams::bluetoothNowPlayingHasLiveConnection() &&
-          V5ArtworkWorker::state.load() != 1)
+          V5ArtworkWorker::state.load() != 1) {
         launched = V5DownloadWorker::start(source, limit);
+        if (!launched)
+          failureCode = V5DownloadWorker::failure.load();
+      }
     }
   }
   bool request(const uint8_t *p, size_t n, uint8_t *out, size_t &size,
@@ -67,6 +75,7 @@ public:
         limit = maximum;
         active = true;
         launched = failed = false;
+        failureCode = V5DownloadWorker::kFailureNone;
         startedAt = millis();
       }
       lastRequest = millis();
@@ -78,6 +87,7 @@ public:
     lastRequest = millis();
     if (op == 18 && n == 5) {
       failed = true;
+      failureCode = V5DownloadWorker::kFailureCancelled;
       V5DownloadWorker::cancel.store(true);
       out[5] = 0;
       return true;
@@ -86,8 +96,11 @@ public:
       return false;
     uint32_t offset = MilestoneV5::readVideoU32(p + 5);
     memcpy(out + 6, p + 5, 4);
-    if (failed)
+    if (failed) {
+      out[14] = failureCode;
+      size = 15;
       return true;
+    }
     if (!launched) {
       out[5] = 1;
       return true;
@@ -97,6 +110,9 @@ public:
       out[10 + i] = total >> (8 * i);
     if (V5DownloadWorker::state.load() == 3) {
       failed = true;
+      failureCode = V5DownloadWorker::failure.load(std::memory_order_acquire);
+      out[14] = failureCode;
+      size = 15;
       return true;
     }
     size_t got = V5DownloadWorker::read(offset, out + 14, 460);

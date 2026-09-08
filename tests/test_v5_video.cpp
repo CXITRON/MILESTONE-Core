@@ -15,6 +15,14 @@ int main(){
   assert(!MilestoneV5::synchronizedVideoControlStale(1200,1000,250,false));
   assert(!MilestoneV5::synchronizedVideoControlStale(1250,1000,250,true));
   assert(MilestoneV5::synchronizedVideoControlStale(1251,1000,250,true));
+  // A control received later in the loop is newer than the loop timestamp.
+  // It must neither time out immediately nor jump to the final frame.
+  assert(!MilestoneV5::synchronizedVideoControlStale(1000,1001,2500,true));
+  assert(MilestoneV5::synchronizedVideoPositionMs(12000,1001,1000,60000,true)==12000);
+  assert(!MilestoneV5::synchronizedVideoControlStale(0xfffffff0U,0x10U,2500,true));
+  MilestoneV5::VideoInfo longVideo{128,128,20,432000};
+  assert(MilestoneV5::videoFrameAtMs(longVideo,21599999)==431999);
+  assert(MilestoneV5::videoFrameAtMs(longVideo,21600000)==431999);
   assert(!MilestoneV5::decodeVideoHeader(b,15,v));
   b[8]=0;assert(!MilestoneV5::decodeVideoHeader(b,16,v));
   b[8]=31;assert(!MilestoneV5::decodeVideoHeader(b,16,v));

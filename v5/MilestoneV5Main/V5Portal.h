@@ -64,9 +64,10 @@ public:
   uint32_t bundleRequestedMs = 0;
   String bundleStatus = "idle", bundleError;
   bool downloadRequested = false, downloadBusy = false, downloadReady = false,
-       downloadCurrent = false;
+       downloadCurrent = false, downloadAutomatic = false;
   String downloadVersion = "latest", downloadStatus, downloadError,
          downloadLatest = MilestoneV5::FIRMWARE_VERSION,
+         downloadLastCheck = "-", downloadOrigin = "-",
          bundleSource = "/firmware/incoming";
 
   void begin(V5Hardware &h, V5CoreViews &views, V5Artwork &art,
@@ -566,6 +567,7 @@ public:
       core->nowLayout = layout;
       core->cycleMask = mask;
       memcpy(core->order, order, 7);
+      core->ensureEnabledView();
       if (!core->save()) {
         *core = previous;
         server.send(500, "text/plain", "화면 설정 저장에 실패했습니다");
@@ -707,6 +709,7 @@ public:
       }
       downloadVersion = server.arg("version");
       downloadRequested = true;
+      downloadAutomatic = false;
       downloadCurrent = false;
       downloadError = "";
       server.sendHeader("Location", "/");
@@ -993,12 +996,20 @@ private:
                   ",\"fps\":" + String(sync.info.fps) +
                   ",\"indexed_frames\":" + String(sync.indexedFrames) +
                   ",\"written_bytes\":" + String(sync.writtenBytes) +
+                  ",\"streaming_upload\":" +
+                  String(sync.uploadOpenEnded ? "true" : "false") +
                   ",\"duration_ms\":" + String(sync.durationMs()) +
                   ",\"position_ms\":" + String(sync.positionMs(nowMs)) +
                   ",\"requested_frame\":" + String(sync.requestedFrame) +
                   ",\"displayed_frame\":" + String(sync.displayedFrame) +
                   ",\"control_count\":" + String(sync.controlCount) +
                   ",\"rendered_frames\":" + String(sync.renderedFrames) +
+                  ",\"read_us\":" + String(sync.readUs) +
+                  ",\"decode_us\":" + String(sync.decodeUs) +
+                  ",\"output_us\":" + String(sync.outputUs) +
+                  ",\"frame_us\":" + String(sync.frameUs) +
+                  ",\"max_frame_us\":" + String(sync.maxFrameUs) +
+                  ",\"skipped_frames\":" + String(sync.skippedFrames) +
                   ",\"last_rendered_ms\":" + String(sync.lastRenderedMs) +
                   ",\"device_ms\":" + String(nowMs) +
                   ",\"error\":\"" + jsonEscape(sync.error) + "\"}";
@@ -1072,14 +1083,17 @@ private:
               "\",\"update_state\":\"" +
               String(downloadBusy ? "checking" : downloadReady ? "available"
                      : !downloadError.isEmpty() ? "error"
-                                                : "current") +
+                     : downloadCurrent ? "current"
+                                       : "idle") +
               "\",\"update_available\":" +
               String(downloadReady ? "true" : "false") +
               ",\"update_install_ready\":" +
               String(downloadReady ? "true" : "false") +
               ",\"update_check_pending\":" +
               String(downloadBusy ? "true" : "false") +
-              ",\"update_error\":\"" + jsonEscape(downloadError) + "\"}"
+              ",\"last_update_check\":\"" + jsonEscape(downloadLastCheck) +
+              "\",\"update_check_origin\":\"" + jsonEscape(downloadOrigin) +
+              "\",\"update_error\":\"" + jsonEscape(downloadError) + "\"}"
               ;
       sendJson(200, body);
     });
@@ -1362,6 +1376,7 @@ private:
           HTTPUpload &part = server.upload();
           if (part.status == UPLOAD_FILE_START) {
             uint32_t expected = 0, offset = 0;
+            const bool streaming = server.arg("stream") == "1";
             syncUploadFinalize = server.arg("final") == "1";
             const bool permitted = localRequest() &&
                                    profile == MilestoneV5::Profile::kMedia &&
@@ -1371,10 +1386,13 @@ private:
                 unsignedInteger(server.arg("total"), expected) &&
                 unsignedInteger(server.arg("offset"), offset))
               validPosition =
-                  (offset == 0 && sync.beginUpload(expected)) ||
+                  (offset == 0 && (!streaming || expected == 0) &&
+                   sync.beginUpload(expected, streaming)) ||
                   (offset != 0 &&
                    sync.state == V5SyncMedia::State::Uploading &&
-                   sync.expectedBytes == expected && sync.writtenBytes == offset);
+                   sync.uploadOpenEnded == streaming &&
+                   (streaming || sync.expectedBytes == expected) &&
+                   sync.writtenBytes == offset);
             syncUploadRejected = !permitted || !validPosition;
             touch();
           } else if (part.status == UPLOAD_FILE_WRITE) {
@@ -1422,6 +1440,7 @@ private:
       }
       downloadVersion = "latest";
       downloadRequested = true;
+      downloadAutomatic = false;
       downloadReady = false;
       downloadCurrent = false;
       downloadError = "";
@@ -1633,7 +1652,7 @@ private:
     uint8_t order[7];
     valid = parseLegacyOrder(server.arg("cycle_order"), order) && valid;
     int cycleMask;
-    valid = integer(server.arg("cycle_mask"), 1, 255, cycleMask) && valid;
+    valid = integer(server.arg("cycle_mask"), 1, 127, cycleMask) && valid;
     if (!valid) {
       sendJson(400, "{\"error\":\"설정값을 확인하세요.\"}");
       return;
@@ -1666,6 +1685,7 @@ private:
     core->burnin = server.arg("burnin") == "1";
     core->cycleMask = cycleMask & 0x7F;
     memcpy(core->order, order, sizeof(order));
+    core->ensureEnabledView();
     core->screenOffMinutes = screenOff;
     memcpy(core->colors, colors, sizeof(colors));
     system.luminance = displayLuminance;

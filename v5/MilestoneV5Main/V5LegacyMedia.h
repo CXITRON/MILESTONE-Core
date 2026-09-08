@@ -304,7 +304,7 @@ public:
       return changed;
     }
     ++frameIndex;
-    nextFrameMs = now + (delay < 100 ? 100 : delay);
+    nextFrameMs = now + (delay < 50 ? 50 : delay);
     displayFrame(display);
     frameReady = false;
     return true;
@@ -463,7 +463,7 @@ private:
       return false;
     }
     frameIndex = 1;
-    nextFrameMs = millis() + (delay < 100 ? 100 : delay);
+    nextFrameMs = millis() + (delay < 50 ? 50 : delay);
     frameReady = true;
     return true;
   }
@@ -485,5 +485,6 @@ private:
       display.blitRgb332(frame, 16);
     else
       display.blitMonoPacked(frame, 16, 0xFFFF, 0x0000);
+    display.flushRegion(16, 128);
   }
 };

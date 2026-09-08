@@ -12,8 +12,22 @@ public:
   String directory, error, checkedVersion;
   uint32_t received = 0, total = 0;
   bool begin(const String &version, bool onZero) {
-    if (active || V5DownloadWorker::state.load() == 1 || !SD.cardSize())
+    if (active) {
+      error = "업데이트 확인이 이미 진행 중입니다";
       return false;
+    }
+    ready = false;
+    upToDate = false;
+    checkedVersion = "";
+    error = "";
+    if (V5DownloadWorker::state.load() == 1) {
+      error = "HTTPS 작업기가 아직 사용 중입니다";
+      return false;
+    }
+    if (!SD.cardSize()) {
+      error = "SD 카드를 사용할 수 없습니다";
+      return false;
+    }
     // The release selector is a tag, never an arbitrary URL or filesystem path.
     bool valid = version == "latest";
     unsigned parts[3];
@@ -70,6 +84,8 @@ public:
     id = esp_random();
     if (!id)
       id = 1;
+    log(String("OTA transport begin: ") + (useZero ? "ZERO" : "MAIN") +
+        " selector=" + version);
     return true;
   }
   void stop(const char *why) {
@@ -78,6 +94,7 @@ public:
     ready = false;
     upToDate = false;
     error = why;
+    log(String("OTA transport failed: ") + why);
     V5DownloadWorker::cancel.store(true);
     if (hashActive) {
       mbedtls_sha256_free(&sha);
@@ -118,22 +135,27 @@ public:
       if (begun && !zeroOnline && lastReply &&
           now - lastReply > kZeroLinkTimeoutMs)
         stop("ZERO 다운로드 연결 끊김");
+      else if (begun && now - stageStarted > kStageProgressTimeoutMs)
+        stop("ZERO 다운로드 단계 진행 시간 초과");
       return;
     }
-    if (!localReady)
+    if (!localReady) {
+      if (!begun && millis() - stageStarted > kLocalPreparationTimeoutMs)
+        stop("MAIN Wi-Fi 또는 NTP 준비 시간 초과");
       return;
+    }
     if (!begun) {
       if (!openFile())
         return;
       if (!V5DownloadWorker::start(base + asset(), limit())) {
-        stop("HTTPS 준비 조건을 충족하지 못함");
+        stop(V5DownloadWorker::failureText());
         return;
       }
       begun = true;
     }
     int state = V5DownloadWorker::state.load(std::memory_order_acquire);
     if (state == 3) {
-      stop("HTTPS 다운로드 실패");
+      stop(V5DownloadWorker::failureText());
       return;
     }
     total = V5DownloadWorker::length.load(std::memory_order_acquire);
@@ -141,6 +163,8 @@ public:
     size_t n = V5DownloadWorker::read(received, bytes, sizeof(bytes));
     if (n && !append(bytes, n))
       return;
+    if (n)
+      stageStarted = millis();
     if (state == 2 && total && received == total)
       finishFile();
   }
@@ -172,7 +196,8 @@ public:
       return false;
     lastReply = millis();
     if (p[5] == 2) {
-      stop("ZERO HTTPS 요청 실패");
+      stop(n >= 15 ? V5DownloadWorker::failureText(p[14])
+                   : "ZERO HTTPS 요청 실패");
       return true;
     }
     if (p[0] == 16) {
@@ -191,8 +216,10 @@ public:
       stop("다운로드 크기가 매니페스트를 초과함");
       return true;
     }
-    if (p[5] == 0 && n > 14)
-      append(p + 14, n - 14);
+    if (p[5] == 0 && n > 14) {
+      if (append(p + 14, n - 14))
+        stageStarted = millis();
+    }
     else if (p[5] == 3) {
       if (total && received == total)
         finishFile();
@@ -205,6 +232,8 @@ public:
 private:
   static constexpr uint32_t kZeroStartReplyTimeoutMs = 15000;
   static constexpr uint32_t kZeroLinkTimeoutMs = 15000;
+  static constexpr uint32_t kLocalPreparationTimeoutMs = 90000;
+  static constexpr uint32_t kStageProgressTimeoutMs = 180000;
   String base;
   File file;
   uint8_t index = 0;
@@ -214,6 +243,10 @@ private:
   MilestoneV5::SignedBundleManifest bundle{};
   MilestoneV5::SignedImageManifest main{}, zero{};
   mbedtls_sha256_context sha;
+  static void log(const String &message) {
+    Serial.println(message);
+    Serial0.println(message);
+  }
   void cleanupDirectory() {
     if (!directory.startsWith("/firmware/download-"))
       return;
@@ -329,6 +362,7 @@ private:
           error = "";
           cleanupDirectory();
           directory = "";
+          log(String("OTA signed catalog current: ") + checkedVersion);
           return;
         }
       }
@@ -363,6 +397,7 @@ private:
     if (index == 8 || (index == 7 && !bundle.hasZero)) {
       active = false;
       ready = true;
+      log(String("OTA signed bundle verified: ") + checkedVersion);
       return;
     }
     if (++id == 0)
@@ -372,5 +407,6 @@ private:
     firstZeroRequestMs = 0;
     lastReply = 0;
     received = total = 0;
+    log(String("OTA next asset: ") + asset());
   }
 };
