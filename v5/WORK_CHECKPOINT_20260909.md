@@ -65,3 +65,16 @@ USB diagnostic installation because OTA was blocked.
   Existing set-ID schema/paths need no change. Probe removed from release source.
 - Preparing 5.1.9 with existing signer and unified release workflow. Full OTA
   installation still pending; do not equate catalog-current with installation.
+
+## Release completed
+
+- Official `milestone-release --yes local 5.1.9` completed: core/v5 tests,
+  MAIN/ZERO/SAFE builds, signatures, atomic main/tag push and all 13 published
+  asset checks passed. Release commit/tag c6eabf7 / v5.1.9.
+  https://github.com/CXITRON/MILESTONE-Core/releases/tag/v5.1.9
+- MAIN build 1,761,047 bytes; ZERO 1,345,283; SAFE 593,928.
+- No post-release USB flashing. Device remains on 5.1.8 diagnostic MAIN and
+  5.1.7 ZERO until OTA. User asked to trigger AP check/install and physical OK;
+  passive MAIN monitor is /tmp/milestone-ota-final-monitor.py (55 s, no reset).
+- Actual new-version OTA installation and live NOW cadence remain unverified.
+  Never bypass the physical OK confirmation to automate installation.
