@@ -51,11 +51,17 @@ int main(int argc, char **argv) {
   assert(argc == 2);
   FakeOta::reset();
   FakeSd::root = std::filesystem::path(argv[1]) / "download-sd";
-  std::filesystem::create_directories(FakeSd::root / "firmware");
+  // An SD mount does not guarantee that boot created /firmware successfully.
+  std::filesystem::create_directories(FakeSd::root);
   prepare();
   V5BundleDownload job;
   assert(!job.begin("../bad", false));
+  SD.mkdirFalseSuccess = true;
   assert(job.begin("5.0.0", false));
+  SD.mkdirFalseSuccess = false;
+  assert(SD.exists("/firmware"));
+  assert(job.directory.startsWith("/firmware/dl"));
+  assert(job.directory.length() == 18); // Eight-character FAT staging name.
   for (unsigned i = 0; i < 30 && job.active; ++i)
     job.service(true, true, false);
   assert(job.ready && !job.active);
@@ -145,4 +151,17 @@ int main(int argc, char **argv) {
   httpFailure.service(true, true, false);
   assert(!httpFailure.active);
   assert(httpFailure.error == String("HTTPS 연결 또는 응답 실패"));
+  // A non-directory parent must fail explicitly and preserve the user's file.
+  FakeSd::root = std::filesystem::path(argv[1]) / "download-parent-conflict";
+  std::filesystem::create_directories(FakeSd::root);
+  File parent = SD.open("/firmware", FILE_WRITE);
+  const uint8_t marker = 42;
+  assert(parent.write(&marker, 1) == 1);
+  parent.close();
+  prepare();
+  V5BundleDownload parentConflict;
+  assert(!parentConflict.begin("latest", false));
+  assert(!parentConflict.active);
+  assert(parentConflict.error.startsWith("다운로드 폴더 생성 실패: /firmware"));
+  assert(std::filesystem::is_regular_file(FakeSd::root / "firmware"));
 }

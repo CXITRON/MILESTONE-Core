@@ -1337,6 +1337,8 @@ void loop() {
        : awaitingAck    ? 20UL
        : (artwork.stage == 1 || artwork.stage == 2) && !safeModeActive
            ? 20UL
+       : profiles.active() == MilestoneV5::Profile::kNow && !safeModeActive
+           ? 250UL // ZERO alternates status/AMS: obtain playback at least twice/s.
            : MilestoneV5::kHeartbeatIntervalMs)) {
     lastHeartbeatMs = now;
     exchangeHeartbeat(now);

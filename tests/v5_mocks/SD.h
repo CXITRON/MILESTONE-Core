@@ -117,6 +117,8 @@ public:
 };
 class FakeSdClass {
 public:
+  const char *mountpoint() { return FakeSd::root.c_str(); }
+  bool mkdirFalseSuccess = false;
   File open(const String &s, const char *mode = FILE_READ) {
     return File(FakeSd::path(s), mode);
   }
@@ -124,7 +126,12 @@ public:
     return std::filesystem::exists(FakeSd::path(s));
   }
   bool mkdir(const String &s) {
+    if (mkdirFalseSuccess)
+      return true;
     std::error_code e;
+    // Arduino VFS mkdir succeeds for an already-existing directory.
+    if (std::filesystem::is_directory(FakeSd::path(s), e))
+      return true;
     return std::filesystem::create_directory(FakeSd::path(s), e);
   }
   bool remove(const String &s) {

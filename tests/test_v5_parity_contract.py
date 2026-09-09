@@ -62,6 +62,7 @@ assert "SET_LOOP_TASK_STACK_SIZE(32 * 1024);" in main
 assert "kEnableZeroLink" not in main
 assert "linkSpi.begin(" in main
 assert "exchangeHeartbeat(now);" in main
+assert "? 250UL // ZERO alternates status/AMS" in main
 assert '"BLUETOOTH ERROR"' in main
 assert '"BLUETOOTH STARTING"' in main
 assert "txLeaseId = wireLeaseSequence" in main

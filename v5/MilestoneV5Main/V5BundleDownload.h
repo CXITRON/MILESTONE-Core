@@ -5,6 +5,8 @@
 #include <MilestoneV5Signature.h>
 #include <MilestoneV5Video.h>
 #include <MilestoneV5Version.h>
+#include <errno.h>
+#include <sys/stat.h>
 
 class V5BundleDownload {
 public:
@@ -58,12 +60,27 @@ public:
            (version == "latest" ? String("latest/download/")
                                 : String("download/v") + version + "/");
     char name[64];
-    snprintf(name, sizeof(name), "/firmware/download-%08lx%08lx",
-             (unsigned long)esp_random(), (unsigned long)esp_random());
+    // FAT 8.3-compatible staging name: some mounted cards fail to resolve a
+    // newly-created long name even when mkdir reports success.
+    snprintf(name, sizeof(name), "/firmware/dl%06lx",
+             (unsigned long)(esp_random() & 0xFFFFFFUL));
     directory = name;
-    if (SD.exists(directory) || !SD.mkdir(directory) ||
-        !SD.mkdir(directory + "/main") || !SD.mkdir(directory + "/zero")) {
-      error = "다운로드 폴더를 사용할 수 없습니다";
+    // Mount can succeed even when initial directory creation failed. Retry the
+    // parent explicitly, without formatting or deleting any existing content.
+    if (!makeDirectory("/firmware"))
+      return false;
+    if (SD.exists(directory)) {
+      error = "다운로드 폴더 이름 충돌: 다시 확인해 주세요";
+      log(String("OTA directory collision: ") + directory);
+      directory = ""; // Never clean up a directory this attempt did not create.
+      return false;
+    }
+    if (!makeDirectory(directory)) {
+      directory = "";
+      return false;
+    }
+    if (!makeDirectory(directory + "/main") ||
+        !makeDirectory(directory + "/zero")) {
       cleanupDirectory();
       return false;
     }
@@ -247,8 +264,41 @@ private:
     Serial.println(message);
     Serial0.println(message);
   }
+  bool makeDirectory(const String &path) {
+    errno = 0;
+    const bool reported = SD.mkdir(path);
+    const int mkdirError = errno;
+    const char *mount = SD.mountpoint();
+    const String absolute = String(mount ? mount : "") + path;
+    struct stat status{};
+    if (mount && ::stat(absolute.c_str(), &status) == 0 &&
+        S_ISDIR(status.st_mode))
+      return true;
+    // The Arduino wrapper can report success without a resolvable FAT
+    // directory. Verify its postcondition before creating children, then use
+    // the mounted VFS mkdir directly. All SD operations remain on loopTask.
+    log(String("OTA directory verify: path=") + path +
+        " reported=" + String(reported ? 1 : 0) +
+        " mkdir_errno=" + String(mkdirError) + " stat_errno=" + String(errno));
+    if (mount && ::mkdir(absolute.c_str(), 0775) == 0 &&
+        ::stat(absolute.c_str(), &status) == 0 && S_ISDIR(status.st_mode)) {
+      log(String("OTA directory recovered: ") + path);
+      return true;
+    }
+    const int failure = errno;
+    error = String("다운로드 폴더 생성 실패: ") + path +
+            " (errno=" + String(failure) + ")";
+    log(String("OTA directory failure: path=") + path +
+        " errno=" + String(failure));
+    return false;
+  }
   void cleanupDirectory() {
-    if (!directory.startsWith("/firmware/download-"))
+    bool shortStaging = directory.startsWith("/firmware/dl") &&
+                        directory.length() == 18;
+    for (unsigned i = 12; shortStaging && i < 18; ++i)
+      shortStaging = (directory[i] >= '0' && directory[i] <= '9') ||
+                     (directory[i] >= 'a' && directory[i] <= 'f');
+    if (!shortStaging && !directory.startsWith("/firmware/download-"))
       return;
     for (unsigned i = 0; i < 8; ++i) {
       String path = directory + leafFor(i);

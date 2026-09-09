@@ -1,10 +1,10 @@
 # MILESTONE Core — MILESTONE D1
 
-현재 제품 펌웨어는 **v5.1.8**입니다. GOOUUU ESP32-S3 N16R8 MAIN과
+현재 제품 펌웨어는 **v5.1.9**입니다. GOOUUU ESP32-S3 N16R8 MAIN과
 Waveshare ESP32-S3-Zero ZERO를 함께 사용하며, 기존 v3.3.4의 CORE·MEDIA·NOW
 인터페이스를 듀얼 보드 구조 안에서 실행합니다.
 
-- 최신 릴리스: [MILESTONE Core v5.1.8](https://github.com/CXITRON/MILESTONE-Core/releases/tag/v5.1.8)
+- 최신 릴리스: [MILESTONE Core v5.1.9](https://github.com/CXITRON/MILESTONE-Core/releases/tag/v5.1.9)
 - 설치·OTA·복구: [v5/README.md](v5/README.md)
 - 구현·검증 범위: [v5/IMPLEMENTATION_STATUS.md](v5/IMPLEMENTATION_STATUS.md)
 - v3.3.4 설치·사용법·변경 이력: [docs/LEGACY_V3.md](docs/LEGACY_V3.md)
@@ -90,6 +90,17 @@ milestone-release local X.Y.Z "release note"
 
 모든 버튼은 `INPUT_PULLUP` active-low이며 두 보드는 GND를 공통으로 연결합니다.
 TFT와 microSD는 MAIN의 MOSI/SCK를 공유하고 각각 별도의 CS를 사용합니다.
+
+## v5.1.9 업데이트 안내
+
+- OTA 다운로드 임시 폴더를 FAT 8자리 이름으로 생성하고 실제 경로 존재를 검증.
+  생성 실패 경로·오류 번호 기록 및 기존 이름 충돌 시 원본 보존
+- 긴 임시 폴더에서 발생한 ENOENT 오류를 실기 재현하고, 짧은 이름 적용 후
+  서명된 자동 업데이트 확인 완료를 검증. 기존 16자리 설치 폴더 생성도 실기 확인
+- NOW의 상태/곡 정보 교대 수신으로 진행 시간이 약 2초마다 바뀌던 주기를
+  NOW에서만 250ms 요청으로 단축. 화면 디자인·BLE 소유권·서명·파티션 유지
+- 폴더 생성 성공 오판·상위 경로 누락·파일 충돌 보존 회귀 검사 추가.
+  새 버전 전체 OTA 설치와 BLE 시간 바의 육안 확인은 별도 실기 검증 대상
 
 ## v5.1.8 업데이트 안내
 
