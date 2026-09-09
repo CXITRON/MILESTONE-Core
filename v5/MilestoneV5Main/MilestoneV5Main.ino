@@ -176,8 +176,11 @@ void renderUpdateCheckResult() {
                             ? updateResultError
                             : String("v") + updateResultVersion;
   hardware.body(title, detail,
-                updateCheckWasAutomatic ? "자동 확인 완료" : "수동 확인 완료",
-                "아무 버튼: 닫기");
+                updateCheckResult == UpdateCheckResult::Available
+                    ? "OK: 설치"
+                    : updateCheckWasAutomatic ? "자동 확인 완료" : "수동 확인 완료",
+                updateCheckResult == UpdateCheckResult::Available
+                    ? "BACK: 취소" : "아무 버튼: 닫기");
 }
 
 void renderModeMenu() {
@@ -524,9 +527,33 @@ void serviceButtons(uint32_t now) {
   if (now - bootStartedMs < 3000)
     return;
   if (updateResultVisible && (boot || mode || back || prev || next || ok)) {
-    updateResultVisible = false;
-    redraw = true;
-    return;
+    if (updateCheckResult == UpdateCheckResult::Available) {
+      if (back) {
+        updateResultVisible = false;
+        portal.bundleRequested = false;
+        Serial0.println("OTA install cancelled by BACK");
+        redraw = true;
+        return;
+      }
+      if (!ok)
+        return;
+      if (!bundleDownload.ready || bundleDownload.active ||
+          temperatureSafe || radio.busy) {
+        Serial0.println("OTA install confirmation blocked: not ready or unsafe");
+        return;
+      }
+      // This physical OK is the confirmation. Reuse the same signed install
+      // path as Portal confirmation below; never require a web-only action.
+      portal.bundleSource = bundleDownload.directory;
+      portal.bundleRequested = true;
+      portal.bundleRequestedMs = now;
+      updateResultVisible = false;
+      Serial0.println("OTA install confirmed by OK");
+    } else {
+      updateResultVisible = false;
+      redraw = true;
+      return;
+    }
   }
   if (portal.bundleRequested) {
     if (back || boot) {

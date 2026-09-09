@@ -1,10 +1,10 @@
 # MILESTONE Core — MILESTONE D1
 
-현재 제품 펌웨어는 **v5.1.9**입니다. GOOUUU ESP32-S3 N16R8 MAIN과
+현재 제품 펌웨어는 **v5.1.10**입니다. GOOUUU ESP32-S3 N16R8 MAIN과
 Waveshare ESP32-S3-Zero ZERO를 함께 사용하며, 기존 v3.3.4의 CORE·MEDIA·NOW
 인터페이스를 듀얼 보드 구조 안에서 실행합니다.
 
-- 최신 릴리스: [MILESTONE Core v5.1.9](https://github.com/CXITRON/MILESTONE-Core/releases/tag/v5.1.9)
+- 최신 릴리스: [MILESTONE Core v5.1.10](https://github.com/CXITRON/MILESTONE-Core/releases/tag/v5.1.10)
 - 설치·OTA·복구: [v5/README.md](v5/README.md)
 - 구현·검증 범위: [v5/IMPLEMENTATION_STATUS.md](v5/IMPLEMENTATION_STATUS.md)
 - v3.3.4 설치·사용법·변경 이력: [docs/LEGACY_V3.md](docs/LEGACY_V3.md)
@@ -90,6 +90,14 @@ milestone-release local X.Y.Z "release note"
 
 모든 버튼은 `INPUT_PULLUP` active-low이며 두 보드는 GND를 공통으로 연결합니다.
 TFT와 microSD는 MAIN의 MOSI/SCK를 공유하고 각각 별도의 CS를 사용합니다.
+
+## v5.1.10 업데이트 안내
+
+- 기기의 ‘업데이트 있음’ 화면에서 OK로 설치, BACK으로 취소 선택 지원.
+  아무 버튼이나 누르면 닫히던 동작을 제거하고 기존 서명된 묶음 설치 경로에 연결
+- 준비 완료·온도·무선 작업 안전 조건을 유지하고 물리 OK를 설치 확인으로 사용.
+  PREV/NEXT는 설치하거나 결과 화면을 닫지 않으며 최신/실패 화면은 기존 닫기 유지
+- 버튼 연결·안전 조건 회귀 검사 추가. 기존 화면 배치·파티션·서명 체계 유지
 
 ## v5.1.9 업데이트 안내
 

@@ -35,6 +35,14 @@ assert "downloadError" in portal and '"error"' in portal
 assert "updateCheckInFlight && !bundleDownload.active" in main
 assert "bundleDownload.ready || bundleDownload.upToDate" in main
 assert "updateResultVisible = true" in main
+assert '"OK: 설치"' in main and '"BACK: 취소"' in main
+confirmation = main[main.index("  if (updateResultVisible &&"):main.index("  if (portal.active) {", main.index("  if (updateResultVisible &&"))]
+assert "updateCheckResult == UpdateCheckResult::Available" in confirmation
+assert "if (back)" in confirmation and "if (!ok)" in confirmation
+assert "!bundleDownload.ready || bundleDownload.active" in confirmation
+assert "temperatureSafe || radio.busy" in confirmation
+assert "portal.bundleSource = bundleDownload.directory" in confirmation
+assert confirmation.index("portal.bundleRequested = true") < confirmation.index("bundleUpdate.start(portal.bundleSource)")
 assert '"available"' in portal and '"current"' in portal and '"idle"' in portal
 assert "OTA check complete: current" in main
 assert "Serial0.printf(\"OTA check" in main

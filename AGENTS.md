@@ -7,9 +7,9 @@ The source code is always the final authority when documentation and implementat
 ## 1. Project baseline
 
 - Product: MILESTONE Core
-- Current firmware baseline: `5.1.9`
+- Current firmware baseline: `5.1.10`
 - Legacy firmware baseline: `3.3.4`
-- V5 firmware baseline: `5.1.9` (`v5/`, dual-board MAIN/ZERO plus independent SAFE)
+- V5 firmware baseline: `5.1.10` (`v5/`, dual-board MAIN/ZERO plus independent SAFE)
 - Legacy persistent config schema: `12`
 - Hardware: GOOUUU ESP32-S3 N16R8 MAIN + Waveshare ESP32-S3-Zero companion + ST7735-compatible 128×160 SPI TFT + five tactile switches
 - Main branch: `main`
@@ -20,7 +20,7 @@ The source code is always the final authority when documentation and implementat
 - Unified operator command: `milestone-release`
 
 Do not introduce a second release workflow unless there is a concrete technical reason.
-For v5, the same `milestone-release local 5.1.9` command selects the internal
+For v5, the same `milestone-release local 5.1.10` command selects the internal
 `tools/release-v5.sh` backend through `tools/make-release.sh`. Its version source
 is `v5/libraries/MilestoneV5Core/src/MilestoneV5Version.h`. Keep the v3 baseline
 and schema-12 checks for the legacy tree; v5 candidate documentation is checked
