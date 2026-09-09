@@ -11,6 +11,7 @@
 #include "V5SdUpdate.h"
 #include "V5Video.h"
 #include "V5ZeroUpdate.h"
+#include "V5StableChannel.h"
 #include <MilestoneV5BoardConfig.h>
 #include <MilestoneV5Boot.h>
 #include <MilestoneV5Features.h>
@@ -41,6 +42,7 @@ V5Radio radio;
 V5ZeroUpdate zeroUpdate;
 V5BundleUpdate bundleUpdate;
 V5BundleDownload bundleDownload;
+V5StableChannel stableChannel;
 uint32_t txArtGeneration = 0;
 uint8_t txOperation = 0;
 uint8_t recoveryChoice = 0;
@@ -177,7 +179,7 @@ void renderUpdateCheckResult() {
                             : String("v") + updateResultVersion;
   hardware.body(title, detail,
                 updateCheckResult == UpdateCheckResult::Available
-                    ? "OK: 설치"
+                    ? (bundleDownload.ready ? "OK: 설치" : "OK: 설치 준비")
                     : updateCheckWasAutomatic ? "자동 확인 완료" : "수동 확인 완료",
                 updateCheckResult == UpdateCheckResult::Available
                     ? "BACK: 취소" : "아무 버튼: 닫기");
@@ -253,6 +255,11 @@ void renderBody() {
         String(sdUpdate.done) + " / " + sdUpdate.size, "전원을 끄지 마세요");
   } else if (updateResultVisible) {
     renderUpdateCheckResult();
+  } else if (bundleDownload.active && !stableChannel.busy()) {
+    hardware.body(portal.downloadVersion == "latest" ? "업데이트 확인" : "설치 파일 다운로드",
+                  String(bundleDownload.received) + " / " + bundleDownload.total,
+                  portal.downloadVersion == "latest" ? "서명된 버전 정보" : "다운로드 후 설치 확인",
+                  "BACK: 취소");
   } else if (portal.active &&
              profiles.active() == MilestoneV5::Profile::kMedia &&
              portal.sync.activePlayback()) {
@@ -526,6 +533,13 @@ void serviceButtons(uint32_t now) {
     return;
   if (now - bootStartedMs < 3000)
     return;
+  if (bundleDownload.active && !stableChannel.busy()) {
+    if (back) {
+      bundleDownload.stop("BACK으로 다운로드 취소");
+      redraw = true;
+    }
+    return;
+  }
   if (updateResultVisible && (boot || mode || back || prev || next || ok)) {
     if (updateCheckResult == UpdateCheckResult::Available) {
       if (back) {
@@ -537,7 +551,7 @@ void serviceButtons(uint32_t now) {
       }
       if (!ok)
         return;
-      if (!bundleDownload.ready || bundleDownload.active ||
+      if ((!bundleDownload.ready && !bundleDownload.available) || bundleDownload.active ||
           temperatureSafe || radio.busy) {
         Serial0.println("OTA install confirmation blocked: not ready or unsafe");
         return;
@@ -561,6 +575,15 @@ void serviceButtons(uint32_t now) {
       redraw = true;
     } else if (ok && !temperatureSafe && !radio.busy) {
       portal.bundleRequested = false;
+      if (bundleDownload.available && !bundleDownload.ready &&
+          portal.bundleSource == bundleDownload.directory) {
+        portal.downloadVersion = bundleDownload.checkedVersion;
+        portal.downloadRequested = true;
+        portal.downloadAutomatic = false;
+        Serial0.println("OTA firmware download confirmed by OK");
+        redraw = true;
+        return;
+      }
       portal.close();
       video.stop();
       artwork.invalidate();
@@ -752,10 +775,12 @@ void exchangeHeartbeat(uint32_t now) {
       payload[1] = 0;
       payload[2] = 1;
       payloadLength = 3;
-    } else if (bundleDownload.active && bundleDownload.useZero &&
+    } else if (((bundleDownload.active && bundleDownload.useZero) ||
+                (stableChannel.download.active && stableChannel.download.useZero)) &&
                (txSequence % 4) != 0) {
       size_t n = 0;
-      if (!bundleDownload.request(payload, n))
+      auto &transfer = bundleDownload.active ? bundleDownload : stableChannel.download;
+      if (!transfer.request(payload, n))
         return;
       payloadLength = n;
       type = MilestoneV5::MessageType::kTaskRequest;
@@ -901,7 +926,8 @@ void exchangeHeartbeat(uint32_t now) {
       } else if (decoded.payloadLength >= 14 &&
                  (decoded.payload[0] == 16 || decoded.payload[0] == 17) &&
                  decoded.payload[0] == txOperation) {
-        valid = bundleDownload.response(decoded.payload, decoded.payloadLength);
+        valid = bundleDownload.response(decoded.payload, decoded.payloadLength) ||
+                stableChannel.download.response(decoded.payload, decoded.payloadLength);
       } else if (decoded.payloadLength == 6 &&
                  (decoded.payload[0] == 3 || decoded.payload[0] == 4) &&
                  decoded.payload[0] == txOperation && decoded.payload[5] <= 2) {
@@ -1125,7 +1151,10 @@ void loop() {
       Serial0.println("Automatic signed update check queued");
     }
   }
-  if (portal.downloadRequested) {
+  if (portal.downloadRequested)
+    stableChannel.yieldToUser();
+  if (portal.downloadRequested && !stableChannel.busy() &&
+      V5DownloadWorker::state.load() != 1) {
     portal.downloadRequested = false;
     updateCheckInFlight = true;
     updateCheckWasAutomatic = portal.downloadAutomatic;
@@ -1146,7 +1175,8 @@ void loop() {
     if (portal.active && WiFi.softAPgetStationNum() > 0 && !useZero) {
       bundleDownload.reject(
           "설정 AP 사용 중에는 정상 연결된 ZERO가 있어야 업데이트를 확인할 수 있습니다");
-    } else if (!bundleDownload.begin(portal.downloadVersion, useZero) &&
+    } else if (!bundleDownload.begin(portal.downloadVersion, useZero,
+                                     portal.downloadVersion == "latest") &&
                bundleDownload.error.isEmpty()) {
       bundleDownload.reject("업데이트 확인을 시작할 수 없습니다");
     }
@@ -1155,7 +1185,10 @@ void loop() {
       radio.requestPortal)
     bundleDownload.stop(
         "설정 AP 진입 요청으로 MAIN 자동 업데이트 확인이 취소되었습니다");
-  radio.downloadWanted = bundleDownload.active && !bundleDownload.useZero;
+  if (stableChannel.download.active && !stableChannel.download.useZero && radio.requestPortal)
+    stableChannel.yieldToUser();
+  radio.downloadWanted = (bundleDownload.active && !bundleDownload.useZero) ||
+                         (stableChannel.download.active && !stableChannel.download.useZero);
   radio.service(now, portal, hardware, artwork, lastValidLinkMs != 0,
                 zeroStatus.stateFlags,
                 safeModeActive || bundleUpdate.critical());
@@ -1165,10 +1198,13 @@ void loop() {
                          lastValidLinkMs != 0 &&
                              now - lastValidLinkMs <=
                                  MilestoneV5::kLinkStaleMs);
+  stableChannel.download.service(radio.downloadReady,
+      !temperatureSafe && !safeModeActive && !bundleUpdate.active(), companionHealthy);
   if (updateCheckInFlight && !bundleDownload.active) {
-    const bool success = bundleDownload.ready || bundleDownload.upToDate;
+    const bool success = bundleDownload.ready || bundleDownload.upToDate ||
+                         bundleDownload.available;
     portal.note(8, success ? 0 : 1);
-    updateCheckResult = bundleDownload.ready
+    updateCheckResult = (bundleDownload.ready || bundleDownload.available)
                             ? UpdateCheckResult::Available
                         : bundleDownload.upToDate
                             ? UpdateCheckResult::Current
@@ -1183,7 +1219,7 @@ void loop() {
     updateResultVisible = true;
     updateCheckInFlight = false;
     redraw = true;
-    if (bundleDownload.ready)
+    if (bundleDownload.ready || bundleDownload.available)
       Serial.printf("OTA check complete: update %s available\n",
                     bundleDownload.checkedVersion.c_str());
     else if (bundleDownload.upToDate)
@@ -1191,7 +1227,7 @@ void loop() {
                     bundleDownload.checkedVersion.c_str());
     else
       Serial.printf("OTA check failed: %s\n", bundleDownload.error.c_str());
-    if (bundleDownload.ready)
+    if (bundleDownload.ready || bundleDownload.available)
       Serial0.printf("OTA check complete: update %s available\n",
                      bundleDownload.checkedVersion.c_str());
     else if (bundleDownload.upToDate)
@@ -1202,6 +1238,7 @@ void loop() {
   }
   portal.downloadBusy = bundleDownload.active || updateCheckInFlight;
   portal.downloadReady = bundleDownload.ready;
+  portal.downloadAvailable = bundleDownload.available;
   portal.downloadCurrent = bundleDownload.upToDate;
   portal.downloadError = bundleDownload.error;
   if (!bundleDownload.checkedVersion.isEmpty())
@@ -1211,11 +1248,24 @@ void loop() {
                                   " / " + bundleDownload.total
       : bundleDownload.ready
           ? String("다운로드 검증 완료. 기기 확인 후 설치할 수 있습니다.")
+      : bundleDownload.available
+          ? String("새 업데이트가 있습니다. OK로 설치 파일을 받습니다.")
       : bundleDownload.upToDate
           ? String("서명된 최신 릴리스를 확인했습니다. 현재 버전이 최신입니다.")
           : bundleDownload.error;
-  if (bundleDownload.ready)
+  if (bundleDownload.ready || bundleDownload.available)
     portal.bundleSource = bundleDownload.directory;
+  stableChannel.service(now,
+      bootValidated && hardware.sdMounted && !temperatureSafe && !safeModeActive &&
+      !portal.active && !portal.downloadRequested && !portal.bundleRequested &&
+      !updateCheckInFlight && !bundleDownload.active &&
+      !bundleUpdate.active() &&
+      !video.playing && !portal.sync.occupied() && !radio.busy,
+      companionHealthy && !(zeroStatus.stateFlags & MilestoneV5::kStatusBleConnected),
+      bundleUpdate);
+  portal.stableStatus = stableChannel.status;
+  portal.stableVersion = stableChannel.version;
+  portal.stableBusy = stableChannel.busy();
   if (radio.redraw) {
     redraw = true;
     radio.redraw = false;
@@ -1252,12 +1302,21 @@ void loop() {
     }
     hardware.radioIndicator =
         temperatureSafe                                                  ? 6
-        : bundleUpdate.active()                                          ? 5
+        : bundleUpdate.installing() || zeroUpdate.busy() ||
+          sdUpdate.state == V5SdUpdate::State::Hashing ||
+          sdUpdate.state == V5SdUpdate::State::Writing                     ? 5
         : bundleDownload.active                                          ? 4
         : portal.active                                                  ? 3
         : radio.busy                                                      ? 1
         : (zeroStatus.stateFlags & 8) && lastValidLinkMs                 ? 2
                                                                          : 0;
+    static uint8_t lastRadioIndicator = 255;
+    if (hardware.radioIndicator != lastRadioIndicator) {
+      Serial0.printf("OTA indicator=%u bundle_phase=%u installing=%u sd_state=%u zero_state=%u\n",
+          hardware.radioIndicator, unsigned(bundleUpdate.phase),
+          unsigned(bundleUpdate.installing()), unsigned(sdUpdate.state), unsigned(zeroUpdate.state));
+      lastRadioIndicator = hardware.radioIndicator;
+    }
     if (now - bootStartedMs >= 3000)
       hardware.statusBands(
           profileName(profiles.active()),
@@ -1358,7 +1417,8 @@ void loop() {
   const bool transferringZero =
       (zeroUpdate.busy() && zeroUpdate.state != V5ZeroUpdate::State::Hashing &&
        zeroUpdate.state != V5ZeroUpdate::State::RebootWait) ||
-      (bundleDownload.active && bundleDownload.useZero);
+      (bundleDownload.active && bundleDownload.useZero) ||
+      (stableChannel.download.active && stableChannel.download.useZero);
   if (now - lastHeartbeatMs >=
       (transferringZero ? 5UL
        : awaitingAck    ? 20UL

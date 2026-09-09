@@ -5,20 +5,24 @@
 #include <MilestoneV5Signature.h>
 #include <MilestoneV5Video.h>
 #include <MilestoneV5Version.h>
+#include <MilestoneV5Stable.h>
 #include <errno.h>
 #include <sys/stat.h>
 
 class V5BundleDownload {
 public:
-  bool active = false, ready = false, useZero = false, upToDate = false;
+  bool active = false, ready = false, useZero = false, upToDate = false,
+       available = false;
   String directory, error, checkedVersion;
   uint32_t received = 0, total = 0;
-  bool begin(const String &version, bool onZero) {
+  bool begin(const String &version, bool onZero, bool onlyCheck = false) {
     if (active) {
       error = "업데이트 확인이 이미 진행 중입니다";
       return false;
     }
     ready = false;
+    available = false;
+    checkOnly = onlyCheck;
     upToDate = false;
     checkedVersion = "";
     error = "";
@@ -31,7 +35,7 @@ public:
       return false;
     }
     // The release selector is a tag, never an arbitrary URL or filesystem path.
-    bool valid = version == "latest";
+    bool valid = version == "latest" || version == "stable";
     unsigned parts[3];
     int used = 0;
     if (!valid &&
@@ -52,13 +56,15 @@ public:
       error = "릴리스 공개 키가 설정되지 않았습니다";
       return false;
     }
-    if (SD.totalBytes() < SD.usedBytes() + 10485760ULL + 1073741824ULL) {
+    if (!onlyCheck && SD.totalBytes() < SD.usedBytes() + 10485760ULL + 1073741824ULL) {
       error = "SD 여유 공간이 부족합니다";
       return false;
     }
     base = "https://github.com/CXITRON/MILESTONE-Core/releases/" +
            (version == "latest" ? String("latest/download/")
+            : version == "stable" ? String("download/stable/")
                                 : String("download/v") + version + "/");
+    stableSelector = version == "stable";
     char name[64];
     // FAT 8.3-compatible staging name: some mounted cards fail to resolve a
     // newly-created long name even when mkdir reports success.
@@ -109,6 +115,7 @@ public:
     file.close();
     active = false;
     ready = false;
+    available = false;
     upToDate = false;
     error = why;
     log(String("OTA transport failed: ") + why);
@@ -124,6 +131,7 @@ public:
       return;
     cleanupDirectory();
     ready = false;
+    available = false;
     upToDate = false;
     directory = "";
   }
@@ -132,6 +140,7 @@ public:
       stop(why);
     else {
       ready = false;
+      available = false;
       upToDate = false;
       error = why;
     }
@@ -247,6 +256,8 @@ public:
   }
 
 private:
+  bool checkOnly = false;
+  bool stableSelector = false;
   static constexpr uint32_t kZeroStartReplyTimeoutMs = 15000;
   static constexpr uint32_t kZeroLinkTimeoutMs = 15000;
   static constexpr uint32_t kLocalPreparationTimeoutMs = 90000;
@@ -305,6 +316,8 @@ private:
       if (SD.exists(path))
         SD.remove(path);
     }
+    SD.remove(directory + "/stable.txt");
+    SD.remove(directory + "/stable.sig");
     SD.rmdir(directory + "/main");
     SD.rmdir(directory + "/zero");
     SD.rmdir(directory);
@@ -314,6 +327,8 @@ private:
       p[i] = v >> (8 * i);
   }
   const char *asset() const {
+    if (stableSelector && index < 2)
+      return index ? "v5-stable.sig" : "v5-stable.txt";
     const char *v[] = {"v5-bundle.txt",        "v5-bundle.sig",
                        "v5-main-manifest.txt", "v5-main-manifest.sig",
                        "v5-zero-manifest.txt", "v5-zero-manifest.sig",
@@ -401,10 +416,15 @@ private:
     bool valid = true;
     if (index == 1) {
       valid = pair(directory + "/bundle", text, n) &&
-              MilestoneV5::decodeBundleManifest(text, n, bundle);
+              (stableSelector ? MilestoneV5::decodeStableDesignation(text, n, bundle)
+                              : MilestoneV5::decodeBundleManifest(text, n, bundle));
       if (valid) {
         checkedVersion = String(bundle.major) + "." + String(bundle.minor) +
                          "." + String(bundle.patch);
+        // Bind every remaining asset to the authenticated version. A new
+        // GitHub latest release during transfer must not mix bundle versions.
+        base = "https://github.com/CXITRON/MILESTONE-Core/releases/download/v" +
+               checkedVersion + "/";
         if (latestSelector && !newerThanRunning(bundle)) {
           active = false;
           ready = false;
@@ -414,6 +434,12 @@ private:
           directory = "";
           log(String("OTA signed catalog current: ") + checkedVersion);
           return;
+        }
+        if (checkOnly) {
+          active = false;
+          available = true;
+          log(String("OTA signed check available: ") + checkedVersion);
+          return; // No manifests or firmware binaries until physical OK.
         }
       }
     }

@@ -1,10 +1,10 @@
 # MILESTONE Core — MILESTONE D1
 
-현재 제품 펌웨어는 **v5.1.10**입니다. GOOUUU ESP32-S3 N16R8 MAIN과
+현재 소프트웨어는 **v5.2.0**입니다. 이번 버전의 실기 OTA 확인은 별도 진행합니다. GOOUUU ESP32-S3 N16R8 MAIN과
 Waveshare ESP32-S3-Zero ZERO를 함께 사용하며, 기존 v3.3.4의 CORE·MEDIA·NOW
 인터페이스를 듀얼 보드 구조 안에서 실행합니다.
 
-- 최신 릴리스: [MILESTONE Core v5.1.10](https://github.com/CXITRON/MILESTONE-Core/releases/tag/v5.1.10)
+- 최신 릴리스: [MILESTONE Core v5.2.0](https://github.com/CXITRON/MILESTONE-Core/releases/tag/v5.2.0)
 - 설치·OTA·복구: [v5/README.md](v5/README.md)
 - 구현·검증 범위: [v5/IMPLEMENTATION_STATUS.md](v5/IMPLEMENTATION_STATUS.md)
 - v3.3.4 설치·사용법·변경 이력: [docs/LEGACY_V3.md](docs/LEGACY_V3.md)
@@ -90,6 +90,19 @@ milestone-release local X.Y.Z "release note"
 
 모든 버튼은 `INPUT_PULLUP` active-low이며 두 보드는 GND를 공통으로 연결합니다.
 TFT와 microSD는 MAIN의 MOSI/SCK를 공유하고 각각 별도의 CS를 사용합니다.
+
+## v5.2.0 업데이트 안내
+
+- 업데이트 확인은 서명된 버전 정보 두 파일까지만 수신. 사용자 OK 이후
+  설치 파일 다운로드, 다운로드 검증 후 OK로 실제 설치. BACK 취소 지원
+- 서명으로 확인한 버전 경로에 후속 다운로드를 고정하여 latest 변경 중 파일 혼합 방지
+- `milestone-release stable X.Y.Z`로 관리자가 지정한 서명된 안정 채널 도입.
+  기기가 유휴 상태에서 확인하고 SD에 복사·재검증 후 기존 Stable/Backup A/B 인덱스 갱신
+- 안정본 갱신은 SD 저장만 수행하며 MAIN/ZERO Flash·부팅 선택·NVS를 변경하지 않음.
+  일반 OTA 설치 성공만으로는 안정본을 자동 승격하지 않음. 기존 SD 폴더·SAFE 경로 유지
+- 설치 후 안정성 대기·완료·SD 안정본 보관은 보라색 설치 화살표에서 제외.
+  아이콘 전환 시 원인 상태를 UART0에 기록. 등록 완료 후 잔류 증상은 추가 실기 확인 대상
+- OTA 배포 대상이며 유선 업로드는 수행하지 않음. 실기 검증 전 관리자 안정 버전 지정은 보류
 
 ## v5.1.10 업데이트 안내
 

@@ -7,10 +7,12 @@
 #include <MilestoneV5Bundle.h>
 #include <MilestoneV5OtaWire.h>
 #include <MilestoneV5Signature.h>
+#include <MilestoneV5Stable.h>
 #include <Preferences.h>
 
 // Immutable SD sets + a CRC-protected NVS restart journal. Stable/Backup are
-// published through an A/B SD index only after both applications are accepted.
+// published through an A/B SD index only for an authenticated administrator
+// designation, after every copied asset has passed readback verification.
 // Recovery directories are never written by this coordinator.
 class V5BundleUpdate {
 public:
@@ -37,6 +39,9 @@ public:
   bool active() const {
     return phase != Phase::Idle && phase != Phase::Complete &&
            phase != Phase::Failed;
+  }
+  bool installing() const {
+    return !archiveOnly && active() && phase != Phase::StabilityHold;
   }
   void beginBoot(V5Hardware &h, V5SdUpdate &main, V5ZeroUpdate &zero) {
     hardware = &h;
@@ -75,10 +80,11 @@ public:
     total = journal.mainBytes;
     startHash();
   }
-  bool start(const String &source = "/firmware/incoming") {
+  bool start(const String &source = "/firmware/incoming", bool stableArchive = false) {
     if (active() || !hardware || !hardware->sdMounted)
       return false;
     cleanup();
+    archiveOnly = stableArchive;
     sourceRoot = source;
     journal = {};
     error = "";
@@ -92,6 +98,17 @@ public:
         !MilestoneV5::decodeBundleManifest(text, n, bundle) ||
         !MilestoneV5::verifyImageSignature(text, n, signature, sn))
       return fail("업데이트 묶음 서명 검증 실패");
+    if (archiveOnly) {
+      uint8_t designation[255], sig[512];
+      size_t dn, sn;
+      MilestoneV5::SignedBundleManifest expected{};
+      if (!readPair(sourceRoot + "/stable.txt", sourceRoot + "/stable.sig",
+                    designation, dn, sig, sn) ||
+          !MilestoneV5::verifyImageSignature(designation, dn, sig, sn) ||
+          !MilestoneV5::decodeStableDesignation(designation, dn, expected) ||
+          !MilestoneV5::sameBundle(expected, bundle))
+        return fail("관리자 안정 버전 지정 검증 실패");
+    }
     sizes[0] = n;
     sizes[1] = sn;
     mbedtls_sha256(text, n, hashes[0], 0);
@@ -133,7 +150,7 @@ public:
     // Persist intent before the first SD copy. A reset at any staging point is
     // then diagnosed as an incomplete MAIN transaction and can never start
     // ZERO or promote Stable silently.
-    if (!saveJournal())
+    if (!archiveOnly && !saveJournal())
       return fail("묶음 준비 기록 저장 실패");
     fileIndex = 0;
     fileOffset = 0;
@@ -150,8 +167,10 @@ public:
         holdStarted = now;
         return;
       }
-      mainUpdate->cancel();
-      zeroUpdate->cancel();
+      if (!archiveOnly) {
+        mainUpdate->cancel();
+        zeroUpdate->cancel();
+      }
       fail("기기 안전 조건으로 묶음 작업 중단");
       return;
     }
@@ -249,13 +268,11 @@ public:
     if (phase == Phase::StabilityHold && now - holdStarted >= 600000 &&
         now - lastPromotionTry >= 60000) {
       lastPromotionTry = now;
-      if (!hardware->sdMounted || !promoteIndex()) {
-        error = "안정본 등록 대기 중; 현재 앱 유지됨";
-        return;
-      }
+      // Successful installation is not an administrator's stable designation.
+      // Keep the curated SD index intact; only archiveOnly can publish it.
       journal.stage = J::Complete;
       if (!saveJournal()) {
-        error = "안정본 등록 완료; 기록 마무리 대기 중";
+        error = "설치 완료; 기록 마무리 대기 중";
         return;
       }
       phase = Phase::Complete;
@@ -270,6 +287,7 @@ public:
   }
 
 private:
+  bool archiveOnly = false;
   using J = MilestoneV5::BundleStage;
   V5Hardware *hardware = nullptr;
   V5SdUpdate *mainUpdate = nullptr;
@@ -374,7 +392,7 @@ private:
     error = message;
     cleanup();
     phase = Phase::Failed;
-    if (MilestoneV5::validFirmwareSetId(journal.setId)) {
+    if (!archiveOnly && MilestoneV5::validFirmwareSetId(journal.setId)) {
       journal.stage = J::Failed;
       saveJournal();
     }
@@ -387,6 +405,15 @@ private:
   }
   void copyStep() {
     if (fileIndex >= count) {
+      if (archiveOnly) {
+        if (!promoteIndex()) {
+          fail("안정 버전 인덱스 저장 실패; 이전 안정본 유지");
+          return;
+        }
+        phase = Phase::Complete;
+        error = "";
+        return; // SD-only: never select or write an application partition.
+      }
       if (!saveJournal()) {
         fail("묶음 재시작 기록 저장 실패");
         return;

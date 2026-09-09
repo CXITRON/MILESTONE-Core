@@ -78,6 +78,23 @@ int main(int argc, char **argv) {
   assert(!SD.exists(rejected.directory));
   assert(V5DownloadWorker::requests.size() == 2);
   prepare();
+  V5BundleDownload checkOnly;
+  assert(checkOnly.begin("5.0.0", false, true));
+  for (unsigned i = 0; i < 10 && checkOnly.active; ++i)
+    checkOnly.service(true, true, false);
+  assert(checkOnly.available && !checkOnly.ready && !checkOnly.active);
+  assert(V5DownloadWorker::requests.size() == 2);
+  assert(!SD.exists(checkOnly.directory + "/main/firmware.bin"));
+  checkOnly.discard();
+  prepare();
+  V5DownloadWorker::fixtures["v5-stable.txt"] = V5DownloadWorker::fixtures["v5-bundle.txt"];
+  V5DownloadWorker::fixtures["v5-stable.sig"] = {42};
+  V5BundleDownload wrongDomain;
+  assert(wrongDomain.begin("stable", false, true));
+  for (unsigned i = 0; i < 10 && wrongDomain.active; ++i)
+    wrongDomain.service(true, true, false);
+  assert(!wrongDomain.available && !wrongDomain.ready);
+  prepare();
   V5BundleDownload current;
   assert(current.begin("latest", false));
   for (unsigned i = 0; i < 10 && current.active; ++i)

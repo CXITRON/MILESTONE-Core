@@ -1,16 +1,35 @@
-# MILESTONE v5.1.6
+# MILESTONE v5.2.0
 
 This is the release source for the dual-ESP v5 hardware. It remains separate
 from the legacy v3.3.4 firmware and uses its own signed MAIN/ZERO/SAFE release
 catalog. Initial installation requires the merged USB images; subsequent
 updates use the signed companion bundle.
 
-The current source baseline is v5.1.6. Its release path keeps the fixed
+The current source baseline is v5.2.0. Its release path keeps the fixed
 13-asset signed catalog and the existing MAIN/ZERO companion protocol v1.
-v5.1.6 adds bounded OTA-check recovery, boot-time signed latest-version
-checking, and acknowledged/fallback synchronized MEDIA control. Hardware
+v5.2.0 separates signed version checks from firmware transfers and introduces
+an explicitly signed administrator stable designation. Hardware
 acceptance is required after the signed build is installed on the assembled
 boards.
+
+## Curated stable channel
+
+After releasing and validating a version, run `milestone-release stable X.Y.Z`
+from the project root with the existing private/public signing key environment.
+The command verifies the published 13-asset catalog, signs a domain-separated
+`MILESTONE-V5 STABLE` designation, and publishes `v5-stable.txt`/`.sig` to the
+`stable` prerelease channel (not GitHub latest). Normal release publication
+alone never designates stability.
+
+MAIN checks this channel when idle after boot and approximately hourly. It
+fetches the exact designated bundle, verifies all signatures and hashes, copies
+and rereads it in the existing `/firmware/sets` tree, then updates the existing
+A/B stable index. The prior stable becomes Backup. No formatting, partition
+change, Flash installation or automatic reboot is performed by stable archival.
+Invalid/unavailable designation or interrupted copying leaves the old index.
+Published designation text/signature updates are fail-closed; an update window
+or network failure can delay synchronization until the next successful check.
+The independent SAFE application retains its existing stable-index lookup.
 
 ## Contents
 

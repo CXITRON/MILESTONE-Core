@@ -108,6 +108,7 @@ int main(int argc, char **argv) {
   resumedZero.state = V5ZeroUpdate::State::Done;
   resumed.service(millis(), true, true, true);
   assert(resumed.phase == V5BundleUpdate::Phase::StabilityHold);
+  assert(!resumed.installing());
   assert(!SD.exists("/firmware/index-b"));
   assert(SD.exists("/firmware/index-a"));
   // Missing/unhealthy ZERO resets the hold, even after the nominal interval.
@@ -122,12 +123,31 @@ int main(int argc, char **argv) {
   FakeOta::now += 2;
   FakeSd::failIndexRename = true;
   resumed.service(millis(), true, true, true);
-  assert(resumed.phase == V5BundleUpdate::Phase::StabilityHold);
-  assert(!SD.exists("/firmware/index-b"));
-  FakeSd::failIndexRename = false;
-  FakeOta::now += 60001;
-  resumed.service(millis(), true, true, true);
   assert(resumed.phase == V5BundleUpdate::Phase::Complete);
+  assert(!resumed.installing());
+  assert(!SD.exists("/firmware/index-b"));
+  // Installation never designates a stable release. Only a separate signed
+  // administrator designation can publish the existing A/B stable index.
+  text("/firmware/incoming/stable.txt",
+       "MILESTONE-V5 STABLE 5.0.0 " + hash({1,2,3,4,5,6}) + " " + hash({7,8,9,10}) + "\n");
+  write("/firmware/incoming/stable.sig", {42});
+  const auto nvsBeforeArchive = FakeNvs::records;
+  const unsigned flashBeforeArchive = FakeOta::beginCalls;
+  assert(resumed.start("/firmware/incoming", true));
+  assert(!resumed.installing()); // SD archiving is not firmware installation.
+  for (unsigned i = 0; i < 100 && resumed.active(); ++i)
+    resumed.service(millis(), true, true, true);
+  assert(resumed.phase == V5BundleUpdate::Phase::Failed);
+  assert(!SD.exists("/firmware/index-b"));
+  assert(FakeNvs::records == nvsBeforeArchive);
+  assert(FakeOta::beginCalls == flashBeforeArchive);
+  FakeSd::failIndexRename = false;
+  assert(resumed.start("/firmware/incoming", true));
+  for (unsigned i = 0; i < 100 && resumed.active(); ++i)
+    resumed.service(millis(), true, true, true);
+  assert(resumed.phase == V5BundleUpdate::Phase::Complete);
+  assert(FakeNvs::records == nvsBeforeArchive);
+  assert(FakeOta::beginCalls == flashBeforeArchive);
   assert(SD.exists("/firmware/index-b"));
   File indexFile = SD.open("/firmware/index-b", FILE_READ);
   uint8_t published[MilestoneV5::kStableIndexSize];

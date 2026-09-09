@@ -62,9 +62,12 @@ public:
   bool mediaRepeat = true;
   bool bundleRequested = false, bundleBusy = false;
   uint32_t bundleRequestedMs = 0;
+  String stableStatus = "아직 확인하지 않음", stableVersion;
+  bool stableBusy = false;
   String bundleStatus = "idle", bundleError;
   bool downloadRequested = false, downloadBusy = false, downloadReady = false,
-       downloadCurrent = false, downloadAutomatic = false;
+       downloadCurrent = false, downloadAutomatic = false,
+       downloadAvailable = false;
   String downloadVersion = "latest", downloadStatus, downloadError,
          downloadLatest = MilestoneV5::FIRMWARE_VERSION,
          downloadLastCheck = "-", downloadOrigin = "-",
@@ -1081,19 +1084,22 @@ private:
       body += ",\"latest_firmware\":\"" + jsonEscape(downloadLatest) +
               "\",\"latest_profile\":\"" + String(id) +
               "\",\"update_state\":\"" +
-              String(downloadBusy ? "checking" : downloadReady ? "available"
+              String(downloadBusy ? (downloadVersion == "latest" ? "checking" : "downloading")
+                     : (downloadReady || downloadAvailable) ? "available"
                      : !downloadError.isEmpty() ? "error"
                      : downloadCurrent ? "current"
                                        : "idle") +
               "\",\"update_available\":" +
-              String(downloadReady ? "true" : "false") +
+              String((downloadReady || downloadAvailable) ? "true" : "false") +
               ",\"update_install_ready\":" +
-              String(downloadReady ? "true" : "false") +
+              String((downloadReady || downloadAvailable) ? "true" : "false") +
               ",\"update_check_pending\":" +
               String(downloadBusy ? "true" : "false") +
               ",\"last_update_check\":\"" + jsonEscape(downloadLastCheck) +
               "\",\"update_check_origin\":\"" + jsonEscape(downloadOrigin) +
-              "\",\"update_error\":\"" + jsonEscape(downloadError) + "\"}"
+              "\",\"update_error\":\"" + jsonEscape(downloadError) +
+              "\",\"stable_version\":\"" + jsonEscape(stableVersion) +
+              "\",\"stable_status\":\"" + jsonEscape(stableStatus) + "\"}"
               ;
       sendJson(200, body);
     });
@@ -1449,7 +1455,8 @@ private:
     server.on("/api/update/install", HTTP_POST, [this] {
       if (!authorize())
         return;
-      if (!downloadReady || bundleBusy || bundleRequested || sync.occupied()) {
+      if ((!downloadReady && !downloadAvailable) || downloadBusy || downloadRequested ||
+          bundleBusy || bundleRequested || sync.occupied()) {
         sendJson(409, "{\"error\":\"먼저 서명된 업데이트 묶음을 확인하세요.\"}");
         return;
       }
