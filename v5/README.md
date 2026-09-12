@@ -1,16 +1,29 @@
-# MILESTONE v5.2.0
+# MILESTONE v5.2.1
 
 This is the release source for the dual-ESP v5 hardware. It remains separate
 from the legacy v3.3.4 firmware and uses its own signed MAIN/ZERO/SAFE release
 catalog. Initial installation requires the merged USB images; subsequent
 updates use the signed companion bundle.
 
-The current source baseline is v5.2.0. Its release path keeps the fixed
+The current source baseline is v5.2.1. Its release path keeps the fixed
 13-asset signed catalog and the existing MAIN/ZERO companion protocol v1.
 v5.2.0 separates signed version checks from firmware transfers and introduces
 an explicitly signed administrator stable designation. Hardware
 acceptance is required after the signed build is installed on the assembled
 boards.
+
+v5.2.1 keeps update checks in the status icon; only their results replace the
+body. Sync serializes/coalesces browser controls and reads 128 frame offsets
+per bounded 512-byte index cache page. Playback defers cache scans and optional
+SD log writes; UART diagnostics never wait for buffer space. File formats,
+display design, physical safety controls and update signatures are unchanged.
+
+Artwork display does not prove persistence. The status API exposes
+`artwork_cache_key`, `artwork_persisted`, `artwork_storage_status` and
+`artwork_save_failures`. Verified `.tmp` artwork is recovered offline after
+failed publication/reboot. Read/write failures preserve existing files. Only
+the 2 GiB cache budget permits automatic LRU eviction (CUSTOM stays protected);
+the 1 GiB SD reserve can refuse new cache writes but cannot evict old artwork.
 
 ## Curated stable channel
 

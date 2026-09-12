@@ -186,6 +186,8 @@ private:
                  "{\"next\":" + (ended ? String(-1) : String(cursor)) +
                      ",\"bytes\":" + String(art->cacheBytes) +
                      ",\"limit\":2147483648,\"count\":" + art->cacheCount +
+                     ",\"storage_status\":" + json(art->storageStatus) +
+                     ",\"save_failures\":" + String(art->saveFailures) +
                      ",\"items\":[" + entries + "]}");
   }
   bool marker(const String &path) {

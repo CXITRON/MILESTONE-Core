@@ -58,6 +58,7 @@ int main(int argc, char **argv) {
   assert(!job.begin("../bad", false));
   SD.mkdirFalseSuccess = true;
   assert(job.begin("5.0.0", false));
+  assert(!job.checking());
   SD.mkdirFalseSuccess = false;
   assert(SD.exists("/firmware"));
   assert(job.directory.startsWith("/firmware/dl"));
@@ -80,9 +81,11 @@ int main(int argc, char **argv) {
   prepare();
   V5BundleDownload checkOnly;
   assert(checkOnly.begin("5.0.0", false, true));
+  assert(checkOnly.checking());
   for (unsigned i = 0; i < 10 && checkOnly.active; ++i)
     checkOnly.service(true, true, false);
   assert(checkOnly.available && !checkOnly.ready && !checkOnly.active);
+  assert(!checkOnly.checking());
   assert(V5DownloadWorker::requests.size() == 2);
   assert(!SD.exists(checkOnly.directory + "/main/firmware.bin"));
   checkOnly.discard();

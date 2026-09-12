@@ -844,7 +844,7 @@ public:
     return true;
   }
   bool canYieldRadio(uint32_t now) const {
-    return active && now - openedMs >= 60000 && now - lastActivity >= 30000 &&
+    return active && !sync.occupied() && now - openedMs >= 60000 && now - lastActivity >= 30000 &&
            WiFi.softAPgetStationNum() == 0;
   }
   static bool validLimits(unsigned mask, const float *w, const float *d) {
@@ -1012,6 +1012,7 @@ private:
                   ",\"output_us\":" + String(sync.outputUs) +
                   ",\"frame_us\":" + String(sync.frameUs) +
                   ",\"max_frame_us\":" + String(sync.maxFrameUs) +
+                  ",\"max_render_gap_ms\":" + String(sync.maxRenderGapMs) +
                   ",\"skipped_frames\":" + String(sync.skippedFrames) +
                   ",\"last_rendered_ms\":" + String(sync.lastRenderedMs) +
                   ",\"device_ms\":" + String(nowMs) +
@@ -1174,7 +1175,11 @@ private:
                                    : artwork->stage ? String("다운로드 중")
                                    : artwork->lastError.isEmpty()
                                        ? String("대기")
-                                       : artwork->lastError) + "\"}");
+                                   : artwork->lastError) +
+                        "\",\"artwork_cache_key\":\"" + jsonEscape(artwork ? artwork->key : String("")) +
+                        "\",\"artwork_persisted\":" + String(artwork && artwork->persisted ? "true" : "false") +
+                        ",\"artwork_storage_status\":\"" + jsonEscape(artwork ? artwork->storageStatus : String("")) +
+                        "\",\"artwork_save_failures\":" + String(artwork ? artwork->saveFailures : 0) + "}");
     });
     server.on("/api/now-config", HTTP_POST, [this] {
       if (!authorize())

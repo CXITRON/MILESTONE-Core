@@ -1,10 +1,10 @@
 # MILESTONE Core — MILESTONE D1
 
-현재 소프트웨어는 **v5.2.0**입니다. 이번 버전의 실기 OTA 확인은 별도 진행합니다. GOOUUU ESP32-S3 N16R8 MAIN과
+현재 소프트웨어는 **v5.2.1**입니다. 이번 버전의 실기 OTA 확인은 별도 진행합니다. GOOUUU ESP32-S3 N16R8 MAIN과
 Waveshare ESP32-S3-Zero ZERO를 함께 사용하며, 기존 v3.3.4의 CORE·MEDIA·NOW
 인터페이스를 듀얼 보드 구조 안에서 실행합니다.
 
-- 최신 릴리스: [MILESTONE Core v5.2.0](https://github.com/CXITRON/MILESTONE-Core/releases/tag/v5.2.0)
+- 최신 릴리스: [MILESTONE Core v5.2.1](https://github.com/CXITRON/MILESTONE-Core/releases/tag/v5.2.1)
 - 설치·OTA·복구: [v5/README.md](v5/README.md)
 - 구현·검증 범위: [v5/IMPLEMENTATION_STATUS.md](v5/IMPLEMENTATION_STATUS.md)
 - v3.3.4 설치·사용법·변경 이력: [docs/LEGACY_V3.md](docs/LEGACY_V3.md)
@@ -90,6 +90,23 @@ milestone-release local X.Y.Z "release note"
 
 모든 버튼은 `INPUT_PULLUP` active-low이며 두 보드는 GND를 공통으로 연결합니다.
 TFT와 microSD는 MAIN의 MOSI/SCK를 공유하고 각각 별도의 CS를 사용합니다.
+
+## v5.2.1 업데이트 안내
+
+- OTA 확인 중에는 우상단 상태 아이콘만 표시하고 원래 화면·버튼 유지.
+  최신/확인 실패/업데이트 있음 결과는 기존 전체 본문 화면으로 표시.
+  사용자가 승인한 설치 파일 다운로드·설치 진행 화면은 유지
+- Sync 제어를 한 요청씩 처리하고 지연 중 쌓인 요청은 최신 상태로 합침.
+  ACK 지연 후 HTTP 보조 전송 시 현재 재생 위치를 다시 읽어 과거 프레임 재전송 방지
+- Sync 인덱스는 고정 512바이트 캐시 사용, 순차 영상 파일의 불필요한 seek 제거.
+  재생 중 캐시 전체 탐색·환경 로그·새 자동 OTA 확인을 보류하고 UART 진단 송신 대기 제거
+- 앨범아트의 화면 표시와 SD 저장 성공을 구분. 기록 실패 재시도, 곡 전환 전 재시도,
+  재부팅 후 검증된 임시 캐시 복구 및 최종 저장 파일 readback 검증 추가
+- 기존 캐시는 용량 한도 초과 정리 또는 사용자 삭제 외에는 유지.
+  SD 여유 공간 감소만으로 삭제하지 않으며 일시적인 읽기 오류는 파일 보존 후 재시도
+- 호스트에서 지연 ACK·HTTP, 순차/탐색 재생, 넉넉한 SD에서 기록/rename 실패와
+  캐시 재부팅 복구를 검증. 실제 SD·휴대폰의 끊김 및 캐시 증상은 OTA 적용 후 확인 필요
+- 기존 디자인·미디어 포맷·파티션·서명키 유지. 유선 업로드 및 안정 버전 지정은 하지 않음
 
 ## v5.2.0 업데이트 안내
 

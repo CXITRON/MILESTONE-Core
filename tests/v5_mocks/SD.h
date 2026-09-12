@@ -4,6 +4,8 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <map>
+#include <vector>
 #include <stdint.h>
 #include <string>
 #include <type_traits>
@@ -28,6 +30,10 @@ public:
     return *this;
   }
   bool startsWith(const String &s) const { return value.find(s.value) == 0; }
+  bool endsWith(const String &s) const {
+    return value.size() >= s.value.size() && value.compare(value.size()-s.value.size(), s.value.size(), s.value) == 0;
+  }
+  String substring(size_t start, size_t end) const { return value.substr(start, end - start); }
   int indexOf(char c) const {
     auto n = value.find(c);
     return n == std::string::npos ? -1 : int(n);
@@ -48,7 +54,11 @@ private:
 };
 namespace FakeSd {
 static std::filesystem::path root;
-static bool failIndexRename = false, failWrites = false;
+static bool failIndexRename = false, failWrites = false, failArtworkRename = false;
+static std::string failReadSuffix;
+static std::map<std::string, unsigned> reads, seeks;
+static uint64_t total = 8ULL * 1024 * 1024 * 1024, used = 1024 * 1024;
+static unsigned spaceQueries = 0;
 inline std::filesystem::path path(const String &s) {
   return root / std::filesystem::path(s.c_str()).relative_path();
 }
@@ -58,6 +68,9 @@ class File {
     std::filesystem::path path;
     std::fstream stream;
     bool writable = false;
+    bool directory = false;
+    std::vector<std::filesystem::path> entries;
+    size_t cursor = 0;
   };
   std::shared_ptr<Handle> h;
 
@@ -66,6 +79,13 @@ public:
   File(const std::filesystem::path &p, const char *mode) {
     auto candidate = std::make_shared<Handle>();
     candidate->path = p;
+    if (std::filesystem::is_directory(p)) {
+      candidate->directory = true;
+      for (const auto &entry : std::filesystem::directory_iterator(p))
+        candidate->entries.push_back(entry.path());
+      h = candidate;
+      return;
+    }
     candidate->writable = mode[0] != 'r';
     auto flags = std::ios::binary;
     if (mode[0] == 'r')
@@ -78,13 +98,26 @@ public:
     if (candidate->stream.is_open())
       h = candidate;
   }
-  explicit operator bool() const { return h && h->stream.is_open(); }
+  explicit operator bool() const { return h && (h->directory || h->stream.is_open()); }
+  bool isDirectory() const { return h && h->directory; }
+  String name() const { return h ? h->path.filename().string() : ""; }
+  uint64_t getLastWrite() const { return 100; }
+  File openNextFile() {
+    return h && h->cursor < h->entries.size() ? File(h->entries[h->cursor++], FILE_READ) : File();
+  }
+  size_t position() const {
+    if (!h) return 0;
+    return h->writable ? size_t(h->stream.tellp()) : size_t(h->stream.tellg());
+  }
   size_t size() const {
     std::error_code error;
     return h ? std::filesystem::file_size(h->path, error) : 0;
   }
   size_t read(uint8_t *p, size_t n) {
     if (!h)
+      return 0;
+    ++FakeSd::reads[h->path.filename().string()];
+    if (!FakeSd::failReadSuffix.empty() && h->path.extension() == FakeSd::failReadSuffix)
       return 0;
     h->stream.read(reinterpret_cast<char *>(p), n);
     return h->stream.gcount();
@@ -95,6 +128,7 @@ public:
     h->stream.write(reinterpret_cast<const char *>(p), n);
     return h->stream ? n : 0;
   }
+  size_t write(uint8_t value) { return write(&value, 1); }
   void flush() {
     if (h)
       h->stream.flush();
@@ -107,6 +141,7 @@ public:
   bool seek(uint32_t offset) {
     if (!h)
       return false;
+    ++FakeSd::seeks[h->path.filename().string()];
     h->stream.clear();
     if (h->writable)
       h->stream.seekp(offset);
@@ -143,6 +178,8 @@ public:
     return std::filesystem::remove(FakeSd::path(s), e);
   }
   bool rename(const String &from, const String &to) {
+    if (FakeSd::failArtworkRename && to.endsWith(".mac"))
+      return false;
     if (FakeSd::failIndexRename &&
         std::string(to.c_str()).find("/firmware/index-") == 0)
       return false;
@@ -152,8 +189,8 @@ public:
     std::filesystem::rename(FakeSd::path(from), FakeSd::path(to), e);
     return !e;
   }
-  uint64_t totalBytes() const { return 8ULL * 1024 * 1024 * 1024; }
-  uint64_t usedBytes() const { return 1024 * 1024; }
+  uint64_t totalBytes() const { ++FakeSd::spaceQueries; return FakeSd::total; }
+  uint64_t usedBytes() const { ++FakeSd::spaceQueries; return FakeSd::used; }
   uint64_t cardSize() const { return totalBytes(); }
 };
 static FakeSdClass SD;

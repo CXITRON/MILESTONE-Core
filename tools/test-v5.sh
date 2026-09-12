@@ -78,6 +78,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 "$project_dir/tests/test_v5_docs.py"
 PYTHONDONTWRITEBYTECODE=1 python3 "$project_dir/tests/test_v5_parity_contract.py"
 PYTHONDONTWRITEBYTECODE=1 python3 "$project_dir/tests/test_v5_sync_media_contract.py"
 (cd "$project_dir" && node tests/test_v5_sync_upload.js)
+(cd "$project_dir" && node tests/test_v5_sync_control.js)
 PYTHONDONTWRITEBYTECODE=1 python3 "$project_dir/tests/test_v5_portal_recovery_contract.py"
 for test in storage_runtime download_runtime stable_runtime; do
   "$cxx" -I"$project_dir/tests/v5_mocks" "${common_flags[@]}" -std=c++17 \
@@ -86,3 +87,8 @@ for test in storage_runtime download_runtime stable_runtime; do
     "$source_dir/MilestoneV5Bundle.cpp" "$project_dir/tests/test_v5_$test.cpp" -o "$build_dir/test_v5_$test"
   "$build_dir/test_v5_$test" "$build_dir"
 done
+"$cxx" -I"$project_dir/tests/v5_mocks" "${common_flags[@]}" -std=c++17 \
+  "$source_dir/MilestoneV5Protocol.cpp" "$source_dir/MilestoneV5Video.cpp" \
+  "$source_dir/MilestoneV5Now.cpp" "$project_dir/tests/test_v5_media_runtime.cpp" \
+  -o "$build_dir/test_v5_media_runtime"
+"$build_dir/test_v5_media_runtime" "$build_dir"

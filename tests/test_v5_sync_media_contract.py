@@ -51,7 +51,13 @@ assert "portal.sync.servicePlayback" in main
 assert "display.flushRegion(16, 128);" in runtime
 assert "invalidateDisplayedFrame" in runtime
 assert "The synchronized player owns all 128 body rows" in main
-assert "portal.sync.invalidateDisplayedFrame();" not in main
+assert main.count("portal.sync.invalidateDisplayedFrame();") == 1
+assert "void renderUpdateCheckResult() {\n  // Restore even a paused frame" in main
+assert "const bool updateOwnsBody = updateResultVisible" in main
+assert main.count("if (!updateOwnsBody &&") == 3
+assert "Serial0.availableForWrite() >= length" in main
+assert "!mediaTimingCritical)\n    artwork.maintain" in main
+assert "!sync.occupied() && now - openedMs" in portal
 assert "renderedFrames" in runtime and "controlCount" in runtime
 assert "Serial0.printf(" in main and '"SYNC state=%s' in main
 assert "void flushRegion(int y, int height)" in (root / "v5/MilestoneV5Main/V5Tft.h").read_text()

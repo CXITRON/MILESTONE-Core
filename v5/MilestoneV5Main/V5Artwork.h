@@ -1,6 +1,8 @@
 #pragma once
 #include "V5ArtworkIndex.h"
+#ifndef MILESTONE_V5_TFT_DECLARED
 #include "V5Tft.h"
+#endif
 #include <MilestoneV5Artwork.h>
 #include <MilestoneV5Now.h>
 #include <MilestoneV5Video.h>
@@ -21,6 +23,9 @@ public:
   bool manual = false;
   String lastError;
   String lastRequestKey, lastRequestResult;
+  bool persisted = false;
+  String storageStatus;
+  uint32_t saveFailures = 0;
   V5ArtworkIndex index;
   static bool validKey(const String &s) {
     if (s.length() != 64)
@@ -37,8 +42,10 @@ public:
     stage = 0;
     visible = false;
     attempted = false;
+    cacheRetryAt = 0;
     manual = false;
     received = 0;
+    persisted = false;
     if (++generation == 0)
       ++generation;
   }
@@ -73,6 +80,7 @@ public:
     track = next;
     stage = 1;
     received = 0;
+    persisted = false;
     visible = false;
     manual = true;
     attempted = true;
@@ -94,6 +102,9 @@ public:
       cacheKnown = false;
       return;
     }
+    if (visible && !persisted && packet && received == MilestoneV5::kArtworkBytes &&
+        now - lastSaveAttempt >= 2000)
+      commit();
     index.service();
     if (!indexRestored && index.known) {
       indexRestored = true;
@@ -123,12 +134,14 @@ public:
         cacheCount = scannedCount;
         cacheKnown = true;
         lastScan = now;
+        // Only the artwork cache budget permits automatic eviction. Low free
+        // SD space blocks new cache writes; it must not delete existing art.
         if ((cacheBytes + (needSpace ? MilestoneV5::kArtworkBytes : 0) >
-                 2ULL * 1024 * 1024 * 1024 ||
-             SD.totalBytes() < SD.usedBytes() + 1024ULL * 1024 * 1024) &&
+                 2ULL * 1024 * 1024 * 1024) &&
             oldest.length()) {
           String base = String("/now/art-cache/") + oldest;
           if (!SD.exists(base + ".custom") && SD.remove(base + ".mac")) {
+            Serial0.println(String("ART cache evicted: limit exceeded key=") + oldest);
             SD.remove(base + ".use");
             cacheKnown = false;
           }
@@ -193,18 +206,25 @@ public:
     for (unsigned i = 0; i < 32; ++i)
       snprintf(hex + i * 2, 3, "%02x", digest[i]);
     if (key != hex) {
+      // A rendered download is not necessarily durable yet. Retry its save
+      // before the next track takes ownership of the single display buffer.
+      if (mounted && visible && !persisted && received == MilestoneV5::kArtworkBytes)
+        commit();
       key = hex;
       changed = now;
       stage = 0;
       visible = false;
       received = 0;
+      persisted = false;
+      storageStatus = "";
       attempted = false;
+      cacheRetryAt = 0;
       track = m;
       if (++generation == 0)
         ++generation;
     }
     if (!mounted || !m.ready || !m.title[0] || now - changed < 1500 || stage ||
-        attempted)
+        attempted || (cacheRetryAt && int32_t(now - cacheRetryAt) < 0))
       return;
     attempted = true;
     if (!SD.exists(path(".meta"))) {
@@ -221,14 +241,22 @@ public:
     if (!packet)
       packet = static_cast<uint8_t *>(heap_caps_malloc(
           MilestoneV5::kArtworkBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-    if (!packet)
+    if (!packet) {
+      attempted = false;
+      cacheRetryAt = now + 5000;
+      lastError = "앨범 이미지 메모리 부족; 재시도 대기";
       return;
+    }
     File file = SD.open(path(".mac"), FILE_READ);
     if (file && file.size() == MilestoneV5::kArtworkBytes &&
         file.read(packet, MilestoneV5::kArtworkBytes) ==
             MilestoneV5::kArtworkBytes &&
         MilestoneV5::validArtwork(packet, MilestoneV5::kArtworkBytes)) {
       visible = true;
+      persisted = true;
+      storageStatus = "SD 캐시 사용";
+      lastError = "";
+      cacheRetryAt = 0;
       touch();
       return;
     }
@@ -239,6 +267,32 @@ public:
             MilestoneV5::kArtworkBytes &&
         MilestoneV5::validArtwork(packet, MilestoneV5::kArtworkBytes)) {
       visible = true;
+      persisted = true;
+      storageStatus = "SD 백업 캐시 사용";
+      lastError = "";
+      cacheRetryAt = 0;
+      return;
+    }
+    file.close();
+    // A power loss or failed rename can leave a verified download in .tmp.
+    // Recover it before treating this song as a cache miss.
+    file = SD.open(path(".tmp"), FILE_READ);
+    if (file && file.size() == MilestoneV5::kArtworkBytes &&
+        file.read(packet, MilestoneV5::kArtworkBytes) == MilestoneV5::kArtworkBytes &&
+        MilestoneV5::validArtwork(packet, MilestoneV5::kArtworkBytes)) {
+      file.close();
+      visible = true;
+      received = MilestoneV5::kArtworkBytes;
+      commit();
+      return;
+    }
+    file.close();
+    if (SD.exists(path(".mac")) || SD.exists(path(".bak"))) {
+      // A transient SD read/CRC failure is not permission to delete or replace
+      // persistent artwork. Keep it and retry without a server download.
+      lastError = "저장된 앨범 이미지 읽기 실패; 캐시 유지 후 재시도";
+      attempted = false;
+      cacheRetryAt = now + 5000;
       return;
     }
     if (SD.exists(path(".blocked")))
@@ -342,7 +396,7 @@ public:
   }
 
 private:
-  uint32_t changed = 0, requestStarted = 0;
+  uint32_t changed = 0, requestStarted = 0, cacheRetryAt = 0, lastSaveAttempt = 0;
   bool attempted = false, indexRestored = false;
   bool needSpace = false;
   File scan;
@@ -363,52 +417,95 @@ private:
   void commit() {
     if (!validKey(key) || received != MilestoneV5::kArtworkBytes)
       return;
+    lastSaveAttempt = millis();
     // Never overwrite a custom entry. Atomic new-name publication keeps older
     // data.
-    if (SD.exists(path(".custom")) || SD.exists(path(".mac")))
+    if (SD.exists(path(".custom")) || SD.exists(path(".mac"))) {
+      if (matchesPacket(path(".mac"))) {
+        persisted = true;
+        storageStatus = "SD 캐시 저장·재검증 완료";
+      }
       return;
-    if (!cacheKnown)
+    }
+    if (!cacheKnown) {
+      storageStatus = "화면 표시 중 · SD 저장 대기 (캐시 집계 중)";
       return;
+    }
     if (cacheBytes + MilestoneV5::kArtworkBytes > 2ULL * 1024 * 1024 * 1024) {
       needSpace = true;
       cacheKnown = false;
+      storageStatus = "화면 표시 중 · SD 저장 대기 (캐시 한도)";
       return;
     }
     needSpace = false;
-    if (SD.totalBytes() < SD.usedBytes() + 1024ULL * 1024 * 1024)
+    if (SD.totalBytes() < SD.usedBytes() + 1024ULL * 1024 * 1024) {
+      saveFailed("SD 여유 공간 확인 실패/부족");
       return;
-    String temporary = path(".tmp"), final = path(".mac");
-    if (SD.exists(temporary) && !SD.remove(temporary))
-      return;
-    File file = SD.open(temporary, FILE_WRITE);
-    if (!file)
-      return;
-    bool ok = file.write(packet, received) == received;
-    file.flush();
-    file.close();
-    file = SD.open(temporary, FILE_READ);
-    uint8_t check[512];
-    size_t offset = 0;
-    while (ok && offset < received) {
-      size_t take = min(sizeof(check), size_t(received - offset));
-      ok = file.read(check, take) == take &&
-           !memcmp(check, packet + offset, take);
-      offset += take;
     }
-    file.close();
-    if (ok && SD.rename(temporary, final)) {
-      cacheBytes += received;
-      ++cacheCount;
-      touch();
-      uint8_t metadata[444];
-      size_t n;
-      if (MilestoneV5::encodeNow(track, metadata, sizeof(metadata), n)) {
-        File meta = SD.open(path(".meta"), FILE_WRITE);
-        if (meta) {
-          meta.write(metadata, n);
-          meta.flush();
-        }
+    String temporary = path(".tmp"), final = path(".mac");
+    // Retain an already verified staging file on retry instead of deleting it
+    // and depending on another successful write of the same bytes.
+    bool ok = matchesPacket(temporary);
+    if (!ok) {
+      if (SD.exists(temporary) && !SD.remove(temporary)) {
+        saveFailed("임시 파일 준비 실패");
+        return;
+      }
+      File file = SD.open(temporary, FILE_WRITE);
+      if (!file) {
+        saveFailed("임시 파일 열기 실패");
+        return;
+      }
+      ok = file.write(packet, received) == received;
+      file.flush();
+      file.close();
+      ok = ok && matchesPacket(temporary);
+    }
+    if (!ok) {
+      saveFailed("임시 파일 기록/재검증 실패");
+      return;
+    }
+    if (!SD.rename(temporary, final)) {
+      saveFailed("최종 파일 이름 확정 실패; 임시 캐시 보존");
+      return;
+    }
+    if (!matchesPacket(final)) {
+      saveFailed("최종 파일 재검증 실패; 파일 보존");
+      return;
+    }
+    persisted = true;
+    storageStatus = "SD 캐시 저장·재검증 완료";
+    Serial0.println(String("ART cache saved key=") + key);
+    cacheBytes += received;
+    ++cacheCount;
+    touch();
+    uint8_t metadata[444];
+    size_t n;
+    if (MilestoneV5::encodeNow(track, metadata, sizeof(metadata), n)) {
+      File meta = SD.open(path(".meta"), FILE_WRITE);
+      if (meta) {
+        meta.write(metadata, n);
+        meta.flush();
       }
     }
+  }
+  bool matchesPacket(const String &name) {
+    File file = SD.open(name, FILE_READ);
+    if (!file || file.size() != received)
+      return false;
+    uint8_t check[512];
+    size_t offset = 0;
+    while (offset < received) {
+      size_t take = min(sizeof(check), size_t(received - offset));
+      if (file.read(check, take) != take || memcmp(check, packet + offset, take))
+        return false;
+      offset += take;
+    }
+    return true;
+  }
+  void saveFailed(const char *reason) {
+    ++saveFailures;
+    storageStatus = String("화면 표시 중 · SD 저장 미완료: ") + reason;
+    Serial0.println(String("ART cache save failed key=") + key + " reason=" + reason);
   }
 };

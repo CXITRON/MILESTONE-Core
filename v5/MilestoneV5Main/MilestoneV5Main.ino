@@ -169,6 +169,8 @@ void renderPortalScreen() {
 }
 
 void renderUpdateCheckResult() {
+  // Restore even a paused frame once the result is dismissed.
+  portal.sync.invalidateDisplayedFrame();
   const char *title = updateCheckResult == UpdateCheckResult::Available
                           ? "업데이트 있음"
                       : updateCheckResult == UpdateCheckResult::Current
@@ -255,10 +257,10 @@ void renderBody() {
         String(sdUpdate.done) + " / " + sdUpdate.size, "전원을 끄지 마세요");
   } else if (updateResultVisible) {
     renderUpdateCheckResult();
-  } else if (bundleDownload.active && !stableChannel.busy()) {
-    hardware.body(portal.downloadVersion == "latest" ? "업데이트 확인" : "설치 파일 다운로드",
+  } else if (bundleDownload.active && !bundleDownload.checking() && !stableChannel.busy()) {
+    hardware.body("설치 파일 다운로드",
                   String(bundleDownload.received) + " / " + bundleDownload.total,
-                  portal.downloadVersion == "latest" ? "서명된 버전 정보" : "다운로드 후 설치 확인",
+                  "다운로드 후 설치 확인",
                   "BACK: 취소");
   } else if (portal.active &&
              profiles.active() == MilestoneV5::Profile::kMedia &&
@@ -533,7 +535,7 @@ void serviceButtons(uint32_t now) {
     return;
   if (now - bootStartedMs < 3000)
     return;
-  if (bundleDownload.active && !stableChannel.busy()) {
+  if (bundleDownload.active && !bundleDownload.checking() && !stableChannel.busy()) {
     if (back) {
       bundleDownload.stop("BACK으로 다운로드 취소");
       redraw = true;
@@ -1009,6 +1011,7 @@ void exchangeHeartbeat(uint32_t now) {
 } // namespace
 
 void setup() {
+  Serial0.setTxBufferSize(512);
   Serial0.begin(115200);
   Serial0.println("[BOOT-UART] setup entered");
   Serial.begin(115200);
@@ -1128,7 +1131,11 @@ void loop() {
   }
   if (!safeModeActive && !bundleUpdate.critical())
     hardware.environment.service(now);
-  if (!safeModeActive && !bundleUpdate.critical())
+  const bool mediaTimingCritical = profiles.active() == MilestoneV5::Profile::kMedia &&
+      (video.playing || portal.sync.occupied() ||
+       (portal.media.displayEnabled && portal.media.hasEnabled()));
+  // Cache scans/index writes and FAT free-space walks are not playback work.
+  if (!safeModeActive && !bundleUpdate.critical() && !mediaTimingCritical)
     artwork.maintain(now, hardware.sdMounted);
   if (!safeModeActive && !bundleUpdate.critical() &&
       profiles.active() == MilestoneV5::Profile::kNow)
@@ -1136,7 +1143,7 @@ void loop() {
   if (!bootUpdateCheckAttempted && bootValidated &&
       now - bootStartedMs >= 15000 && !safeModeActive &&
       !bundleUpdate.active() && !zeroUpdate.busy() && !portal.active &&
-      !bundleDownload.active && !bundleDownload.ready) {
+      !bundleDownload.active && !bundleDownload.ready && !mediaTimingCritical) {
     bootUpdateCheckAttempted = true;
     MilestoneV5::WifiStore store;
     MilestoneV5::WifiCredentials credentials;
@@ -1153,10 +1160,14 @@ void loop() {
   }
   if (portal.downloadRequested)
     stableChannel.yieldToUser();
+  if (mediaTimingCritical)
+    stableChannel.yieldToUser();
   if (portal.downloadRequested && !stableChannel.busy() &&
       V5DownloadWorker::state.load() != 1) {
     portal.downloadRequested = false;
     updateCheckInFlight = true;
+    updateResultVisible = false; // A previous result must not cover a new check.
+    redraw = true;
     updateCheckWasAutomatic = portal.downloadAutomatic;
     portal.downloadOrigin = updateCheckWasAutomatic ? "automatic" : "manual";
     Serial.printf("OTA check start: origin=%s selector=%s\n",
@@ -1260,7 +1271,7 @@ void loop() {
       !portal.active && !portal.downloadRequested && !portal.bundleRequested &&
       !updateCheckInFlight && !bundleDownload.active &&
       !bundleUpdate.active() &&
-      !video.playing && !portal.sync.occupied() && !radio.busy,
+      !mediaTimingCritical && !radio.busy,
       companionHealthy && !(zeroStatus.stateFlags & MilestoneV5::kStatusBleConnected),
       bundleUpdate);
   portal.stableStatus = stableChannel.status;
@@ -1281,7 +1292,7 @@ void loop() {
     portal.rescanRequested = false;
     redraw = true;
   }
-  if (!safeModeActive && !bundleUpdate.critical() && portal.environmentLogging)
+  if (!safeModeActive && !bundleUpdate.critical() && !mediaTimingCritical && portal.environmentLogging)
     hardware.logEnvironment(now);
   static uint32_t lastSampleMs = 0;
   if (now - lastSampleMs >= 1000) {
@@ -1305,7 +1316,7 @@ void loop() {
         : bundleUpdate.installing() || zeroUpdate.busy() ||
           sdUpdate.state == V5SdUpdate::State::Hashing ||
           sdUpdate.state == V5SdUpdate::State::Writing                     ? 5
-        : bundleDownload.active                                          ? 4
+        : bundleDownload.active || updateCheckInFlight || portal.downloadRequested ? 4
         : portal.active                                                  ? 3
         : radio.busy                                                      ? 1
         : (zeroStatus.stateFlags & 8) && lastValidLinkMs                 ? 2
@@ -1359,7 +1370,9 @@ void loop() {
     renderBody();
     lastBodyRender = now;
   }
-  if (!safeModeActive && !bundleUpdate.critical() && !modeMenu.isOpen() &&
+  const bool updateOwnsBody = updateResultVisible || portal.bundleRequested ||
+      (bundleDownload.active && !bundleDownload.checking());
+  if (!updateOwnsBody && !safeModeActive && !bundleUpdate.critical() && !modeMenu.isOpen() &&
       !portal.active && video.playing) {
     video.repeat = portal.mediaRepeat;
     video.monochrome = hardware.monochrome;
@@ -1369,7 +1382,7 @@ void loop() {
       hardware.body("미디어 오류", video.error, "BACK 목록으로");
     }
   }
-  if (!safeModeActive && !bundleUpdate.critical() && !modeMenu.isOpen() &&
+  if (!updateOwnsBody && !safeModeActive && !bundleUpdate.critical() && !modeMenu.isOpen() &&
       portal.active && profiles.active() == MilestoneV5::Profile::kMedia &&
       portal.sync.activePlayback()) {
     const bool rendered =
@@ -1381,34 +1394,32 @@ void loop() {
     static uint32_t lastSyncDiagnosticMs = 0;
     if (now - lastSyncDiagnosticMs >= 2000) {
       lastSyncDiagnosticMs = now;
-      Serial.printf(
-          "SYNC state=%s pos=%lu control=%lu target=%lu displayed=%lu rendered=%lu error=%s\n",
+      char message[320];
+      const int length = snprintf(message, sizeof(message),
+          "SYNC state=%s pos=%lu control=%lu target=%lu displayed=%lu rendered=%lu read_us=%lu decode_us=%lu tft_us=%lu max_us=%lu gap_ms=%lu skipped=%lu\n",
           portal.sync.stateName(),
-          static_cast<unsigned long>(portal.sync.positionMs(now)),
+          static_cast<unsigned long>(portal.sync.positionMs(millis())),
           static_cast<unsigned long>(portal.sync.controlCount),
           static_cast<unsigned long>(portal.sync.requestedFrame),
           static_cast<unsigned long>(portal.sync.displayedFrame),
           static_cast<unsigned long>(portal.sync.renderedFrames),
-          portal.sync.error.c_str());
-      Serial0.printf(
-          "SYNC state=%s pos=%lu control=%lu target=%lu displayed=%lu rendered=%lu error=%s\n",
-          portal.sync.stateName(),
-          static_cast<unsigned long>(portal.sync.positionMs(now)),
-          static_cast<unsigned long>(portal.sync.controlCount),
-          static_cast<unsigned long>(portal.sync.requestedFrame),
-          static_cast<unsigned long>(portal.sync.displayedFrame),
-          static_cast<unsigned long>(portal.sync.renderedFrames),
-          portal.sync.error.c_str());
-      Serial0.printf("SYNC cost_us read=%lu decode=%lu tft=%lu total=%lu max=%lu skipped=%lu\n",
                      (unsigned long)portal.sync.readUs,
                      (unsigned long)portal.sync.decodeUs,
                      (unsigned long)portal.sync.outputUs,
-                     (unsigned long)portal.sync.frameUs,
                      (unsigned long)portal.sync.maxFrameUs,
+                     (unsigned long)portal.sync.maxRenderGapMs,
                      (unsigned long)portal.sync.skippedFrames);
+      // UART diagnostics must not wait for ~250 bytes at 115200 baud on a
+      // frame deadline. A full queue drops this sample, not the video frame.
+      if (length > 0 && length < int(sizeof(message))) {
+        if (Serial0.availableForWrite() >= length)
+          Serial0.write(reinterpret_cast<const uint8_t *>(message), length);
+        if (Serial.availableForWrite() >= length)
+          Serial.write(reinterpret_cast<const uint8_t *>(message), length);
+      }
     }
   }
-  if (!safeModeActive && !bundleUpdate.critical() && !modeMenu.isOpen() &&
+  if (!updateOwnsBody && !safeModeActive && !bundleUpdate.critical() && !modeMenu.isOpen() &&
       !portal.active && profiles.active() == MilestoneV5::Profile::kMedia &&
       portal.media.hasEnabled())
     portal.media.service(hardware.display, now);

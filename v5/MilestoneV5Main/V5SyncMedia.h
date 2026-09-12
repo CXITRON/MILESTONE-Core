@@ -1,6 +1,8 @@
 #pragma once
 
+#ifndef MILESTONE_V5_TFT_DECLARED
 #include "V5Tft.h"
+#endif
 #include <FS.h>
 #include <MilestoneV5Protocol.h>
 #include <MilestoneV5Video.h>
@@ -157,6 +159,8 @@ public:
       return false;
     if (!openPlayback())
       return false;
+    if (state != State::Playing || !run)
+      lastRenderedMs = 0;
     const uint32_t duration = durationMs();
     anchorPositionMs = positionMs < duration ? positionMs : duration;
     anchorLocalMs = now;
@@ -181,10 +185,10 @@ public:
     if (target == displayedFrame)
       return false;
     const uint32_t frameStartedUs = micros();
-    uint8_t entry[4], record[8];
-    if (!playIndex.seek(16U + target * 4U) ||
-        playIndex.read(entry, sizeof(entry)) != sizeof(entry) ||
-        !playVideo.seek(MilestoneV5::readVideoU32(entry)) ||
+    uint32_t offset;
+    uint8_t record[8];
+    if (!frameOffset(target, offset) ||
+        (playVideo.position() != offset && !playVideo.seek(offset)) ||
         playVideo.read(record, sizeof(record)) != sizeof(record))
       return playbackFail("동기화 프레임 탐색에 실패했습니다");
     const uint32_t length = MilestoneV5::readVideoU32(record);
@@ -225,6 +229,8 @@ public:
     frameUs = micros() - frameStartedUs;
     if (frameUs > maxFrameUs)
       maxFrameUs = frameUs;
+    if (lastRenderedMs && state == State::Playing && now - lastRenderedMs > maxRenderGapMs)
+      maxRenderGapMs = now - lastRenderedMs;
     if (displayedFrame != UINT32_MAX && target > displayedFrame + 1)
       skippedFrames += target - displayedFrame - 1;
     displayedFrame = target;
@@ -242,6 +248,8 @@ public:
     free(pixels);
     encoded = pixels = nullptr;
     displayedFrame = UINT32_MAX;
+    indexPageStart = UINT32_MAX;
+    indexPageCount = 0;
     if (state == State::Playing || state == State::Paused)
       state = State::Ready;
   }
@@ -255,6 +263,7 @@ public:
     uploadOpenEnded = false;
     requestedFrame = displayedFrame = UINT32_MAX;
     controlCount = renderedFrames = lastRenderedMs = 0;
+    readUs = decodeUs = outputUs = frameUs = maxFrameUs = skippedFrames = maxRenderGapMs = 0;
     info = {};
   }
 
@@ -307,7 +316,7 @@ public:
   uint8_t browserEventSequence = 0;
   bool uploadOpenEnded = false;
   uint32_t readUs = 0, decodeUs = 0, outputUs = 0, frameUs = 0,
-           maxFrameUs = 0, skippedFrames = 0;
+           maxFrameUs = 0, skippedFrames = 0, maxRenderGapMs = 0;
 
 private:
   static constexpr const char *kDirectory = "/media/sync";
@@ -319,6 +328,26 @@ private:
   File upload, source, index, playVideo, playIndex;
   uint8_t *scratch = nullptr, *encoded = nullptr, *pixels = nullptr;
   uint32_t anchorPositionMs = 0, anchorLocalMs = 0, lastControlMs = 0;
+  // One SD sector, independent of video duration. Consecutive frames neither
+  // re-read four-byte index entries nor seek the video file back to its cursor.
+  uint8_t indexPage[512]{};
+  uint32_t indexPageStart = UINT32_MAX, indexPageCount = 0;
+  bool frameOffset(uint32_t frame, uint32_t &offset) {
+    if (frame >= info.frames)
+      return false;
+    if (indexPageStart == UINT32_MAX || frame < indexPageStart ||
+        frame - indexPageStart >= indexPageCount) {
+      const uint32_t start = (frame / 128U) * 128U;
+      const uint32_t count = min(uint32_t(128), info.frames - start);
+      if (!playIndex.seek(16U + start * 4U) ||
+          playIndex.read(indexPage, count * 4U) != count * 4U)
+        return false;
+      indexPageStart = start;
+      indexPageCount = count;
+    }
+    offset = MilestoneV5::readVideoU32(indexPage + (frame - indexPageStart) * 4U);
+    return offset >= 16U && offset < playVideo.size();
+  }
 
   static void put32(uint8_t *p, uint32_t value) {
     p[0] = value;

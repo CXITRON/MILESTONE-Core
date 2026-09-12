@@ -45,6 +45,11 @@ assert "portal.bundleSource = bundleDownload.directory" in confirmation
 assert confirmation.index("portal.bundleRequested = true") < confirmation.index("bundleUpdate.start(portal.bundleSource)")
 assert '"available"' in portal and '"current"' in portal and '"idle"' in portal
 assert "OTA check complete: current" in main
+assert main.count("bundleDownload.active && !bundleDownload.checking() && !stableChannel.busy()") == 2
+assert 'hardware.body("업데이트 확인"' not in main
+assert 'portal.downloadVersion == "latest" ? "업데이트 확인"' not in main
+assert "bundleDownload.active || updateCheckInFlight || portal.downloadRequested ? 4" in main
+assert "updateResultVisible = false; // A previous result" in main
 assert "Serial0.printf(\"OTA check" in main
 download = (root / "v5/MilestoneV5Main/V5BundleDownload.h").read_text()
 assert "kLocalPreparationTimeoutMs = 90000" in download

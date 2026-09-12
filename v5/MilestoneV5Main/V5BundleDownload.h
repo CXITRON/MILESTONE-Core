@@ -15,6 +15,7 @@ public:
        available = false;
   String directory, error, checkedVersion;
   uint32_t received = 0, total = 0;
+  bool checking() const { return active && checkOnly; }
   bool begin(const String &version, bool onZero, bool onlyCheck = false) {
     if (active) {
       error = "업데이트 확인이 이미 진행 중입니다";

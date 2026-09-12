@@ -1,7 +1,7 @@
 # v5 구현 진행표
 
-기준: 2026-09-07.
-계획한 v5 소프트웨어 경로는 모두 소스에 연결됐다. 현재 소스 기준은 v5.1.6이며,
+기준: 2026-09-12.
+계획한 v5 소프트웨어 경로는 모두 소스에 연결됐다. 현재 소스 기준은 v5.2.1이며,
 아래의 호스트·컴파일 검증과 v5.1.0 기본 배선
 실기 검증은 장시간 무선·전원 차단·업데이트 내구 시험을 대신하지 않는다.
 
@@ -24,11 +24,11 @@
 | v3 가져오기 | MilestoneV5Legacy | schema 12 이하 CORE/화면/시스템 설정과 legacy Wi-Fi A/B를 v5 namespace로 일회성 복사; v3 namespace는 변경하지 않음 |
 | 동적 작업 | V5Radio/Runtime | 포털 접속자·ZERO BLE·STA·OTA 상태에 따른 MAIN/ZERO 작업 배정, 시간 제한 lease, 취소·AP 복구·BLE 일시 중지 |
 | 앨범아트 | V5ArtworkWorker/V5Artwork | MAC1 다운로드, 곡별 transfer ID·청크·CRC 검증, SD 우선 사용과 임시 파일 readback 후 교체 |
-| 아트 캐시·포털 | V5ArtworkIndex/V5ArtworkPortal | 2GiB/1GiB LRU, AUTO/CUSTOM/BLOCKED/MISSING, CUSTOM 보호, A/B 영구 인덱스 복구, 검색·미리보기·업로드·교체·삭제·고정·차단·재요청·완료 polling |
+| 아트 캐시·포털 | V5ArtworkIndex/V5ArtworkPortal | 2GiB 초과 시에만 LRU, 1GiB SD 여유는 신규 저장 조건이며 기존 캐시 삭제 조건 아님. CUSTOM 보호, A/B 인덱스 및 검증된 임시 이미지 복구, 검색·업로드·교체·삭제·고정·차단·재요청 |
 | 진단 | MilestoneV5Diagnostics/V5Portal | A/B CRC NVS 최근 16개 이벤트, 상태·오류·온도·센서·저장소 표시, 복사와 진단 이력 초기화 |
 | HTTPS 묶음 | DownloadWorker/V5Download/V5BundleDownload | 고정 GitHub Release 자산, CA 검증·허용 host redirect·길이/시간/PSRAM ring 제한, MAIN 또는 ZERO 다운로드, SD 저장 후 서명·대상·버전·peer·크기·SHA 검증; 다운로드 task는 SD/SPI/Flash에 직접 접근하지 않음 |
 | MAIN/ZERO OTA | V5SdUpdate/V5ZeroUpdate/V5OtaReceiver | 서명과 전체 해시 선검사, inactive slot 설치, IDF image validation, 실행 partition/ELF에 묶인 부팅 수신증과 지연 승인 |
-| 동반 업데이트 | V5BundleUpdate/Bundle | immutable SD set과 NVS journal, MAIN 승인→선택적 ZERO 승인→10분 안정화→Stable/Backup A/B 승격, Recovery 보존 |
+| 동반 업데이트 | V5BundleUpdate/Bundle | immutable SD set과 NVS journal, MAIN 승인→선택적 ZERO 승인→10분 안정화. Stable/Backup A/B 승격은 별도 서명된 관리자 지정에만 수행, Recovery 보존 |
 | 독립 SAFE | MilestoneV5Safe/SafetyRuntime | 2MiB factory 앱, 네트워크 없는 TFT·5버튼 메뉴, MAIN A/B 부팅, 서명된 Stable/Backup/Recovery 복원, SD/RTC 진단과 2회 확인 |
 | 파티션·초기 이미지 | partitions.csv/release-v5.sh | MAIN/SAFE 공통 16MiB 표, factory SAFE + 6MiB MAIN A/B, ZERO 4MiB merged image, 고정 offset byte 검증 |
 | 서명·릴리스 | prepare-v5-sd-restore.py/v5-release-assets.py/make-release/milestone-release | P-256 공개키 강제 포함, MAIN/ZERO manifest·bundle·catalog 서명, 역할/버전/스트림 제거/BLE 경계/이미지 offset 검증, 기존 단일 릴리스 명령에 통합 |
