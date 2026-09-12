@@ -1,10 +1,10 @@
 # MILESTONE Core — MILESTONE D1
 
-현재 소프트웨어는 **v5.2.1**입니다. 이번 버전의 실기 OTA 확인은 별도 진행합니다. GOOUUU ESP32-S3 N16R8 MAIN과
+현재 소프트웨어는 **v5.2.2**입니다. 이번 버전의 실기 OTA 확인은 별도 진행합니다. GOOUUU ESP32-S3 N16R8 MAIN과
 Waveshare ESP32-S3-Zero ZERO를 함께 사용하며, 기존 v3.3.4의 CORE·MEDIA·NOW
 인터페이스를 듀얼 보드 구조 안에서 실행합니다.
 
-- 최신 릴리스: [MILESTONE Core v5.2.1](https://github.com/CXITRON/MILESTONE-Core/releases/tag/v5.2.1)
+- 최신 릴리스: [MILESTONE Core v5.2.2](https://github.com/CXITRON/MILESTONE-Core/releases/tag/v5.2.2)
 - 설치·OTA·복구: [v5/README.md](v5/README.md)
 - 구현·검증 범위: [v5/IMPLEMENTATION_STATUS.md](v5/IMPLEMENTATION_STATUS.md)
 - v3.3.4 설치·사용법·변경 이력: [docs/LEGACY_V3.md](docs/LEGACY_V3.md)
@@ -90,6 +90,19 @@ milestone-release local X.Y.Z "release note"
 
 모든 버튼은 `INPUT_PULLUP` active-low이며 두 보드는 GND를 공통으로 연결합니다.
 TFT와 microSD는 MAIN의 MOSI/SCK를 공유하고 각각 별도의 CS를 사용합니다.
+
+## v5.2.2 업데이트 안내
+
+- 업데이트 결과·확인·다운로드·설치 화면만 수정. 작은 구분 표시, 한글 제목,
+  큰 버전/진행률, 버튼 안내로 크기·배치 분리. 일반 화면의 자동 스크롤 설정과 분리
+- 긴 실패 원인은 실제 글꼴 폭에 맞춰 UTF-8 안전 줄바꿈. 본문 3줄을 넘으면
+  말줄임 표시와 설정 AP 상세 안내. 원본 오류·UART0/API 진단은 유지
+- 실제 전송·검증 단계는 퍼센트/막대와 KiB/MiB 표시. ZERO 준비·부팅 응답 대기는
+  이전 바이트 진행률 대신 대기로 표시하며 진행률을 임의로 증가시키지 않음
+- 기존 OK 설치/다운로드, BACK 취소와 15초 확인 조건 유지. CORE/MEDIA/NOW/AP,
+  모드 메뉴·상하단 상태바·독립 SAFE 디자인과 OTA 처리 순서·서명·파티션 변경 없음
+- ZERO 설치/부팅 자체 점검 정지 및 앨범 인터넷 검색 증상은 이번 수정 범위 밖이며
+  해결되지 않음. UI 호스트 검증과 실제 기기의 OTA/화면 확인은 구분해야 함
 
 ## v5.2.1 업데이트 안내
 

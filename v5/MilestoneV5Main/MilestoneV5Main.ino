@@ -12,6 +12,7 @@
 #include "V5Video.h"
 #include "V5ZeroUpdate.h"
 #include "V5StableChannel.h"
+#include "V5UpdateScreen.h"
 #include <MilestoneV5BoardConfig.h>
 #include <MilestoneV5Boot.h>
 #include <MilestoneV5Features.h>
@@ -33,6 +34,8 @@ namespace {
 
 SPIClass linkSpi(HSPI);
 V5Hardware hardware;
+V5UpdateScreen::Surface<V5Hardware> updateSurface(hardware);
+MilestoneV5::UpdateUi::Screen<V5UpdateScreen::Surface<V5Hardware>> updateScreen(updateSurface);
 V5CoreViews coreViews;
 V5Portal portal;
 V5Video video;
@@ -171,20 +174,12 @@ void renderPortalScreen() {
 void renderUpdateCheckResult() {
   // Restore even a paused frame once the result is dismissed.
   portal.sync.invalidateDisplayedFrame();
-  const char *title = updateCheckResult == UpdateCheckResult::Available
-                          ? "업데이트 있음"
-                      : updateCheckResult == UpdateCheckResult::Current
-                          ? "현재 최신 버전"
-                          : "업데이트 확인 실패";
-  const String detail = updateCheckResult == UpdateCheckResult::Failed
-                            ? updateResultError
-                            : String("v") + updateResultVersion;
-  hardware.body(title, detail,
-                updateCheckResult == UpdateCheckResult::Available
-                    ? (bundleDownload.ready ? "OK: 설치" : "OK: 설치 준비")
-                    : updateCheckWasAutomatic ? "자동 확인 완료" : "수동 확인 완료",
-                updateCheckResult == UpdateCheckResult::Available
-                    ? "BACK: 취소" : "아무 버튼: 닫기");
+  using MilestoneV5::UpdateUi::Result;
+  updateScreen.result(updateCheckResult == UpdateCheckResult::Available ? Result::Available
+                      : updateCheckResult == UpdateCheckResult::Current ? Result::Current
+                                                                        : Result::Failed,
+                      updateResultVersion.c_str(), updateResultError.c_str(),
+                      updateCheckWasAutomatic, bundleDownload.ready);
 }
 
 void renderModeMenu() {
@@ -231,37 +226,39 @@ void renderBody() {
   if (millis() - bootStartedMs < 3000) {
     renderBootSplash();
   } else if (portal.bundleRequested) {
-    hardware.body("업데이트 묶음", "서명된 SD 업데이트", "15초 안에 OK 확인",
-                  "BACK 취소");
+    const uint32_t elapsed = millis() - portal.bundleRequestedMs;
+    const bool download = bundleDownload.available && !bundleDownload.ready &&
+                          portal.bundleSource == bundleDownload.directory;
+    updateScreen.confirmation(
+        portal.bundleSource == bundleDownload.directory ? bundleDownload.checkedVersion.c_str() : "",
+        elapsed >= 15000 ? 0 : (15000 - elapsed + 999) / 1000, download);
   } else if (bundleUpdate.phase == V5BundleUpdate::Phase::Copying ||
              bundleUpdate.phase == V5BundleUpdate::Phase::CheckingRunning) {
-    hardware.body("묶음 검증",
-                  bundleUpdate.phase == V5BundleUpdate::Phase::Copying
-                      ? "저장 후 다시 읽는 중"
-                      : "실행 중인 MAIN 확인",
-                  String(bundleUpdate.progress) + " / " + bundleUpdate.total,
-                  "전원을 끄지 마세요");
+    const bool copying = bundleUpdate.phase == V5BundleUpdate::Phase::Copying;
+    updateScreen.progress(copying ? "BUNDLE / VERIFY" : "MAIN / VERIFY",
+                          copying ? "묶음 검증" : "MAIN 검증", "검증 진행 중",
+                          bundleUpdate.progress, bundleUpdate.total, copying, false);
   } else if (zeroUpdate.busy()) {
-    hardware.body("ZERO 복구",
-                  zeroUpdate.state == V5ZeroUpdate::State::RebootWait
-                      ? "ZERO 부팅 자체 점검"
-                      : "서명된 SD 이미지",
-                  String(zeroUpdate.received) + " / " + zeroUpdate.size,
-                  "전원을 끄지 마세요");
+    using State = V5ZeroUpdate::State;
+    const auto state = zeroUpdate.state;
+    const bool hashing = state == State::Hashing, image = state == State::Image;
+    updateScreen.progress(state == State::RebootWait ? "ZERO / BOOT" : "ZERO / INSTALL",
+                          hashing ? "파일 검증" : image ? "이미지 전송"
+                          : state == State::RebootWait ? "부팅 확인"
+                          : state == State::Finish ? "이미지 검증"
+                          : state == State::Commit ? "설치 확정" : "설치 준비",
+                          "응답 대기 중", zeroUpdate.received, zeroUpdate.size,
+                          hashing || image, false);
   } else if (sdUpdate.state == V5SdUpdate::State::Hashing ||
              sdUpdate.state == V5SdUpdate::State::Writing) {
-    hardware.body(
-        "복구",
-        sdUpdate.state == V5SdUpdate::State::Hashing ? "SD 이미지 검증 중"
-                                                     : "비활성 슬롯 기록 중",
-        String(sdUpdate.done) + " / " + sdUpdate.size, "전원을 끄지 마세요");
+    updateScreen.progress("MAIN / INSTALL",
+                          sdUpdate.state == V5SdUpdate::State::Hashing ? "파일 검증" : "슬롯 기록",
+                          "설치 진행 중", sdUpdate.done, sdUpdate.size, true, false);
   } else if (updateResultVisible) {
     renderUpdateCheckResult();
   } else if (bundleDownload.active && !bundleDownload.checking() && !stableChannel.busy()) {
-    hardware.body("설치 파일 다운로드",
-                  String(bundleDownload.received) + " / " + bundleDownload.total,
-                  "다운로드 후 설치 확인",
-                  "BACK: 취소");
+    updateScreen.progress("UPDATE / DOWNLOAD", "다운로드", "연결 준비 중",
+                          bundleDownload.received, bundleDownload.total, true, true);
   } else if (portal.active &&
              profiles.active() == MilestoneV5::Profile::kMedia &&
              portal.sync.activePlayback()) {
@@ -1353,6 +1350,11 @@ void loop() {
       redraw = true;
   }
   static uint32_t lastBodyRender = 0;
+  // Progress belongs to the update screen, even when CORE scrolling is off or
+  // MEDIA/device-information would otherwise leave the body static.
+  if (bundleDownload.active && !bundleDownload.checking() &&
+      !stableChannel.busy() && now - lastBodyRender >= 250)
+    redraw = true;
   bool shouldSleep =
       coreViews.screenOffMinutes &&
       now - lastInteractionMs >= uint32_t(coreViews.screenOffMinutes) * 60000 &&

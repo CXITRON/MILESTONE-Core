@@ -36,6 +36,10 @@ fi
   -o "$build_dir/test_v5_runtime"
 "$build_dir/test_v5_runtime"
 
+"$cxx" "${common_flags[@]}" "$project_dir/tests/test_v5_update_ui.cpp" \
+  -o "$build_dir/test_v5_update_ui"
+"$build_dir/test_v5_update_ui"
+
 "$cxx" "${common_flags[@]}" \
   "$source_dir/MilestoneV5Runtime.cpp" \
   "$source_dir/MilestoneV5Features.cpp" \

@@ -1,8 +1,8 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v5.2.1
+> Current baseline: MILESTONE Core v5.2.2
 > Legacy baseline: MILESTONE Core v3.3.4
-> V5 firmware baseline: 5.2.1 — dual-board MAIN/ZERO plus independent SAFE
+> V5 firmware baseline: 5.2.2 — dual-board MAIN/ZERO plus independent SAFE
 > Hardware: GOOUUU ESP32-S3 N16R8 MAIN + Waveshare ESP32-S3-Zero companion + ST7735-compatible 128×160 SPI TFT + five tactile switches
 > Repository: `CXITRON/MILESTONE-Core`
 
@@ -17,6 +17,12 @@ CRC-protected SPI link. The MAIN factory partition contains the independent
 network-free SAFE recovery application, with 6MiB MAIN A/B slots and signed SD
 Stable/Backup/Recovery images. The v5 release is a signed 13-asset catalog rather
 than the legacy profile manifest/BIN pairs.
+
+v5.2.2 changes only MAIN's update result/confirmation/progress layout, using
+fixed text, measured UTF-8 wrapping and a large version/percentage hierarchy.
+CORE/MEDIA/NOW/AP/SAFE layouts and OTA/artwork state machines are unchanged.
+ZERO install/self-test stalls and artwork lookup reports remain separate,
+unresolved hardware issues; this UI patch does not claim to repair them.
 
 ## 1. Legacy v3 product scope
 

@@ -1,16 +1,34 @@
-# MILESTONE v5.2.1
+# MILESTONE v5.2.2
 
 This is the release source for the dual-ESP v5 hardware. It remains separate
 from the legacy v3.3.4 firmware and uses its own signed MAIN/ZERO/SAFE release
 catalog. Initial installation requires the merged USB images; subsequent
 updates use the signed companion bundle.
 
-The current source baseline is v5.2.1. Its release path keeps the fixed
+The current source baseline is v5.2.2. Its release path keeps the fixed
 13-asset signed catalog and the existing MAIN/ZERO companion protocol v1.
 v5.2.0 separates signed version checks from firmware transfers and introduces
 an explicitly signed administrator stable designation. Hardware
 acceptance is required after the signed build is installed on the assembled
 boards.
+
+v5.2.2 changes MAIN's update screens only: fixed title/version/action hierarchy,
+pixel-measured UTF-8 error wrapping, real transfer percentages with KiB/MiB,
+and indeterminate preparation/self-test states. Checking remains icon-only.
+The normal profiles, AP/menu/status bands, independent SAFE UI, physical
+confirmation logic and OTA/artwork state machines are unchanged. Reported
+ZERO installation/self-test stalls and artwork lookup failures are not fixed
+by this screen-only patch. Hardware acceptance remains pending.
+
+Optional exact-font pixel QA (after ordinary `tools/test-v5.sh`):
+
+```bash
+bash tools/test-v5-update-ui-fonts.sh /path/to/U8g2/src/clib /existing/output-dir
+```
+
+It tests the production layout with the installed firmware fonts, checks all
+glyphs/bounds/overlap and exports 128×128 PPM previews. It does not simulate
+SPI, TFT timing, radio, or an actual signed OTA installation.
 
 v5.2.1 keeps update checks in the status icon; only their results replace the
 body. Sync serializes/coalesces browser controls and reads 128 frame offsets

@@ -35,7 +35,9 @@ assert "downloadError" in portal and '"error"' in portal
 assert "updateCheckInFlight && !bundleDownload.active" in main
 assert "bundleDownload.ready || bundleDownload.upToDate" in main
 assert "updateResultVisible = true" in main
-assert '"OK: 설치"' in main and '"BACK: 취소"' in main
+update_ui = (root / "v5/libraries/MilestoneV5Core/src/MilestoneV5UpdateUi.h").read_text()
+assert 'key("OK", action, 108)' in update_ui and 'key("BACK", "취소", 125)' in update_ui
+assert 'choices(ready ? "설치" : "다운로드")' in update_ui
 confirmation = main[main.index("  if (updateResultVisible &&"):main.index("  if (portal.active) {", main.index("  if (updateResultVisible &&"))]
 assert "updateCheckResult == UpdateCheckResult::Available" in confirmation
 assert "if (back)" in confirmation and "if (!ok)" in confirmation
