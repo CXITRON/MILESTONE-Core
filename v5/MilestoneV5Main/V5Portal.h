@@ -54,12 +54,16 @@ public:
   bool wifiPending = false, wifiReplicate = false;
   uint8_t wifiTestState = 0; // 0 idle, 1 testing, 2 success, 3 failed
   bool timeSyncRequested = false, timeSyncSuccess = false;
+  uint32_t timeSyncId = 0, timeSyncAt = 0;
+  MilestoneV5::StatusPayload zeroSummary{};
+  bool mainBootValidated = false;
   bool profilePending = false, closeRequested = false;
   MilestoneV5::Profile requestedProfile = MilestoneV5::Profile::kCore;
   MilestoneV5::WifiCredentials wifi;
   String wifiResult = "";
   float offsets[3] = {0, 0, 0};
   bool mediaRepeat = true;
+  bool (*transferService)() = nullptr;
   bool bundleRequested = false, bundleBusy = false;
   uint32_t bundleRequestedMs = 0;
   String stableStatus = "아직 확인하지 않음", stableVersion;
@@ -92,8 +96,9 @@ public:
     wifiReplicate = false;
     wifi = {};
     core = &views;
-    const char *headers[] = {"X-CSRF-Token", "X-Artwork-Key"};
-    server.collectHeaders(headers, 2);
+    const char *headers[] = {"X-CSRF-Token", "X-Artwork-Key", "X-Sync-Offset",
+                             "X-Sync-Final", "Content-Length", "Content-Type"};
+    server.collectHeaders(headers, 6);
     artworkPortal.begin(
         server, art, [this] { return authorize(); },
         [this] {
@@ -1027,6 +1032,11 @@ private:
                               millis() - *zeroLastLinkMs <= 5000;
       const bool bleConnected = zeroOnline && now && now->connected;
       const bool amsReady = bleConnected && now->ready;
+      const bool bleEnabled = profile == MilestoneV5::Profile::kNow && !active;
+      const bool bleActive = zeroOnline && bleEnabled &&
+          !(zeroSummary.stateFlags & MilestoneV5::kStatusBleSuspended);
+      const bool bleAdvertising = bleActive &&
+          (zeroSummary.stateFlags & MilestoneV5::kStatusBleAdvertising);
       const char *id = profileId(profile);
       String body = "{\"firmware\":\"" +
                     String(MilestoneV5::FIRMWARE_VERSION) +
@@ -1067,16 +1077,17 @@ private:
                                                    : "idle";
       body += ",\"wifi_test\":\"" + String(wifiState) +
               "\",\"wifi_error\":\"" + jsonEscape(wifiResult) + "\"";
-      body += ",\"bluetooth_enabled\":true,\"bluetooth_active\":" +
-              String(zeroOnline ? "true" : "false") +
+      body += ",\"bluetooth_enabled\":" + String(bleEnabled ? "true" : "false") +
+              ",\"bluetooth_active\":" + String(bleActive ? "true" : "false") +
               ",\"bluetooth_connected\":" +
               String(bleConnected ? "true" : "false") +
               ",\"bluetooth_ams_ready\":" +
               String(amsReady ? "true" : "false") +
               ",\"bluetooth_advertising\":" +
-              String(zeroOnline && !bleConnected ? "true" : "false") +
+              String(bleAdvertising ? "true" : "false") +
               ",\"bluetooth_stage\":\"" +
-              String(!zeroOnline ? "error"
+              String(!bleEnabled ? "disabled" : !zeroOnline ? "error"
+                     : !bleActive ? "suspended"
                      : amsReady   ? "ready"
                      : bleConnected ? "discovering"
                                     : "advertising") +
@@ -1100,13 +1111,41 @@ private:
               "\",\"update_check_origin\":\"" + jsonEscape(downloadOrigin) +
               "\",\"update_error\":\"" + jsonEscape(downloadError) +
               "\",\"stable_version\":\"" + jsonEscape(stableVersion) +
-              "\",\"stable_status\":\"" + jsonEscape(stableStatus) + "\"}"
-              ;
+              "\",\"stable_status\":\"" + jsonEscape(stableStatus) + "\"";
+      if (core && hardware) {
+        body += ",\"main_loop_max_ms\":" + String(core->mainLoopMaxMs) +
+            ",\"main_tft_max_flush_us\":" + String(hardware->display.maxFlushUs) +
+            ",\"main_link_valid\":" + String(core->linkGood) +
+            ",\"main_link_invalid\":" + String(core->linkBad) +
+            ",\"main_link_retries\":" + String(core->linkRetries) +
+            ",\"button_sample_ms\":" + String(core->sampledButtons ? 5 : 0) +
+            ",\"boot_validated\":" + String(mainBootValidated ? "true" : "false");
+        const bool details = zeroOnline && core->peerDetailsKnown &&
+            millis() - core->peerDetailsMs < 15000;
+        body += ",\"zero\":{\"online\":" + String(zeroOnline ? "true" : "false") +
+            ",\"details_valid\":" + String(details ? "true" : "false");
+        if (zeroOnline)
+          body += ",\"state_flags\":" + String(zeroSummary.stateFlags) +
+              ",\"heap_free\":" + String(zeroSummary.freeHeap) +
+              ",\"psram_free\":" + String(zeroSummary.freePsram);
+        if (details) {
+          const auto &d = core->peerDetails;
+          body += ",\"firmware\":\"" + String(d.firmware) + "\",\"uptime_sec\":" + String(d.uptime) +
+              ",\"cpu_mhz\":" + String(d.cpuMHz) + ",\"reset_reason_code\":" + String(d.reset) +
+              ",\"boot_state\":" + String(d.bootState) + ",\"wifi_rssi\":" + String(d.rssi) +
+              ",\"heap_min\":" + String(d.minimumHeap) + ",\"heap_largest\":" + String(d.largestHeap) +
+              ",\"stack_free\":" + String(d.stackFree) + ",\"loop_max_ms\":" + String(d.maxLoopMs) +
+              ",\"link_valid\":" + String(d.validFrames) + ",\"link_invalid\":" + String(d.invalidFrames);
+        }
+        body += '}';
+      }
+      body += '}';
       sendJson(200, body);
     });
     server.on("/api/diagnostics", HTTP_GET, [this] {
-      String body = "{\"last_boot\":\"ESP reset\",\"boot_validated\":true,"
-                    "\"last_validated_uptime_sec\":" +
+      String body = "{\"last_boot\":\"ESP reset\",\"boot_validated\":" +
+                    String(mainBootValidated ? "true" : "false") +
+                    ",\"last_validated_uptime_sec\":" +
                     String(millis() / 1000UL) +
                     ",\"max_temperature_c\":" + String(temperatureRead(), 1) +
                     ",\"last_ota_result\":\"-\",\"rollback_last\":\"-\","
@@ -1216,6 +1255,8 @@ private:
       }
       timeSyncRequested = true;
       timeSyncSuccess = false;
+      if (++timeSyncId == 0) ++timeSyncId;
+      timeSyncAt = millis();
       sendJson(202, "{\"ok\":true,\"state\":\"connecting\"}");
     });
     server.on("/api/profile/switch", HTTP_POST, [this] {
@@ -1363,11 +1404,56 @@ private:
         return;
       sendSyncStatus();
     });
+    // Raw binary avoids multipart's byte-at-a-time boundary parser. Explicit
+    // headers are available during RAW_START on Arduino-ESP32 3.3.11.
+    server.on("/api/sync/data", HTTP_POST, [this] {
+      const bool accepted = localRequest() &&
+          server.header("Content-Type") == "application/octet-stream" && !syncUploadRejected &&
+          (!syncUploadFinalize || sync.finishUpload());
+      syncUploadRejected = syncUploadFinalize = false;
+      if (!accepted) sendJson(409, "{\"error\":\"동기화 전송 거부\"}");
+      else sendSyncStatus();
+    }, [this] {
+      // The same WebServer callback is also used for multipart uploads. Never
+      // dereference raw() for a request that selected the multipart parser.
+      if (server.header("Content-Type") != "application/octet-stream") {
+        syncUploadRejected = true;
+        server.client().stop();
+        return;
+      }
+      HTTPRaw &part = server.raw();
+      if (part.status == RAW_START) {
+        uint32_t offset = 0, bytes = 0;
+        syncUploadFinalize = server.header("X-Sync-Final") == "1";
+        const bool allowed = localRequest() && profile == MilestoneV5::Profile::kMedia &&
+            !bundleBusy && !downloadBusy && !wifiPending &&
+            unsignedInteger(server.header("X-Sync-Offset"), offset) &&
+            unsignedInteger(server.header("Content-Length"), bytes) && bytes <= 327680 &&
+            (server.header("X-Sync-Final") == "0" || syncUploadFinalize);
+        syncUploadRejected = !allowed ||
+            !(offset == 0 ? sync.beginUpload(0, true) :
+              sync.state == V5SyncMedia::State::Uploading && sync.uploadOpenEnded &&
+              sync.writtenBytes == offset);
+        server.client().setTimeout(2000);
+      } else if (part.status == RAW_WRITE) {
+        if (!syncUploadRejected && !sync.writeUpload(part.buf, part.currentSize))
+          syncUploadRejected = true;
+      } else if (part.status == RAW_END || part.status == RAW_ABORTED) {
+        // Retain the written prefix after network interruption. The sender asks
+        // status for its exact next offset; final MVJ1 CRC/JPEG validation stays.
+        if (!syncUploadRejected && !sync.checkpointUpload()) syncUploadRejected = true;
+      }
+      touch();
+      if (transferService && !transferService()) {
+        sync.abortUpload(); syncUploadRejected = true; closeRequested = true;
+      }
+      if (syncUploadRejected) server.client().stop();
+    });
     server.on(
         "/api/sync/upload", HTTP_POST,
         [this] {
           const bool finalize = syncUploadFinalize;
-          const bool accepted = !syncUploadRejected &&
+          const bool accepted = !syncUploadRejected && sync.checkpointUpload() &&
                                 (!finalize || sync.finishUpload());
           syncUploadRejected = false;
           syncUploadFinalize = false;
@@ -1411,6 +1497,10 @@ private:
                 !sync.writeUpload(part.buf, part.currentSize))
               syncUploadRejected = true;
             touch();
+            if (transferService && !transferService()) {
+              sync.abortUpload(); syncUploadRejected = true; closeRequested = true;
+              server.client().stop();
+            }
           } else if (part.status == UPLOAD_FILE_ABORTED) {
             sync.abortUpload();
             syncUploadRejected = true;

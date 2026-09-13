@@ -1,10 +1,10 @@
 # MILESTONE Core — MILESTONE D1
 
-현재 소프트웨어는 **v5.2.2**입니다. 이번 버전의 실기 OTA 확인은 별도 진행합니다. GOOUUU ESP32-S3 N16R8 MAIN과
+현재 소스는 **v5.2.3**입니다. 실기 OTA·무선·TFT 부하 검증은 별도 진행합니다. GOOUUU ESP32-S3 N16R8 MAIN과
 Waveshare ESP32-S3-Zero ZERO를 함께 사용하며, 기존 v3.3.4의 CORE·MEDIA·NOW
 인터페이스를 듀얼 보드 구조 안에서 실행합니다.
 
-- 최신 릴리스: [MILESTONE Core v5.2.2](https://github.com/CXITRON/MILESTONE-Core/releases/tag/v5.2.2)
+- 최신 릴리스: [MILESTONE Core v5.2.3](https://github.com/CXITRON/MILESTONE-Core/releases/tag/v5.2.3)
 - 설치·OTA·복구: [v5/README.md](v5/README.md)
 - 구현·검증 범위: [v5/IMPLEMENTATION_STATUS.md](v5/IMPLEMENTATION_STATUS.md)
 - v3.3.4 설치·사용법·변경 이력: [docs/LEGACY_V3.md](docs/LEGACY_V3.md)
@@ -19,7 +19,12 @@ Waveshare ESP32-S3-Zero ZERO를 함께 사용하며, 기존 v3.3.4의 CORE·MEDI
 
 CORE, MEDIA, NOW는 MAIN 안에서 재설치나 재부팅 없이 전환됩니다. ZERO가
 연결되지 않아도 MAIN의 CORE 화면, 버튼, SD와 SAFE 복구 기능은 계속 작동하며,
-BLE Now Playing과 ZERO가 맡은 인터넷 작업만 제한됩니다.
+BLE Now Playing은 제한되고, MAIN이 한가하면 인터넷 작업을 대신 처리합니다.
+
+BLE는 NOW에서 활성화되며 CORE·MEDIA·설정 AP에서는 중지됩니다. NOW의 BLE
+연결 중 인터넷 요청은 MAIN이 AP·MEDIA 작업으로 바쁘지 않을 때 맡고, 두 보드가
+모두 바쁘면 대기하거나 기기에 사유를 표시합니다. TFT·SD·센서는 배선상 MAIN에
+남으며, 이미 진행 중인 Flash 설치나 파일 기록을 보드 사이에서 이동하지 않습니다.
 
 ## 조작과 설정 AP
 
@@ -90,6 +95,29 @@ milestone-release local X.Y.Z "release note"
 
 모든 버튼은 `INPUT_PULLUP` active-low이며 두 보드는 GND를 공통으로 연결합니다.
 TFT와 microSD는 MAIN의 MOSI/SCK를 공유하고 각각 별도의 CS를 사용합니다.
+
+## v5.2.3 업데이트 안내
+
+- ZERO의 BLE를 NOW에서만 활성화하고 CORE·MEDIA·설정 AP·설치/안전 상태에서
+  광고/연결을 중지. 프로필·AP·안전 정책을 SPI로 먼저 확인한 뒤 작업 배정
+- BLE 연결 중 ZERO의 새 인터넷 작업과 진행 중 Wi-Fi 연결·NTP를 중지.
+  MAIN이 AP·MEDIA 작업을 처리하지 않을 때 네트워크를 인계하며 ZERO의 HTTPS
+  메모리 부족도 배정에 반영. AP 수동 시간 동기화는 ZERO가 제한 시간 안에 처리
+- OTA HTTPS의 일시적 연결/서버 오류는 본문 수신 전 최대 3회 시도.
+  MAIN Flash는 구간별 지우기/기록, ZERO의 명시적 부팅 거절·롤백은 오류로 표시.
+  서명·해시·MAIN 승인 후 ZERO 설치·실행 이미지 수신증·Stable 지정 절차 유지
+- TFT/SD를 동일 loopTask에서 사용하고 CS·클럭 경계를 명시. TFT 20 MHz,
+  SD 10 MHz, 픽셀 일괄 전송과 3 ms dirty tile 예산·8행 영상 전송 묶음 적용
+- 버튼은 별도 5 ms 샘플러와 30 ms 디바운스로 수집. 버튼별 한 번의 대기 입력을
+  보관하고 기존 루프에서 기존 동작 수행. 업로드 중 취소·열 보호와 SPI 응답도 서비스
+- Sync의 기존 256 KiB 전송 묶음은 유지하고 raw binary·8 KiB PSRAM 기록 버퍼로
+  multipart 파싱/작은 SD 쓰기 부담 완화. 응답 유실·부분 전송은 저장 위치부터 재개,
+  전체 MVJ1 CRC·JPEG 검증 및 기존 저장형/동기 재생 계약 유지
+- 우상단은 Wi-Fi 연결·NTP·앨범아트·OTA 확인/다운로드/설치·SD·BLE·AP를 구분.
+  MAIN/ZERO LED는 각 보드의 실제 작업을 독립 표시하며 주야간 밝기를 한 번 적용
+- CORE 정보 12페이지: ZERO 실제 버전·가동 시간·CPU·부팅·메모리·루프 지연,
+  MAIN 버튼 수집·TFT 지연·링크 오류/재시도 추가. 오래된 ZERO 정보는 무효 표시
+- 상세 원인·검증·실기 확인 범위: [2026-09-13 작업 보고](v5/WORK_CHECKPOINT_20260913_STABILITY.md)
 
 ## v5.2.2 업데이트 안내
 

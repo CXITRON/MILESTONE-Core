@@ -30,7 +30,7 @@ assert "now - lastValidLinkMs <= MilestoneV5::kLinkStaleMs" in main
 assert "if (now - bootStartedMs >= 3000)" in main
 assert "kZeroStartReplyTimeoutMs = 15000" in (root / "v5/MilestoneV5Main/V5BundleDownload.h").read_text()
 assert "Automatic signed update check queued" in main
-assert "WiFi.softAPgetStationNum() > 0 && !useZero" in main
+assert "(portal.active || mediaTimingCritical) && !useZero" in main
 assert "downloadError" in portal and '"error"' in portal
 assert "updateCheckInFlight && !bundleDownload.active" in main
 assert "bundleDownload.ready || bundleDownload.upToDate" in main
@@ -50,7 +50,7 @@ assert "OTA check complete: current" in main
 assert main.count("bundleDownload.active && !bundleDownload.checking() && !stableChannel.busy()") == 2
 assert 'hardware.body("업데이트 확인"' not in main
 assert 'portal.downloadVersion == "latest" ? "업데이트 확인"' not in main
-assert "bundleDownload.active || updateCheckInFlight || portal.downloadRequested ? 4" in main
+assert "updateCheckInFlight || portal.downloadRequested ? A::Check" in main
 assert "updateResultVisible = false; // A previous result" in main
 assert "Serial0.printf(\"OTA check" in main
 download = (root / "v5/MilestoneV5Main/V5BundleDownload.h").read_text()

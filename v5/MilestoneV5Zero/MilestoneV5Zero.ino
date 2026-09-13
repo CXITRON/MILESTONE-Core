@@ -11,6 +11,9 @@
 #include <MilestoneV5BoardConfig.h>
 #include <MilestoneV5Boot.h>
 #include <MilestoneV5Now.h>
+#include <MilestoneV5Input.h>
+#include <MilestoneV5Activity.h>
+#include <MilestoneV5RuntimeDetails.h>
 #include <MilestoneV5Protocol.h>
 #include <MilestoneV5Thermal.h>
 #include <MilestoneV5Transport.h>
@@ -27,9 +30,17 @@ MilestoneV5::SequenceTracker mainSequences;
 uint32_t txSequence = 0;
 uint32_t validFrames = 0;
 uint32_t invalidFrames = 0;
+uint32_t maxLoopMs = 0;
 uint32_t zeroBootId = 0;
 uint32_t mainBootId = 0;
 bool mainSessionKnown = false;
+bool mainPolicyKnown = false, mainPortalActive = false, mainSafety = false;
+uint8_t mainProfile = 0;
+uint32_t lastMainFrameMs = 0;
+bool blePermitted() {
+  return MilestoneV5::profileAllowsBle(mainProfile, mainPortalActive, mainSafety,
+      mainPolicyKnown && uint32_t(millis() - lastMainFrameMs) <= MilestoneV5::kLinkStaleMs);
+}
 spi_slave_transaction_t transaction = {};
 bool transactionQueued = false;
 bool sendMetadataNext = false;
@@ -66,8 +77,9 @@ void prepareArtwork(const MilestoneV5::DecodedFrame &d) {
   size_t n = 6;
   auto type = MilestoneV5::MessageType::kTaskResult;
   const int state = V5ArtworkWorker::state.load(std::memory_order_acquire);
-  if (op == 3 && id && d.payloadLength >= 17 && !thermalStop &&
-      !otaReceiver.active()) {
+  if (op == 3 && id && d.payloadLength >= 17 && mainPolicyKnown && !mainSafety && !thermalStop &&
+      !otaReceiver.active() && !remoteDownload.active &&
+      !V5Ams::bluetoothNowPlayingHasLiveConnection()) {
     if (state == 1)
       p[5] = 1;
     else if (V5ArtworkWorker::start(d.payload + 5, d.payloadLength - 5)) {
@@ -167,7 +179,12 @@ void prepareStatus(uint32_t ackSequence, bool requestValid,
           (V5Ams::bluetoothNowPlayingAmsReady()
                ? MilestoneV5::kStatusBleReady
                : 0) |
-          (!strcmp(bleStage, "error") ? MilestoneV5::kStatusBleError : 0)),
+          (!strcmp(bleStage, "error") ? MilestoneV5::kStatusBleError : 0) |
+          (V5Network::connecting ? MilestoneV5::kStatusWifiConnecting : 0) |
+          (V5Network::syncing ? MilestoneV5::kStatusNtpSyncing : 0) |
+          (remoteDownload.active ? MilestoneV5::kStatusDownloadBusy : 0) |
+          (!blePermitted() || V5Ams::bluetoothNowPlaying.suspended
+               ? MilestoneV5::kStatusBleSuspended : 0)),
       reportedTemperature,
       ESP.getFreeHeap(),
       ESP.getFreePsram(),
@@ -195,6 +212,8 @@ void prepareHelloReply(uint32_t ackSequence) {
           uint32_t(MilestoneV5::kCapabilityWifiSta) |
           uint32_t(MilestoneV5::kCapabilityInternetHttp) |
           uint32_t(MilestoneV5::kCapabilityCompanionOta) |
+          uint32_t(MilestoneV5::kCapabilityRuntimeDetails) |
+          uint32_t(MilestoneV5::kCapabilityManualTime) |
           (psramFound() ? uint32_t(MilestoneV5::kCapabilityPsram) : 0UL),
       zeroBootId,
   };
@@ -261,6 +280,10 @@ void setup() {
 }
 
 void loop() {
+  static uint32_t previousLoop = millis();
+  const uint32_t loopNow = millis();
+  maxLoopMs = max(maxLoopMs, uint32_t(loopNow-previousLoop));
+  previousLoop = loopNow;
   static uint32_t sampled = 0;
   if (!sampled || millis() - sampled >= 1000) {
     sampled = millis();
@@ -282,26 +305,38 @@ void loop() {
     localLed.setBrightness(settings.ledEnabled
                                ? (night ? settings.ledNight : settings.ledDay)
                                : 0);
-    localLed.setPixelColor(
-        0, thermalStop ? localLed.Color(255, 0, 0)
-           : (V5ArtworkWorker::state.load() == 1 || remoteDownload.active)
-               ? localLed.Color(0, 100, 255)
-           : V5Network::connecting ? localLed.Color(255, 100, 0)
-           : V5Ams::bluetoothNowPlayingHasLiveConnection()
-               ? localLed.Color(0, 0, 255)
-               : localLed.Color(0, 80, 0));
+
+  }
+  static uint32_t lastLedMs = 0;
+  if (uint32_t(millis() - lastLedMs) >= 50) {
+    lastLedMs = millis();
+    using A = MilestoneV5::Activity;
+    const A state = thermalStop ? A::Fault : otaReceiver.active() ? A::Install :
+        remoteDownload.active ? A::Download : V5ArtworkWorker::state.load() == 1 ? A::Artwork :
+        V5Ams::bluetoothNowPlayingHasLiveConnection() ? A::Ble :
+        V5Network::connecting ? A::Connecting : V5Network::syncing ? A::Ntp :
+        V5Ams::bluetoothNowPlayingAdvertising() ? A::Advertising :
+        WiFi.status() == WL_CONNECTED ? A::Online : A::Idle;
+    localLed.setPixelColor(0, MilestoneV5::activityLed(state, lastLedMs));
     localLed.show();
   }
   if (!bootValidated && millis() - bootStartedMs >= 10000 &&
       (mainSessionKnown || millis() - bootStartedMs >= 60000))
     bootValidated = MilestoneV5::finishBootCandidate(
         mainSessionKnown && ESP.getFreeHeap() > 16384 && !thermalStop);
-  remoteDownload.service(!thermalStop && !otaReceiver.active());
-  if (!thermalStop && !otaReceiver.needsQuiescence())
-    V5Network::service(millis(),
-                       !remoteDownload.active &&
-                           (V5Ams::bluetoothNowPlayingHasLiveConnection() ||
-                            V5ArtworkWorker::state.load() == 1),
+  const bool allowBle = bootValidated && blePermitted() && !thermalStop &&
+      !otaReceiver.needsQuiescence() && !remoteDownload.active && !V5Network::testing &&
+      V5ArtworkWorker::state.load() != 1;
+  if (!allowBle) {
+    V5Ams::suspendBluetoothNowPlaying();
+    V5Ams::serviceSuspendedBluetoothNowPlaying();
+  }
+  const bool liveBle = V5Ams::bluetoothNowPlayingHasLiveConnection();
+  remoteDownload.service(mainPolicyKnown && !mainSafety && !thermalStop &&
+                         !otaReceiver.active() && !liveBle);
+  if (bootValidated && mainPolicyKnown && !mainSafety && !thermalStop && !otaReceiver.needsQuiescence())
+    V5Network::service(millis(), liveBle || V5ArtworkWorker::state.load() == 1 ||
+                       (allowBle && !V5Ams::bluetoothNowPlaying.initialized),
                        remoteDownload.active);
   V5Ams::bluetoothInitialNetworkGate =
       !V5Ams::bluetoothNowPlaying.initialized &&
@@ -309,22 +344,16 @@ void loop() {
   V5Ams::runtimeState = V5Network::connecting ? V5Ams::RuntimeState::CONNECTING
                         : V5Network::syncing ? V5Ams::RuntimeState::TIME_SYNCING
                                              : V5Ams::RuntimeState::READY;
-  if (thermalStop || otaReceiver.needsQuiescence()) {
-    V5Ams::suspendBluetoothNowPlaying();
+  if (thermalStop || otaReceiver.needsQuiescence() || (mainPolicyKnown && mainSafety)) {
     V5ArtworkWorker::cancel.store(true);
     V5DownloadWorker::cancel.store(true);
-    if (V5ArtworkWorker::state.load() != 1 &&
-        V5DownloadWorker::state.load() != 1) {
+    if (V5ArtworkWorker::state.load() != 1 && V5DownloadWorker::state.load() != 1) {
       V5Network::stopTime();
-      if (WiFi.getMode() != WIFI_OFF)
-        WiFi.mode(WIFI_OFF);
+      if (WiFi.getMode() != WIFI_OFF) WiFi.mode(WIFI_OFF);
       V5Network::connecting = V5Network::syncing = false;
     }
-  } else if (remoteDownload.active || V5Network::testing) {
-    V5Ams::suspendBluetoothNowPlaying();
-    V5ArtworkWorker::cancel.store(true);
-  } else {
-    if (V5Ams::bluetoothNowPlaying.suspended)
+  } else if (allowBle) {
+    if (V5Ams::bluetoothNowPlaying.suspended && !liveBle)
       V5Ams::resumeBluetoothNowPlaying();
     V5Ams::processBluetoothNowPlaying();
   }
@@ -405,6 +434,7 @@ void loop() {
   uint32_t ackSequence =
       mainSequences.initialized() ? mainSequences.latest() : 0;
   if (valid) {
+    lastMainFrameMs = millis();
     ++validFrames;
     ackSequence = decoded.fields.sequence;
     reportLinkPeriodically();
@@ -423,6 +453,9 @@ void loop() {
         mainSequences.reset();
         mainBootId = hello.bootId;
         mainSessionKnown = true;
+        mainPolicyKnown = false;
+        V5Network::manualId = 0;
+        V5Network::manualResult = 1;
         provisionSeen = false;
         artworkTransfer = 0;
         requestRemembered = false;
@@ -432,6 +465,38 @@ void loop() {
     } else {
       prepareStatus(ackSequence, false);
     }
+  } else if (valid && mainSessionKnown &&
+             decoded.fields.type == MilestoneV5::MessageType::kTaskRequest &&
+             decoded.payloadLength == 5 && decoded.payload[0] == 36) {
+    const uint32_t id = MilestoneV5::readVideoU32(decoded.payload + 1);
+    uint8_t response[10] = {36};
+    memcpy(response + 1, decoded.payload + 1, 4);
+    response[5] = V5Network::requestTime(id, millis(),
+        bootValidated && mainPolicyKnown && !mainSafety && !thermalStop &&
+        !otaReceiver.needsQuiescence() && !remoteDownload.active);
+    const uint32_t epoch = response[5] == 0 ? time(nullptr) : 0;
+    for (unsigned i = 0; i < 4; ++i) response[6 + i] = epoch >> (8 * i);
+    MilestoneV5::FrameFields f{MilestoneV5::MessageType::kTaskResult,
+        MilestoneV5::kFlagResponse, decoded.fields.leaseId, ++txSequence, decoded.fields.sequence};
+    MilestoneV5::encodeSpiSlot(f, response, sizeof(response), txSlot, sizeof(txSlot));
+  } else if (valid && mainSessionKnown &&
+             decoded.fields.type == MilestoneV5::MessageType::kTaskRequest &&
+             decoded.payloadLength == 1 && decoded.payload[0] == 35) {
+    MilestoneV5::RuntimeDetails details;
+    snprintf(details.firmware, sizeof(details.firmware), "%s", MilestoneV5::FIRMWARE_VERSION);
+    details.uptime=millis()/1000; details.minimumHeap=ESP.getMinFreeHeap();
+    details.largestHeap=ESP.getMaxAllocHeap(); details.stackFree=uxTaskGetStackHighWaterMark(nullptr);
+    details.validFrames=validFrames; details.invalidFrames=invalidFrames; details.maxLoopMs=maxLoopMs;
+    details.cpuMHz=getCpuFrequencyMhz(); details.reset=uint8_t(esp_reset_reason());
+    details.rssi=WiFi.status()==WL_CONNECTED ? WiFi.RSSI() : -127;
+    esp_ota_img_states_t boot;
+    if (esp_ota_get_state_partition(esp_ota_get_running_partition(), &boot)==ESP_OK)
+      details.bootState=uint8_t(boot);
+    uint8_t response[MilestoneV5::kRuntimeDetailsBytes];
+    MilestoneV5::encodeRuntimeDetails(details, response);
+    MilestoneV5::FrameFields f{MilestoneV5::MessageType::kTaskResult,
+        MilestoneV5::kFlagResponse, decoded.fields.leaseId, ++txSequence, decoded.fields.sequence};
+    MilestoneV5::encodeSpiSlot(f,response,sizeof(response),txSlot,sizeof(txSlot));
   } else if (valid && mainSessionKnown &&
              (decoded.fields.type == MilestoneV5::MessageType::kOtaControl ||
               decoded.fields.type == MilestoneV5::MessageType::kOtaChunk)) {
@@ -492,7 +557,9 @@ void loop() {
     uint8_t response[474];
     size_t n = 0;
     if (remoteDownload.request(decoded.payload, decoded.payloadLength, response,
-                               n, !thermalStop && !otaReceiver.active())) {
+                               n, mainPolicyKnown && !mainSafety && !thermalStop && !otaReceiver.active() &&
+                                  !V5Ams::bluetoothNowPlayingHasLiveConnection() &&
+                                  V5ArtworkWorker::state.load() != 1)) {
       MilestoneV5::FrameFields f{MilestoneV5::MessageType::kTaskResult,
                                  MilestoneV5::kFlagResponse,
                                  decoded.fields.leaseId, ++txSequence,
@@ -528,6 +595,10 @@ void loop() {
         decoded.payloadLength == 3 && decoded.payload[0] <= 2 &&
         decoded.payload[1] <= 1 && decoded.payload[2] <= 1;
     if (accepted) {
+      mainProfile = decoded.payload[0];
+      mainPortalActive = decoded.payload[1];
+      mainSafety = decoded.payload[2];
+      mainPolicyKnown = true;
       mainSequences.observe(decoded.fields.sequence);
       if (!V5Network::testing)
         V5Network::testFinished = false;

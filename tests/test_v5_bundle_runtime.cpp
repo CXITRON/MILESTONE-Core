@@ -56,6 +56,7 @@ void installMain(V5BundleUpdate &bundle, V5SdUpdate &main) {
     ++FakeOta::now;
   }
   assert(main.state == V5SdUpdate::State::Ready);
+  assert(FakeOta::beginSize == OTA_WITH_SEQUENTIAL_WRITES);
   assert(FakeOta::selected == 0x20000);
 }
 int main(int argc, char **argv) {
@@ -64,6 +65,24 @@ int main(int argc, char **argv) {
   FakeSd::root = std::filesystem::path(argv[1]) / "bundle-runtime-sd";
   std::filesystem::create_directories(FakeSd::root);
   FakeOta::reset();
+  {
+    V5ZeroUpdate pending;
+    pending.resumeReceipt(77);
+    uint8_t request[476]; size_t size = 0;
+    FakeOta::now += 16000;
+    assert(pending.request(request, size));
+    uint8_t reply[10] = {5};
+    reply[0] = request[0];
+    MilestoneV5::otaPut32(reply + 1, 77);
+    reply[5] = uint8_t(MilestoneV5::RemoteOtaState::BootTesting);
+    assert(pending.response(reply, sizeof(reply)));
+    assert(pending.state == V5ZeroUpdate::State::RebootWait);
+    reply[5] = uint8_t(MilestoneV5::RemoteOtaState::Failed);
+    assert(pending.response(reply, sizeof(reply)));
+    assert(pending.state == V5ZeroUpdate::State::Failed);
+    assert(std::string(pending.error).find("롤백") != std::string::npos);
+    FakeOta::reset();
+  }
   FakeNvs::records.clear();
   prepare(true);
   MilestoneV5::StableIndex previous{};

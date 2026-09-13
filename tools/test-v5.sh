@@ -36,6 +36,19 @@ fi
   -o "$build_dir/test_v5_runtime"
 "$build_dir/test_v5_runtime"
 
+"$cxx" -I"$project_dir/tests/v5_network_mocks" -I"$project_dir/tests/v5_mocks" "${common_flags[@]}" -std=c++17 \
+  "$project_dir/tests/test_v5_network_runtime.cpp" -o "$build_dir/test_v5_network_runtime"
+"$build_dir/test_v5_network_runtime"
+
+"$cxx" -I"$project_dir/tests/v5_http_mocks" -I"$project_dir/tests/v5_network_mocks" \
+  -I"$project_dir/tests/v5_mocks" "${common_flags[@]}" -std=c++17 \
+  "$project_dir/tests/test_v5_http_runtime.cpp" -o "$build_dir/test_v5_http_runtime"
+"$build_dir/test_v5_http_runtime"
+
+"$cxx" -I"$project_dir/tests/v5_bus_mocks" "${common_flags[@]}" \
+  "$project_dir/tests/test_v5_tft_bus.cpp" -o "$build_dir/test_v5_tft_bus"
+"$build_dir/test_v5_tft_bus"
+
 "$cxx" "${common_flags[@]}" "$project_dir/tests/test_v5_update_ui.cpp" \
   -o "$build_dir/test_v5_update_ui"
 "$build_dir/test_v5_update_ui"

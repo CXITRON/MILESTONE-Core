@@ -164,10 +164,40 @@ static void artwork() {
   free(downloaded.packet); free(staged.packet); free(recovered.packet);
   free(art.packet); free(rebooted.packet);
 }
+static void uploadCheckpoints() {
+  V5SyncMedia sync;
+  sync.begin(true);
+  assert(sync.beginUpload(0, true));
+  FakeSd::writes.clear();
+  std::vector<uint8_t> bytes(100000, 19);
+  for (size_t offset = 0; offset < bytes.size();) {
+    size_t count = std::min(size_t(1436), bytes.size() - offset);
+    assert(sync.writeUpload(bytes.data() + offset, count));
+    offset += count;
+  }
+  assert(sync.writtenBytes == bytes.size());
+  unsigned writes = 0;
+  for (const auto &pair : FakeSd::writes) writes += pair.second;
+  assert(writes == bytes.size() / 8192);
+  assert(sync.checkpointUpload()); // Acknowledgment includes the last short write.
+  unsigned checkpointWrites = 0;
+  for (const auto &pair : FakeSd::writes) checkpointWrites += pair.second;
+  assert(checkpointWrites == writes + 1);
+  assert(sync.writeUpload(bytes.data(), 100));
+  FakeSd::failWrites = true;
+  assert(!sync.checkpointUpload());
+  assert(sync.state == V5SyncMedia::State::Error);
+  FakeSd::failWrites = false;
+  assert(sync.beginUpload(0, true));
+  assert(sync.writeUpload(bytes.data(), 100));
+  sync.abortUpload();
+  assert(sync.state != V5SyncMedia::State::Uploading);
+}
 int main(int argc, char **argv) {
   assert(argc == 2);
   FakeSd::root = std::filesystem::path(argv[1]) / "media-runtime";
   playback();
   artwork();
+  uploadCheckpoints();
   puts("v5 SD playback and persistent artwork runtime tests passed");
 }

@@ -3,6 +3,7 @@
 #include "V5Environment.h"
 #include "V5EnvironmentLog.h"
 #include "V5Tft.h"
+#include <MilestoneV5Activity.h>
 #include <Adafruit_NeoPixel.h>
 #include <MilestoneV5BoardConfig.h>
 #include <MilestoneV5Features.h>
@@ -17,7 +18,7 @@ class V5Hardware {
 public:
   SimpleSt7735 display{SPI, MilestoneV5::MainPins::kTftCs,
                        MilestoneV5::MainPins::kTftDc,
-                       MilestoneV5::MainPins::kTftReset};
+                       MilestoneV5::MainPins::kTftReset, MilestoneV5::MainPins::kSdCs};
   Adafruit_NeoPixel led{1, MilestoneV5::MainPins::kRgb, NEO_GRB + NEO_KHZ800};
   MilestoneV5::RtcTime rtc{};
   V5Environment environment;
@@ -35,9 +36,9 @@ public:
   bool textScroll = true, textLeft = false;
   bool textShift = true;
   uint8_t scrollSpeed = 24;
-  // Legacy status meanings: idle/wait, connecting, online, AP, download,
-  // installing, fault. Bluetooth is deliberately not shown as Wi-Fi state.
+  // Activity distinguishes NTP, artwork, downloads, storage and both radios.
   uint8_t radioIndicator = 0;
+  MilestoneV5::Activity localActivity = MilestoneV5::Activity::Idle;
   size_t fileCount = 0;
 
   void begin() {
@@ -314,31 +315,11 @@ public:
     } else if (environment.enabled && environment.displayMask)
       display.print(" ENV --");
     display.fillRect(116, 0, 12, 14, 0);
-    if (radioIndicator == 0) {
-      display.drawCircle(122, 6, 4, 0x8410);
-    } else if (radioIndicator == 1) {
-      // Same clock-shaped waiting/synchronizing indicator as legacy CORE.
-      display.drawCircle(122, 6, 4, 0x3D7F);
-      display.drawFastVLine(122, 3, 3, 0x3D7F);
-      display.drawFastHLine(122, 6, 3, 0x3D7F);
-    } else if (radioIndicator == 2) {
-      // Same online check mark as legacy CORE.
-      display.drawCircle(122, 6, 4, 0x2F2D);
-      display.drawLine(119, 6, 121, 8, 0x2F2D);
-      display.drawLine(121, 8, 125, 3, 0x2F2D);
-    } else if (radioIndicator == 3) {
-      display.setTextColor(0x07FF, 0);
-      display.setCursor(116, 4);
-      display.print("AP");
-    } else if (radioIndicator == 4 || radioIndicator == 5) {
-      const uint16_t color = radioIndicator == 4 ? 0xFD20 : 0xF81F;
-      display.drawFastVLine(122, 1, 8, color);
-      display.drawLine(122, 1, 119, 4, color);
-      display.drawLine(122, 1, 125, 4, color);
-    } else if (radioIndicator == 6) {
-      display.drawLine(118, 2, 126, 10, 0xF800);
-      display.drawLine(126, 2, 118, 10, 0xF800);
-    }
+    const auto activity = static_cast<MilestoneV5::Activity>(radioIndicator);
+    const uint16_t *icon = MilestoneV5::activityIcon(activity);
+    for (unsigned y=0; y<12; ++y)
+      for (unsigned x=0; x<12; ++x)
+        if (icon[y] & (1U << (11-x))) display.drawPixel(116+x, y+1, MilestoneV5::activity565(activity));
     display.drawFastHLine(0, 15, 128, 0x4208);
     display.fillRect(0, 144, 128, 16, 0);
     display.drawFastHLine(0, 144, 128, 0x4208);
@@ -372,11 +353,9 @@ public:
   }
 
   void localLed(bool safe, bool ap = false, bool internet = false) {
-    led.setPixelColor(0, safe        ? led.Color(24, 0, 0)
-                         : ap        ? led.Color(0, 16, 24)
-                         : internet  ? led.Color(0, 0, 24)
-                         : sdMounted ? led.Color(0, 8, 0)
-                                     : led.Color(8, 4, 0));
+    const auto state = safe ? MilestoneV5::Activity::Safe : ap ? MilestoneV5::Activity::Ap :
+        internet ? MilestoneV5::Activity::Connecting : localActivity;
+    led.setPixelColor(0, MilestoneV5::activityLed(state, millis()));
     led.show();
   }
 

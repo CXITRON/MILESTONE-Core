@@ -80,6 +80,8 @@ enum CapabilityFlags : uint32_t {
   kCapabilityInternetHttp = 1UL << 2,
   kCapabilityCompanionOta = 1UL << 3,
   kCapabilityPsram = 1UL << 4,
+  kCapabilityRuntimeDetails = 1UL << 5,
+  kCapabilityManualTime = 1UL << 6,
 };
 
 struct HelloPayload {
@@ -118,6 +120,10 @@ enum StatusFlags : uint16_t {
   kStatusBleAdvertising = 1U << 7,
   kStatusBleReady = 1U << 8,
   kStatusBleError = 1U << 9,
+  kStatusWifiConnecting = 1U << 10,
+  kStatusNtpSyncing = 1U << 11,
+  kStatusDownloadBusy = 1U << 12,
+  kStatusBleSuspended = 1U << 13,
 };
 
 constexpr size_t kStatusPayloadSize = 12;

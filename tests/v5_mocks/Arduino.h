@@ -1,4 +1,7 @@
 #pragma once
+#ifndef PROGMEM
+#define PROGMEM
+#endif
 #include <SD.h>
 #include <esp_ota_ops.h>
 

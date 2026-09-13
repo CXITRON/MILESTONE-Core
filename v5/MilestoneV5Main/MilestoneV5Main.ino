@@ -1,5 +1,7 @@
 #include <Arduino.h>
 #include <SPI.h>
+#include <esp_timer.h>
+#include <MilestoneV5Input.h>
 
 #include "V5Artwork.h"
 #include "V5BundleDownload.h"
@@ -87,6 +89,10 @@ uint8_t negotiatedProtocolVersion = 0;
 uint32_t zeroCapabilities = 0;
 uint8_t linkAttempts = 0;
 bool awaitingAck = false;
+uint8_t acknowledgedPolicy = 255, txPolicy = 255;
+bool txHeartbeat = false;
+uint32_t linkValidResponses = 0, linkInvalidResponses = 0, linkRetries = 0;
+uint32_t lastPeerDetailsRequest = 0;
 MilestoneV5::StatusPayload zeroStatus = {};
 uint32_t lastZeroStatusMs = 0;
 bool zeroTemperatureKnown = false;
@@ -362,42 +368,34 @@ void renderBody() {
   redraw = false;
 }
 
+bool buttonSamplerReady = false;
+esp_timer_handle_t buttonTimer = nullptr;
 struct DebouncedButton {
   int pin;
-  bool stablePressed;
-  bool sampledPressed;
-  uint32_t changedMs;
-
+  MilestoneV5::ButtonLatch latch;
+  explicit DebouncedButton(int gpio) : pin(gpio) {}
   void begin() {
     pinMode(pin, INPUT_PULLUP);
-    stablePressed = sampledPressed = digitalRead(pin) == LOW;
-    changedMs = millis();
+    latch.begin(digitalRead(pin) == LOW, millis());
   }
-
+  void sample(uint32_t now) { latch.sample(digitalRead(pin) == LOW, now); }
+  bool pending() const { return latch.pending(); }
   bool pressed(uint32_t now) {
-    const bool sample = digitalRead(pin) == LOW;
-    if (sample != sampledPressed) {
-      sampledPressed = sample;
-      changedMs = now;
-    }
-    if (sample != stablePressed && now - changedMs >= 30) {
-      stablePressed = sample;
-      return stablePressed;
-    }
-    return false;
+    if (!buttonSamplerReady) sample(now);
+    return latch.take();
   }
 };
-
-DebouncedButton prevButton = {MilestoneV5::MainPins::kButtonPrev, false, false,
-                              0};
-DebouncedButton nextButton = {MilestoneV5::MainPins::kButtonNext, false, false,
-                              0};
-DebouncedButton okButton = {MilestoneV5::MainPins::kButtonOk, false, false, 0};
-DebouncedButton backButton = {MilestoneV5::MainPins::kButtonBack, false, false,
-                              0};
-DebouncedButton modeButton = {MilestoneV5::MainPins::kButtonMode, false, false,
-                              0};
-DebouncedButton bootButton = {0, false, false, 0};
+DebouncedButton prevButton(MilestoneV5::MainPins::kButtonPrev);
+DebouncedButton nextButton(MilestoneV5::MainPins::kButtonNext);
+DebouncedButton okButton(MilestoneV5::MainPins::kButtonOk);
+DebouncedButton backButton(MilestoneV5::MainPins::kButtonBack);
+DebouncedButton modeButton(MilestoneV5::MainPins::kButtonMode);
+DebouncedButton bootButton(0);
+void sampleButtons(void *) {
+  const uint32_t now = millis();
+  prevButton.sample(now); nextButton.sample(now); okButton.sample(now);
+  backButton.sample(now); modeButton.sample(now); bootButton.sample(now);
+}
 
 const char *profileName(MilestoneV5::Profile profile) {
   switch (profile) {
@@ -728,12 +726,23 @@ void serviceButtons(uint32_t now) {
     activateMenuSelection();
 }
 
+uint8_t currentRadioPolicy() {
+  return uint8_t(profiles.active()) |
+         ((portal.active || radio.requestPortal) ? 4 : 0) |
+         ((safeModeActive || bundleUpdate.installing()) ? 8 : 0);
+}
+bool zeroHttpsResourcesReady(uint32_t now) {
+  return zeroStatus.freeHeap >= 90000 &&
+      (!coreViews.peerDetailsKnown || now - coreViews.peerDetailsMs >= 15000 ||
+       coreViews.peerDetails.largestHeap >= 40000);
+}
 void exchangeHeartbeat(uint32_t now) {
   if (!digitalRead(MilestoneV5::MainPins::kLinkReady))
     return;
   if (awaitingAck && linkAttempts >= 4) {
     awaitingAck = false;
     negotiatedProtocolVersion = 0;
+    acknowledgedPolicy = 255;
     txLeaseId = 0;
     linkAttempts = 0;
   }
@@ -743,7 +752,9 @@ void exchangeHeartbeat(uint32_t now) {
     MilestoneV5::MessageType type = MilestoneV5::MessageType::kHeartbeat;
     txOperation = 0;
     txArtGeneration = 0;
+    txPolicy = currentRadioPolicy();
     if (negotiatedProtocolVersion == 0) {
+      acknowledgedPolicy = 255;
       const MilestoneV5::HelloPayload hello = {
           MilestoneV5::kProtocolVersion,
           MilestoneV5::kProtocolVersion,
@@ -755,6 +766,8 @@ void exchangeHeartbeat(uint32_t now) {
         return;
       payloadLength = MilestoneV5::kHelloPayloadSize;
       type = MilestoneV5::MessageType::kHello;
+    } else if (acknowledgedPolicy != txPolicy) {
+      payloadLength = 3; // Publish profile/AP/safety before assigning any work.
     } else if (zeroUpdate.busy() &&
                zeroUpdate.state != V5ZeroUpdate::State::Hashing) {
       size_t n = 0;
@@ -808,6 +821,19 @@ void exchangeHeartbeat(uint32_t now) {
       payloadLength = 97;
       type = MilestoneV5::MessageType::kTaskRequest;
       txOperation = 34;
+    } else if (portal.timeSyncRequested && !bundleUpdate.active() &&
+               !bundleDownload.active && !radio.busy &&
+               (zeroCapabilities & MilestoneV5::kCapabilityManualTime)) {
+      payload[0] = 36;
+      for (unsigned i = 0; i < 4; ++i) payload[1 + i] = portal.timeSyncId >> (8 * i);
+      payloadLength = 5; txOperation = 36;
+      type = MilestoneV5::MessageType::kTaskRequest;
+    } else if (!bundleUpdate.active() && !bundleDownload.active &&
+               (zeroCapabilities & MilestoneV5::kCapabilityRuntimeDetails) &&
+               uint32_t(now-lastPeerDetailsRequest) >= 5000) {
+      payload[0]=35; payloadLength=1; txOperation=35;
+      type=MilestoneV5::MessageType::kTaskRequest;
+      lastPeerDetailsRequest=now;
     } else if (!safeModeActive && !radio.busy &&
                (radio.zeroArtworkAllowed || artwork.stage == 2) &&
                (profiles.active() == MilestoneV5::Profile::kNow ||
@@ -826,6 +852,13 @@ void exchangeHeartbeat(uint32_t now) {
       payload[0] = static_cast<uint8_t>(profiles.active());
       payload[1] = static_cast<uint8_t>(modeMenu.isOpen());
       payload[2] = static_cast<uint8_t>(safeModeActive);
+      payloadLength = 3;
+    }
+    txHeartbeat = type == MilestoneV5::MessageType::kHeartbeat;
+    if (txHeartbeat) {
+      payload[0] = txPolicy & 3;
+      payload[1] = (txPolicy >> 2) & 1;
+      payload[2] = (txPolicy >> 3) & 1;
       payloadLength = 3;
     }
     const bool leased = type == MilestoneV5::MessageType::kTaskRequest ||
@@ -847,6 +880,7 @@ void exchangeHeartbeat(uint32_t now) {
     awaitingAck = true;
     linkAttempts = 0;
   }
+  if (linkAttempts) ++linkRetries;
   ++linkAttempts;
 
   linkSpi.beginTransaction(
@@ -890,7 +924,21 @@ void exchangeHeartbeat(uint32_t now) {
       if (valid)
         redraw = true;
     } else if (decoded.fields.type == MilestoneV5::MessageType::kTaskResult) {
-      if (decoded.payloadLength == 2 && decoded.payload[0] == 34 &&
+      if (txOperation == 36 && decoded.payloadLength == 10 && decoded.payload[0] == 36 &&
+          MilestoneV5::readVideoU32(decoded.payload + 1) == portal.timeSyncId &&
+          decoded.payload[5] <= 2) {
+        valid = true;
+        if (decoded.payload[5] != 2 && portal.timeSyncRequested) {
+          const uint32_t epoch = MilestoneV5::readVideoU32(decoded.payload + 6);
+          portal.timeSyncSuccess = decoded.payload[5] == 0 && epoch >= 1704067200UL &&
+              epoch <= 4102444799UL && hardware.setRtcEpoch(epoch);
+          portal.timeSyncRequested = false;
+          if (portal.timeSyncSuccess) { rtcSynced = true; lastRtcSyncMs = now; }
+        }
+      } else if (txOperation == 35) {
+        valid = MilestoneV5::decodeRuntimeDetails(decoded.payload, decoded.payloadLength, coreViews.peerDetails);
+        if (valid) { coreViews.peerDetailsKnown=true; coreViews.peerDetailsMs=millis(); }
+      } else if (decoded.payloadLength == 2 && decoded.payload[0] == 34 &&
           txOperation == 34) {
         valid = true;
         portal.systemPending = false;
@@ -997,12 +1045,47 @@ void exchangeHeartbeat(uint32_t now) {
         redraw = true;
     }
     if (valid) {
+      ++linkValidResponses;
+      if (txHeartbeat) acknowledgedPolicy = txPolicy;
       lastZeroSequence = decoded.fields.sequence;
       lastValidLinkMs = now;
       awaitingAck = false;
       txLeaseId = 0;
     }
+  } else {
+    ++linkInvalidResponses;
   }
+}
+
+void serviceCompanion(uint32_t now) {
+  static uint32_t last = 0;
+  const bool transfer = zeroUpdate.busy() ||
+      (bundleDownload.active && bundleDownload.useZero) ||
+      (stableChannel.download.active && stableChannel.download.useZero);
+  // The first pipelined ACK can be fetched quickly. Keep the old total retry
+  // window for a busy peer instead of renegotiating after four 5 ms polls.
+  const uint32_t interval = awaitingAck && linkAttempts >= 2 ? 40UL :
+      transfer ? 5UL : awaitingAck ? 5UL :
+      acknowledgedPolicy != currentRadioPolicy() ? 5UL :
+      ((artwork.stage == 1 || artwork.stage == 2) && !safeModeActive) ? 20UL :
+      profiles.active() == MilestoneV5::Profile::kNow && !safeModeActive ? 250UL :
+      MilestoneV5::kHeartbeatIntervalMs;
+  if (now - last >= interval) { last = now; exchangeHeartbeat(now); }
+}
+
+// Called only after an SD write returns, never from another task. Do not run
+// portal/button actions recursively while WebServer is parsing a request.
+bool servicePortalTransfer() {
+  const uint32_t now = millis();
+  static uint32_t lastThermalSample = 0;
+  if (now - lastThermalSample >= 1000) {
+    lastThermalSample = now;
+    thermal.sample(temperatureRead());
+    temperatureSafe = thermal.stopped;
+    if (temperatureSafe) safeModeActive = true;
+  }
+  serviceCompanion(now);
+  return !temperatureSafe && !backButton.pending() && !modeButton.pending() && !bootButton.pending();
 }
 
 } // namespace
@@ -1057,6 +1140,13 @@ void setup() {
   backButton.begin();
   modeButton.begin();
   bootButton.begin();
+  portal.transferService = servicePortalTransfer;
+  esp_timer_create_args_t buttonArgs{};
+  buttonArgs.callback = sampleButtons;
+  buttonArgs.name = "buttons";
+  buttonArgs.skip_unhandled_events = true;
+  if (esp_timer_create(&buttonArgs, &buttonTimer) == ESP_OK)
+    buttonSamplerReady = esp_timer_start_periodic(buttonTimer, 5000) == ESP_OK;
   if (!digitalRead(MilestoneV5::MainPins::kButtonBack) &&
       !digitalRead(MilestoneV5::MainPins::kButtonMode))
     MilestoneV5::bootSafetyApplication();
@@ -1074,6 +1164,18 @@ void setup() {
 
 void loop() {
   const uint32_t now = millis();
+  static uint32_t previousLoop = now;
+  coreViews.mainLoopMaxMs=max(coreViews.mainLoopMaxMs,uint32_t(now-previousLoop));
+  previousLoop=now;
+  coreViews.sampledButtons=buttonSamplerReady;
+  coreViews.linkGood=linkValidResponses; coreViews.linkBad=linkInvalidResponses;
+  coreViews.linkRetries=linkRetries;
+  portal.zeroSummary = zeroStatus;
+  portal.mainBootValidated = bootValidated;
+  if (portal.timeSyncRequested && now - portal.timeSyncAt >= 45000) {
+    portal.timeSyncRequested = false;
+    portal.timeSyncSuccess = false;
+  }
   portal.profile = profiles.active();
   if (!bootValidated && now - bootStartedMs >= 10000 &&
       (bundleUpdate.candidateReady || bundleUpdate.candidateRejected ||
@@ -1157,7 +1259,7 @@ void loop() {
   }
   if (portal.downloadRequested)
     stableChannel.yieldToUser();
-  if (mediaTimingCritical)
+  if (mediaTimingCritical || portal.active || modeMenu.isOpen() || safeModeActive)
     stableChannel.yieldToUser();
   if (portal.downloadRequested && !stableChannel.busy() &&
       V5DownloadWorker::state.load() != 1) {
@@ -1176,13 +1278,13 @@ void loop() {
         now - lastValidLinkMs <= MilestoneV5::kLinkStaleMs &&
         !(zeroStatus.stateFlags &
           (MilestoneV5::kStatusThermalStop | MilestoneV5::kStatusOtaActive));
-    const bool useZero = zeroFresh &&
-                         (portal.active ||
-                          !(zeroStatus.stateFlags &
-                            MilestoneV5::kStatusBleConnected));
-    if (portal.active && WiFi.softAPgetStationNum() > 0 && !useZero) {
+    const bool useZero = zeroFresh && zeroHttpsResourcesReady(now) &&
+        !(zeroStatus.stateFlags & (MilestoneV5::kStatusBleConnected |
+                                  MilestoneV5::kStatusArtworkBusy | MilestoneV5::kStatusDownloadBusy));
+    if ((portal.active || mediaTimingCritical) && !useZero) {
       bundleDownload.reject(
-          "설정 AP 사용 중에는 정상 연결된 ZERO가 있어야 업데이트를 확인할 수 있습니다");
+          portal.active ? "설정 AP 사용 중에는 사용 가능한 ZERO가 있어야 업데이트를 확인할 수 있습니다"
+                        : "MEDIA 작업 중입니다. 재생 또는 전송을 종료한 뒤 다시 확인하세요");
     } else if (!bundleDownload.begin(portal.downloadVersion, useZero,
                                      portal.downloadVersion == "latest") &&
                bundleDownload.error.isEmpty()) {
@@ -1197,9 +1299,10 @@ void loop() {
     stableChannel.yieldToUser();
   radio.downloadWanted = (bundleDownload.active && !bundleDownload.useZero) ||
                          (stableChannel.download.active && !stableChannel.download.useZero);
-  radio.service(now, portal, hardware, artwork, lastValidLinkMs != 0,
+  radio.service(now, portal, hardware, artwork, companionHealthy,
                 zeroStatus.stateFlags,
-                safeModeActive || bundleUpdate.critical());
+                safeModeActive || bundleUpdate.critical(), mediaTimingCritical,
+                zeroHttpsResourcesReady(now));
   bundleDownload.service(radio.downloadReady,
                          !temperatureSafe && !safeModeActive &&
                              !bundleUpdate.active(),
@@ -1268,8 +1371,9 @@ void loop() {
       !portal.active && !portal.downloadRequested && !portal.bundleRequested &&
       !updateCheckInFlight && !bundleDownload.active &&
       !bundleUpdate.active() &&
-      !mediaTimingCritical && !radio.busy,
-      companionHealthy && !(zeroStatus.stateFlags & MilestoneV5::kStatusBleConnected),
+      !mediaTimingCritical && !radio.busy && artwork.stage != 1 && artwork.stage != 2,
+      companionHealthy && zeroHttpsResourcesReady(now) && !(zeroStatus.stateFlags & (MilestoneV5::kStatusBleConnected |
+          MilestoneV5::kStatusArtworkBusy | MilestoneV5::kStatusDownloadBusy)),
       bundleUpdate);
   portal.stableStatus = stableChannel.status;
   portal.stableVersion = stableChannel.version;
@@ -1280,6 +1384,7 @@ void loop() {
   }
   if (safeModeActive || bundleUpdate.critical())
     portal.close();
+  serviceCompanion(millis());
   portal.service();
   if (portal.rescanRequested) {
     video.stop();
@@ -1308,16 +1413,33 @@ void loop() {
       safeModeActive = true;
       photoVisible = false;
     }
-    hardware.radioIndicator =
-        temperatureSafe                                                  ? 6
-        : bundleUpdate.installing() || zeroUpdate.busy() ||
-          sdUpdate.state == V5SdUpdate::State::Hashing ||
-          sdUpdate.state == V5SdUpdate::State::Writing                     ? 5
-        : bundleDownload.active || updateCheckInFlight || portal.downloadRequested ? 4
-        : portal.active                                                  ? 3
-        : radio.busy                                                      ? 1
-        : (zeroStatus.stateFlags & 8) && lastValidLinkMs                 ? 2
-                                                                         : 0;
+    using A = MilestoneV5::Activity;
+    const bool zeroFresh = companionHealthy;
+    const bool storageBusy = mediaTimingCritical || bundleUpdate.phase == V5BundleUpdate::Phase::Copying ||
+        sdUpdate.state == V5SdUpdate::State::Hashing;
+    hardware.localActivity = temperatureSafe ? A::Fault :
+        (sdUpdate.state == V5SdUpdate::State::Writing) ? A::Install :
+        storageBusy ? A::Storage : radio.busy ?
+            (bundleDownload.checking() && radio.downloadReady ? A::Check : radio.activity()) :
+        bundleDownload.active || stableChannel.download.active ? A::Storage :
+        portal.active ? A::Ap : safeModeActive ? A::Safe : A::Idle;
+    const A indicator = temperatureSafe ? A::Fault :
+        bundleUpdate.installing() || zeroUpdate.busy() ||
+        sdUpdate.state == V5SdUpdate::State::Hashing ||
+        sdUpdate.state == V5SdUpdate::State::Writing ? A::Install :
+        bundleDownload.active ? (bundleDownload.checking() ? A::Check : A::Download) :
+        updateCheckInFlight || portal.downloadRequested ? A::Check :
+        portal.active ? A::Ap :
+        (artwork.stage == 1 || artwork.stage == 2) ? A::Artwork :
+        radio.busy ? radio.activity() :
+        zeroFresh && (zeroStatus.stateFlags & MilestoneV5::kStatusDownloadBusy) ? A::Download :
+        zeroFresh && (zeroStatus.stateFlags & MilestoneV5::kStatusNtpSyncing) ? A::Ntp :
+        zeroFresh && (zeroStatus.stateFlags & MilestoneV5::kStatusWifiConnecting) ? A::Connecting :
+        zeroFresh && (zeroStatus.stateFlags & MilestoneV5::kStatusBleReady) ? A::Ble :
+        zeroFresh && (zeroStatus.stateFlags & MilestoneV5::kStatusBleAdvertising) ? A::Advertising :
+        zeroFresh && (zeroStatus.stateFlags & MilestoneV5::kStatusWifiConnected) ? A::Online :
+        storageBusy ? A::Storage : A::Idle;
+    hardware.radioIndicator = uint8_t(indicator);
     static uint8_t lastRadioIndicator = 255;
     if (hardware.radioIndicator != lastRadioIndicator) {
       Serial0.printf("OTA indicator=%u bundle_phase=%u installing=%u sd_state=%u zero_state=%u\n",
@@ -1339,7 +1461,7 @@ void loop() {
                       : (minute >= s.nightStart && minute < s.nightEnd));
     hardware.led.setBrightness(s.ledEnabled ? (night ? s.ledNight : s.ledDay)
                                             : 0);
-    hardware.localLed(safeModeActive, portal.active, radio.busy);
+
     // Device information is intentionally static until the user changes its
     // page. Rebuilding it every second repeatedly queried Wi-Fi/SD/heap state
     // and made button input visibly lag, while status bands already refresh
@@ -1368,7 +1490,7 @@ void loop() {
       !modeMenu.isOpen() && !video.playing && now - lastBodyRender >= 80)
     redraw = true;
   if (redraw && ((!zeroUpdate.busy() && !bundleUpdate.critical()) ||
-                 now - lastBodyRender >= 100)) {
+                 now - lastBodyRender >= 250)) {
     renderBody();
     lastBodyRender = now;
   }
@@ -1425,24 +1547,14 @@ void loop() {
       !portal.active && profiles.active() == MilestoneV5::Profile::kMedia &&
       portal.media.hasEnabled())
     portal.media.service(hardware.display, now);
-  static uint32_t lastHeartbeatMs = 0;
-  hardware.display.flush();
-  const bool transferringZero =
-      (zeroUpdate.busy() && zeroUpdate.state != V5ZeroUpdate::State::Hashing &&
-       zeroUpdate.state != V5ZeroUpdate::State::RebootWait) ||
-      (bundleDownload.active && bundleDownload.useZero) ||
-      (stableChannel.download.active && stableChannel.download.useZero);
-  if (now - lastHeartbeatMs >=
-      (transferringZero ? 5UL
-       : awaitingAck    ? 20UL
-       : (artwork.stage == 1 || artwork.stage == 2) && !safeModeActive
-           ? 20UL
-       : profiles.active() == MilestoneV5::Profile::kNow && !safeModeActive
-           ? 250UL // ZERO alternates status/AMS: obtain playback at least twice/s.
-           : MilestoneV5::kHeartbeatIntervalMs)) {
-    lastHeartbeatMs = now;
-    exchangeHeartbeat(now);
+  static uint32_t lastLedMs = 0;
+  if (uint32_t(millis()-lastLedMs) >= 50) {
+    lastLedMs = millis();
+    hardware.led.setPixelColor(0, MilestoneV5::activityLed(hardware.localActivity, lastLedMs));
+    hardware.led.show();
   }
+  serviceCompanion(millis());
+  hardware.display.flush();
   if (lastValidLinkMs != 0 &&
       now - lastValidLinkMs > MilestoneV5::kLinkStaleMs) {
     portal.note(4);

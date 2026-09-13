@@ -684,6 +684,31 @@ void suspendBluetoothNowPlaying() {
   logLine("BLE Now Playing suspended for local safety");
 }
 
+// Process disconnect completion while the ordinary AMS loop is suspended.
+// No security/discovery/advertising is started on this path.
+void serviceSuspendedBluetoothNowPlaying() {
+  if (!bluetoothNowPlaying.initialized || !bluetoothNowPlaying.suspended) return;
+  if (bluetoothConnectedEvent) {
+    bluetoothConnectedEvent = false;
+    bluetoothNowPlaying.connHandle = bluetoothConnectedEventConnHandle;
+    if (bluetoothServer && bluetoothNowPlaying.connHandle != BLE_HS_CONN_HANDLE_NONE)
+      bluetoothServer->disconnect(bluetoothNowPlaying.connHandle);
+  }
+  if (bluetoothDisconnectedEvent) {
+    bluetoothDisconnectedEvent = false;
+    const uint16_t handle = bluetoothDisconnectedEventConnHandle;
+    bluetoothDisconnectedEventConnHandle = BLE_HS_CONN_HANDLE_NONE;
+    if (handle == bluetoothNowPlaying.connHandle) {
+      bluetoothNowPlaying.connected = bluetoothNowPlaying.secured = false;
+      bluetoothNowPlaying.connHandle = BLE_HS_CONN_HANDLE_NONE;
+      bluetoothConnectedEventConnHandle = BLE_HS_CONN_HANDLE_NONE;
+      bluetoothEncryptedEvent = false;
+      resetAmsHandles();
+      clearBluetoothNowPlayingMetadata();
+    }
+  }
+}
+
 void resumeBluetoothNowPlaying() {
   if (!bluetoothNowPlayingConfigured()) return;
   if (!bluetoothNowPlaying.initialized) {

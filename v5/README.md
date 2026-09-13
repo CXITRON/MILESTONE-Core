@@ -1,24 +1,52 @@
-# MILESTONE v5.2.2
+# MILESTONE v5.2.3
 
 This is the release source for the dual-ESP v5 hardware. It remains separate
 from the legacy v3.3.4 firmware and uses its own signed MAIN/ZERO/SAFE release
 catalog. Initial installation requires the merged USB images; subsequent
 updates use the signed companion bundle.
 
-The current source baseline is v5.2.2. Its release path keeps the fixed
+The current source baseline is v5.2.3. Its release path keeps the fixed
 13-asset signed catalog and the existing MAIN/ZERO companion protocol v1.
 v5.2.0 separates signed version checks from firmware transfers and introduces
 an explicitly signed administrator stable designation. Hardware
 acceptance is required after the signed build is installed on the assembled
 boards.
 
-v5.2.2 changes MAIN's update screens only: fixed title/version/action hierarchy,
-pixel-measured UTF-8 error wrapping, real transfer percentages with KiB/MiB,
-and indeterminate preparation/self-test states. Checking remains icon-only.
-The normal profiles, AP/menu/status bands, independent SAFE UI, physical
-confirmation logic and OTA/artwork state machines are unchanged. Reported
-ZERO installation/self-test stalls and artwork lookup failures are not fixed
-by this screen-only patch. Hardware acceptance remains pending.
+v5.2.3 addresses OTA/radio contention, shared TFT/SD service, missed button
+presses, Sync upload overhead and runtime observability. See the detailed
+[2026-09-13 report](WORK_CHECKPOINT_20260913_STABILITY.md) for findings, tests,
+activity/LED meanings and hardware acceptance work. The v5.2.2 update-screen
+layout and physical confirmation contract remain in use.
+
+ZERO applies acknowledged MAIN profile/AP/safety policy: BLE is enabled only
+for NOW, and is suspended for CORE, MEDIA, AP or installation/safety work.
+A live BLE connection prevents Internet workers and stops pending connect/NTP.
+MAIN takes network work only when AP/media work permits it. ZERO is preferred,
+with MAIN fallback for BLE contention, unavailable ZERO or insufficient TLS
+heap. No peripheral wiring, schema or Flash transaction is transferred.
+
+The shared TFT/SD SPI bus remains owned by loopTask. TFT uses 20 MHz, SD uses
+10 MHz, and TFT chip select is released between bounded row bursts. Buttons
+are sampled every 5 ms with 30 ms debounce and one pending press per button;
+actions remain on loopTask. The sampler is not a guarantee against long Flash,
+SD or driver stalls. HTTP upload callbacks also service link/cancellation and
+thermal sampling. CORE information now has 12 pages; optional protocol-v1
+capabilities expose ZERO details and bounded manual NTP without closing AP.
+
+Sync still converts into 256 KiB batches (a final JPEG record may exceed this
+threshold), but sends raw binary to `/api/sync/data` with collected
+`X-Sync-Offset`, `X-Sync-Final`, `Content-Length` and CSRF headers. An 8 KiB
+PSRAM buffer coalesces SD writes; each request checkpoints its suffix before
+acknowledging. Up to three browser attempts query the exact saved offset after
+response loss, and may send a zero-byte finalization request. Multipart
+`/api/sync/upload` remains for cached clients. Final MVJ1 CRC/JPEG validation,
+indexing, browser audio timing and playback are unchanged.
+
+HTTPS retries only transient failures before a body is received (three attempts
+maximum); CA checks, redirect allowlisting and signatures remain mandatory.
+MAIN OTA uses sequential sector erase/write after the full SD prehash. ZERO's
+explicit failed boot receipt after 15 seconds is reported rather than waiting
+silently for the complete 90-second no-response timeout.
 
 Optional exact-font pixel QA (after ordinary `tools/test-v5.sh`):
 
@@ -277,9 +305,10 @@ partition and ELF image identity. Failure retains MAIN without promoting Stable.
 
 After both acceptances, the development policy requires a ten-minute hold with
 local safety and a healthy companion link for a paired update. Safety/link
-failures restart the hold. An A/B SD index then advances Stable and preserves the
-previous Stable as Backup. MAIN-only updates leave ZERO's index unchanged.
-Recovery directories are never overwritten, and no firmware sets are deleted.
+failures restart the hold. Completion does not designate Stable. Only the
+separate signed administrator stable channel advances the A/B index and
+preserves the previous Stable as Backup. Recovery directories are never
+overwritten, and no firmware sets are deleted.
 SAFE MODE resolves Stable through this index, falling back to the legacy SD
 paths when no index exists. Host failure-injection tests are not hardware
 power-loss or long-duration product qualification.

@@ -21,6 +21,7 @@ public:
   };
   State state = State::Idle;
   const char *error = "";
+  MilestoneV5::RemoteOtaState lastRemoteState = MilestoneV5::RemoteOtaState::Idle;
   uint32_t received = 0, size = 0, id = 0;
   bool busy() const {
     return state != State::Idle && state != State::Done &&
@@ -181,12 +182,15 @@ public:
       return false;
     using R = MilestoneV5::RemoteOtaState;
     R remote = static_cast<R>(p[5]);
+    lastRemoteState = remote;
     uint32_t offset = MilestoneV5::otaU32(p + 6);
     lastActivity = millis();
     if (state == State::RebootWait) {
       if (remote == R::Complete) {
         cleanup();
         state = State::Done;
+      } else if (remote == R::Failed && uint32_t(millis() - rebootWaitStarted) >= 15000) {
+        fail("ZERO 실행 이미지 승인 실패 또는 롤백됨");
       }
       return true;
     }

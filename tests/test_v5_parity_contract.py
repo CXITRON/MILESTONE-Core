@@ -50,19 +50,19 @@ assert "kCapabilityCompanionOta" in zero
 assert "kStatusBleAdvertising" in zero
 assert "kStatusBleReady" in zero
 assert "kStatusBleError" in zero
-assert "static constexpr uint8_t kInfoPageCount = 9" in core_views
+assert "static constexpr uint8_t kInfoPageCount = 12" in core_views
 for heading in ('"TIME / RTC"', '"ENVIRONMENT"', '"MAIN / ZERO"',
                 '"FIRMWARE / SAFE"'):
     assert heading in core_views, f"v5 device-info page missing: {heading}"
-assert 'display.print("AP")' in hardware
-assert 'display.drawCircle(122, 6, 4, 0x2F2D)' in hardware
+assert "activityIcon(activity)" in hardware
+assert "activity565(activity)" in hardware
 assert "['delete','이미지만 삭제']" in artwork_portal
 assert 'op == "delete"' in artwork_portal
 assert "SET_LOOP_TASK_STACK_SIZE(32 * 1024);" in main
 assert "kEnableZeroLink" not in main
 assert "linkSpi.begin(" in main
 assert "exchangeHeartbeat(now);" in main
-assert "? 250UL // ZERO alternates status/AMS" in main
+assert "!safeModeActive ? 250UL" in main
 assert '"BLUETOOTH ERROR"' in main
 assert '"BLUETOOTH STARTING"' in main
 assert "txLeaseId = wireLeaseSequence" in main

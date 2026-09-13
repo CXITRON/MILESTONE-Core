@@ -7,34 +7,45 @@
 #include <MilestoneV5Runtime.h>
 #include <MilestoneV5WifiStore.h>
 #include <esp_sntp.h>
+#include <MilestoneV5Activity.h>
 
 namespace V5MainTime {
 std::atomic<bool> received{false};
 void synchronized(struct timeval *) { received.store(true); }
 } // namespace V5MainTime
 
-// MAIN owns Wi-Fi only for a bounded lease. A portal with a connected station
-// is never closed; an idle portal is restored after the lease finishes.
+// MAIN takes a bounded Wi-Fi lease only when its peripheral work and AP are
+// idle. ZERO remains the default network owner outside a live BLE session.
 class V5Radio {
 public:
   bool busy = false, redraw = false, requestPortal = false;
   bool zeroArtworkAllowed = false;
   bool downloadWanted = false, downloadReady = false;
+  MilestoneV5::Activity activity() const {
+    using A = MilestoneV5::Activity;
+    if (!busy) return A::Idle;
+    if (phase == 1 || phase == 3) return A::Connecting;
+    if (artJob) return A::Artwork;
+    if (downloadJob && downloadReady) return A::Download;
+    return A::Ntp;
+  }
   void service(uint32_t now, V5Portal &portal, V5Hardware &hardware,
                V5Artwork &art, bool zeroOnline, uint16_t zeroFlags,
-               bool safety) {
+               bool safety, bool storageBusy = false, bool zeroHttpReady = true) {
     const bool client = portal.active && !portal.canYieldRadio(now);
     MilestoneV5::RadioState state{portal.active,
                                   client,
-                                  !portal.active,
+                                  !portal.active && !storageBusy &&
+                                      (!zeroOnline || bool(zeroFlags & 4) || !zeroHttpReady),
                                   zeroOnline && bool(zeroFlags & 4),
-                                  zeroOnline && bool(zeroFlags & 8),
+                                  zeroOnline && zeroHttpReady && bool(zeroFlags & 8) &&
+                                      !(zeroFlags & (16 | 32 | 64 | 4096)),
                                   safety};
-    zeroArtworkAllowed = MilestoneV5::assignNetworkTask(
+    const auto artworkOwner = MilestoneV5::assignNetworkTask(
                              art.manual ? MilestoneV5::TaskKind::kUserHttp
                                         : MilestoneV5::TaskKind::kArtwork,
-                             state)
-                             .board == MilestoneV5::Board::kZero;
+                             state);
+    zeroArtworkAllowed = artworkOwner.board == MilestoneV5::Board::kZero;
     if (phase == 3) {
       bool connected =
           WiFi.status() == WL_CONNECTED && uint32_t(WiFi.localIP()) != 0;
@@ -73,11 +84,11 @@ public:
         redraw = true;
         return;
       }
-      if (safety || (client && !portal.timeSyncRequested) ||
+      if (safety || storageBusy || portal.active || client ||
           (portal.wifiPending && zeroOnline) ||
           int32_t(now - retryAfter) < 0)
         return;
-      bool wantsArt = art.stage == 1 && !zeroArtworkAllowed;
+      bool wantsArt = art.stage == 1 && artworkOwner.board == MilestoneV5::Board::kMain;
       bool wantsTime =
           (portal.timeSyncRequested || (!lastTimeSync && portal.system.bootSync) ||
            (portal.system.ntpSeconds &&
@@ -122,7 +133,7 @@ public:
     }
     if (downloadJob && downloadWanted && now - started < 900000)
       lease.renew(leaseSequence, now, 45000);
-    if (safety || requestPortal || lease.expireIfDue(now) ||
+    if (safety || storageBusy || requestPortal || lease.expireIfDue(now) ||
         (artJob && generation != art.generation) ||
         (downloadJob && !downloadWanted))
       cancelled = true;

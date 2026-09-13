@@ -91,7 +91,7 @@ public:
         return void(fail("펌웨어 탐색 실패"));
       // Validation precedes Flash erase. Hash again while writing to catch
       // changed SD data.
-      if (esp_ota_begin(destination, size, &handle) != ESP_OK)
+      if (esp_ota_begin(destination, OTA_WITH_SEQUENTIAL_WRITES, &handle) != ESP_OK)
         return void(fail("OTA 시작 실패"));
       otaActive = true;
       done = 0;

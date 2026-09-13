@@ -56,7 +56,7 @@ namespace FakeSd {
 static std::filesystem::path root;
 static bool failIndexRename = false, failWrites = false, failArtworkRename = false;
 static std::string failReadSuffix;
-static std::map<std::string, unsigned> reads, seeks;
+static std::map<std::string, unsigned> reads, seeks, writes;
 static uint64_t total = 8ULL * 1024 * 1024 * 1024, used = 1024 * 1024;
 static unsigned spaceQueries = 0;
 inline std::filesystem::path path(const String &s) {
@@ -125,6 +125,7 @@ public:
   size_t write(const uint8_t *p, size_t n) {
     if (!h || FakeSd::failWrites)
       return 0;
+    ++FakeSd::writes[h->path.filename().string()];
     h->stream.write(reinterpret_cast<const char *>(p), n);
     return h->stream ? n : 0;
   }

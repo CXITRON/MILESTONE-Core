@@ -20,6 +20,7 @@ static esp_partition_t partitions[] = {{0x10000, 4096}, {0x20000, 4096}};
 static unsigned running = 0, beginCalls = 0, writeCalls = 0, endCalls = 0,
                 abortCalls = 0;
 static uint32_t now = 100, selected = 0, written = 0;
+static uint32_t beginSize = 0;
 static bool active = false, writeFailure = false, endFailure = false,
             restarted = false;
 static esp_ota_img_states_t bootState = ESP_OTA_IMG_VALID;
@@ -43,6 +44,8 @@ inline uint32_t esp_random() {
 }
 struct FakeEsp {
   void restart() { FakeOta::restarted = true; }
+  uint32_t getFreeHeap() { return 200000; }
+  uint32_t getMaxAllocHeap() { return 100000; }
 };
 static FakeEsp ESP __attribute__((unused));
 inline const esp_partition_t *esp_ota_get_next_update_partition(const void *) {
@@ -62,8 +65,9 @@ inline int esp_ota_get_partition_description(const esp_partition_t *p,
          FakeOta::identities[p->address == 0x10000 ? 0 : 1], 32);
   return ESP_OK;
 }
-inline int esp_ota_begin(const esp_partition_t *, uint32_t,
+inline int esp_ota_begin(const esp_partition_t *, uint32_t size,
                          esp_ota_handle_t *handle) {
+  FakeOta::beginSize = size;
   ++FakeOta::beginCalls;
   FakeOta::active = true;
   FakeOta::written = 0;

@@ -19,6 +19,19 @@ uint8_t testResult = 1, networkIndex = 0;
 uint32_t testAt = 0, connectedAt = 0;
 MilestoneV5::WifiCredentials candidate;
 std::atomic<bool> timeReceived{false};
+uint32_t manualId = 0, manualAt = 0;
+uint8_t manualResult = 1; // success, failed, pending
+bool manualStarted = false;
+uint8_t requestTime(uint32_t id, uint32_t now, bool allowed) {
+  if (!id) return 1;
+  if (id != manualId) {
+    manualId = id;
+    manualAt = now;
+    manualStarted = false;
+    manualResult = allowed && configured && !testing ? 2 : 1;
+  }
+  return manualResult;
+}
 void synchronized(struct timeval *) { timeReceived.store(true); }
 void stopTime() {
   if (!sntpStarted)
@@ -66,16 +79,34 @@ uint8_t provision(const uint8_t *p, size_t size) {
   return 2;
 }
 void service(uint32_t now, bool bleBusy, bool forceTime = false) {
+  if (manualResult == 2 && (now - manualAt >= 45000 || testing)) {
+    manualResult = 1;
+    stopTime();
+  }
+  // A live AMS session owns ZERO's radio. Also stop already-started NTP
+  // and connection attempts; checking this only before connect was insufficient.
+  if (bleBusy) {
+    stopTime();
+    manualStarted = false;
+    if (testing && testStarted) {
+      WiFi.disconnect(false, false);
+      testStarted = false;
+      connectedAt = 0;
+    }
+    if (connecting) {
+      WiFi.disconnect(false, false);
+      connecting = false;
+      retryMs = now + 1000;
+    }
+    if (testing && now - testAt >= 15000) {
+      testing = false;
+      testFinished = true;
+      testResult = 1;
+    }
+    return;
+  }
   if (testing) {
     if (!testStarted) {
-      if (bleBusy) {
-        if (now - testAt > 15000) {
-          testing = false;
-          testFinished = true;
-          testResult = 1;
-        }
-        return;
-      }
       stopTime();
       WiFi.disconnect(false, false);
       WiFi.mode(WIFI_STA);
@@ -124,8 +155,10 @@ void service(uint32_t now, bool bleBusy, bool forceTime = false) {
   if (connecting) {
     if (WiFi.status() == WL_CONNECTED) {
       connecting = false;
-      if (settings.bootSync || forceTime)
+      if (settings.bootSync || forceTime || manualResult == 2) {
         startTime(now);
+        manualStarted = manualResult == 2;
+      }
     } else if (now - attemptMs >= 12000) {
       connecting = false;
       WiFi.disconnect(false, false);
@@ -139,9 +172,15 @@ void service(uint32_t now, bool bleBusy, bool forceTime = false) {
       }
     }
   }
+  if (manualResult == 2 && !manualStarted && WiFi.status() == WL_CONNECTED) {
+    startTime(now);
+    manualStarted = true;
+  }
   if (syncing && (timeReceived.load() || now - syncMs >= 21000)) {
     if (timeReceived.load())
       lastTimeSyncMs = now;
+    if (manualResult == 2 && manualStarted)
+      manualResult = timeReceived.load() ? 0 : 1;
     stopTime();
   }
   if (!connecting && !syncing && WiFi.status() == WL_CONNECTED &&

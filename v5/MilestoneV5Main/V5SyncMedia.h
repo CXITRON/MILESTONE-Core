@@ -51,6 +51,14 @@ public:
     upload = SD.open(kUploadPath, FILE_WRITE);
     if (!upload)
       return fail("동기화 임시 파일을 만들 수 없습니다");
+    if (!uploadBuffer)
+      uploadBuffer = static_cast<uint8_t *>(heap_caps_malloc(8192, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (!uploadBuffer) {
+      upload.close();
+      SD.remove(kUploadPath);
+      return fail("동기화 수신 버퍼 부족");
+    }
+    uploadBuffered = 0;
     expectedBytes = expected;
     writtenBytes = 0;
     uploadOpenEnded = openEnded;
@@ -59,15 +67,26 @@ public:
     return true;
   }
 
+  bool checkpointUpload() {
+    if (state != State::Uploading || !upload) return false;
+    if (uploadBuffered && upload.write(uploadBuffer, uploadBuffered) != uploadBuffered) {
+      abortUpload(); return fail("동기화 영상 기록에 실패했습니다");
+    }
+    uploadBuffered = 0;
+    return true;
+  }
   bool writeUpload(const uint8_t *data, size_t size) {
     const uint32_t limit = uploadOpenEnded ? kMaximumBytes : expectedBytes;
-    if (state != State::Uploading || !upload || !data ||
-        writtenBytes > limit || size > limit - writtenBytes ||
-        upload.write(data, size) != size) {
-      abortUpload();
-      return fail("동기화 영상 기록에 실패했습니다");
+    if (state != State::Uploading || !upload || !uploadBuffer || !data ||
+        writtenBytes > limit || size > limit - writtenBytes) {
+      abortUpload(); return fail("동기화 영상 기록에 실패했습니다");
     }
-    writtenBytes += size;
+    while (size) {
+      const size_t take = min(size, size_t(8192 - uploadBuffered));
+      memcpy(uploadBuffer + uploadBuffered, data, take);
+      uploadBuffered += take; writtenBytes += take; data += take; size -= take;
+      if (uploadBuffered == 8192 && !checkpointUpload()) return false;
+    }
     return true;
   }
 
@@ -77,8 +96,10 @@ public:
       abortUpload();
       return fail("동기화 영상 크기가 일치하지 않습니다");
     }
+    if (!checkpointUpload()) return false;
     upload.flush();
     upload.close();
+    heap_caps_free(uploadBuffer); uploadBuffer = nullptr;
     expectedBytes = writtenBytes;
     uploadOpenEnded = false;
     source = SD.open(kUploadPath, FILE_READ);
@@ -270,6 +291,7 @@ public:
   void requestBrowserToggle() { ++browserEventSequence; }
 
   void abortUpload() {
+    heap_caps_free(uploadBuffer); uploadBuffer = nullptr; uploadBuffered = 0;
     upload.close();
     if (state == State::Uploading) {
       SD.remove(kUploadPath);
@@ -325,6 +347,8 @@ private:
   static constexpr const char *kVideoPath = "/media/sync/video.mvj";
   static constexpr const char *kIndexPath = "/media/sync/video.idx";
   bool available = false;
+  uint8_t *uploadBuffer = nullptr;
+  size_t uploadBuffered = 0;
   File upload, source, index, playVideo, playIndex;
   uint8_t *scratch = nullptr, *encoded = nullptr, *pixels = nullptr;
   uint32_t anchorPositionMs = 0, anchorLocalMs = 0, lastControlMs = 0;
@@ -370,6 +394,7 @@ private:
     scratch = nullptr;
   }
   void stopFiles() {
+    heap_caps_free(uploadBuffer); uploadBuffer = nullptr; uploadBuffered = 0;
     upload.close();
     source.close();
     index.close();

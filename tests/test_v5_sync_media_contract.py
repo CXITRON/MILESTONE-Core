@@ -34,7 +34,11 @@ assert "batchBytes>=256*1024" in page
 assert "duration>21600" in page
 assert "count>432000" in page
 assert "fps=Math.min(20" in page
-assert "total=0&offset=${offset}&final=${final?1:0}&stream=1" in page
+assert "'/api/sync/data'" in page
+assert "'X-Sync-Offset':String(cursor)" in page
+assert 'server.header("X-Sync-Offset")' in portal
+assert 'HTTPRaw &part = server.raw()' in portal
+assert 'sync.checkpointUpload()' in portal
 assert 'server.arg("total")' in portal
 assert 'server.arg("offset")' in portal
 assert 'server.arg("stream") == "1"' in portal

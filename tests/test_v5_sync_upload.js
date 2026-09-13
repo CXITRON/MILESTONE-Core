@@ -7,20 +7,23 @@ const sender = source.slice(source.indexOf('async function sendStreamingChunk'),
                             source.indexOf('async function convertAndStore'));
 let calls = [], saved = 0, loseResponse = false, fail = false, finalState = false;
 let largestBatch = 0;
-class Form { append(name, blob) { this.blob = blob; } }
+let partialBytes = 0, skipFinalize = false, statusOverride = null;
 const context = vm.createContext({
-  Blob, FormData: Form, Error, Promise,
+  Blob, Error, Promise,
   setTimeout: callback => { callback(); },
   boundedFetch: async (path, options) => {
-    calls.push(path);
-    largestBatch = Math.max(largestBatch, options.body.blob.size);
+    calls.push({path,offset:Number(options.headers['X-Sync-Offset']),bytes:options.body.size});
+    if(!fail) assert.equal(Number(options.headers['X-Sync-Offset']), saved);
+    largestBatch = Math.max(largestBatch, options.body.size);
     if (fail) throw new Error('disconnected');
-    saved += options.body.blob.size;
-    finalState = path.includes('final=1');
+    if (partialBytes) { saved += partialBytes; partialBytes = 0; throw new Error('partial request'); }
+    saved += options.body.size;
+    if (skipFinalize) { skipFinalize = false; throw new Error('finalize not reached'); }
+    finalState = options.headers['X-Sync-Final']==='1';
     if (loseResponse) { loseResponse = false; throw new Error('response lost'); }
-    return { ok: true, json: async () => ({ ok: true }) };
+    return { ok: true, json: async () => ({ ok: true, written_bytes: saved }) };
   },
-  api: async () => ({ state: finalState ? 'indexing' : 'uploading', written_bytes: saved }),
+  api: async () => statusOverride || ({ state: finalState ? 'indexing' : 'uploading', written_bytes: saved }),
 });
 vm.runInContext(sender, context);
 (async () => {
@@ -28,7 +31,8 @@ vm.runInContext(sender, context);
   const end = await vm.runInContext('sendStreamingChunk(parts,0,false)', context);
   assert.equal(end, 262160);
   assert.equal(calls.length, 1);
-  assert.match(calls[0], /total=0&offset=0&final=0&stream=1/);
+  assert.equal(calls[0].path, '/api/sync/data');
+  assert.equal(calls[0].offset,0);
   loseResponse = true;
   context.offset = end;
   const final = await vm.runInContext('sendStreamingChunk(parts,offset,true)', context);
@@ -37,6 +41,20 @@ vm.runInContext(sender, context);
   fail = true; saved = 0; finalState = false; calls = [];
   await assert.rejects(vm.runInContext('sendStreamingChunk(parts,0,false)', context), /disconnected/);
   assert.equal(calls.length, 3, 'retry budget is bounded');
+  fail = false; saved = 0; calls = []; partialBytes = 12345;
+  assert.equal(await vm.runInContext('sendStreamingChunk(parts,0,false)', context), 262160);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].offset, 12345);
+  assert.equal(calls[1].bytes, 262160 - 12345, 'resume sends only the missing suffix');
+  saved = 0; calls = []; skipFinalize = true; finalState = false;
+  assert.equal(await vm.runInContext('sendStreamingChunk(parts,0,true)', context), 262160);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].bytes, 0, 'all bytes saved but finalization missing: finish without duplicate data');
+  fail = true; calls = [];
+  statusOverride = { state: 'uploading', written_bytes: 900000 };
+  await assert.rejects(vm.runInContext('sendStreamingChunk(parts,0,false)', context), /저장 위치가 변경/);
+  assert.equal(calls.length, 1, 'do not overwrite an unrelated upload session');
+  statusOverride = null;
   // Execute the real converter with 1,200 frames: only a bounded batch may
   // survive between uploads, rather than one Blob containing the whole film.
   const elements = new Map();

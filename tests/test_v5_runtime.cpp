@@ -1,5 +1,8 @@
 #include "MilestoneV5Runtime.h"
 #include "MilestoneV5ImageSize.h"
+#include "MilestoneV5Input.h"
+#include "MilestoneV5RuntimeDetails.h"
+#include "MilestoneV5Activity.h"
 #include <cstring>
 
 #include <iostream>
@@ -19,18 +22,18 @@ void testRadioBroker() {
   assignment = MilestoneV5::assignNetworkTask(MilestoneV5::TaskKind::kArtwork, state);
   EXPECT_TRUE(assignment.defer);
   assignment = MilestoneV5::assignNetworkTask(MilestoneV5::TaskKind::kUserHttp, state);
-  EXPECT_EQ(assignment.board, MilestoneV5::Board::kZero);
+  EXPECT_TRUE(assignment.defer);
 
   state = {false, false, true, true, true, false};
   assignment = MilestoneV5::assignNetworkTask(MilestoneV5::TaskKind::kNtp, state);
   EXPECT_EQ(assignment.board, MilestoneV5::Board::kMain);
 
   assignment = MilestoneV5::assignNetworkTask(MilestoneV5::TaskKind::kOtaDownload, state);
-  EXPECT_EQ(assignment.board, MilestoneV5::Board::kZero);
-  EXPECT_TRUE(assignment.suspendZeroBle);
+  EXPECT_EQ(assignment.board, MilestoneV5::Board::kMain);
+  EXPECT_TRUE(!assignment.suspendZeroBle);
   state={true,false,true,true,true,false};
   assignment=MilestoneV5::assignNetworkTask(MilestoneV5::TaskKind::kArtwork,state);
-  EXPECT_EQ(assignment.board,MilestoneV5::Board::kMain);
+  EXPECT_TRUE(assignment.defer);
   state.mainPortalHasClient=true;
   assignment=MilestoneV5::assignNetworkTask(MilestoneV5::TaskKind::kArtwork,state);
   EXPECT_TRUE(assignment.defer);
@@ -110,6 +113,44 @@ int main() {
   EXPECT_EQ(MilestoneV5::displayImageSize(sizeof(image), reader), 0U);
   image[1] = 17;
   EXPECT_EQ(MilestoneV5::displayImageSize(sizeof(image), reader), 0U);
+  MilestoneV5::ButtonLatch button;
+  button.begin(false, 0xfffffff0U);
+  button.sample(true, 0xfffffff5U);
+  button.sample(false, 0xfffffff9U); // bounce
+  button.sample(true, 0xfffffffdU);
+  button.sample(true, 28);
+  button.sample(false, 40);
+  button.sample(false, 80);
+  EXPECT_TRUE(button.take()); // main loop resumes after the full tap ended
+  EXPECT_TRUE(!button.take());
+  button.sample(true, 100); button.sample(true, 129);
+  EXPECT_TRUE(!button.take());
+  button.sample(true, 130); button.sample(true, 400);
+  EXPECT_TRUE(button.take()); EXPECT_TRUE(!button.take());
+  for (unsigned profile=0; profile<3; ++profile)
+    for (unsigned flags=0; flags<8; ++flags)
+      EXPECT_EQ(MilestoneV5::profileAllowsBle(profile, flags&1, flags&2, flags&4),
+                profile==2 && flags==4);
+  MilestoneV5::RuntimeDetails details, decoded;
+  strcpy(details.firmware,"5.2.3"); details.uptime=0xffffffff;
+  details.cpuMHz=240; details.rssi=-83; details.minimumHeap=90000;
+  uint8_t wire[MilestoneV5::kRuntimeDetailsBytes];
+  MilestoneV5::encodeRuntimeDetails(details,wire);
+  EXPECT_TRUE(MilestoneV5::decodeRuntimeDetails(wire,sizeof(wire),decoded));
+  EXPECT_EQ(decoded.uptime,details.uptime); EXPECT_EQ(decoded.rssi,-83);
+  EXPECT_EQ(decoded.cpuMHz,240); EXPECT_EQ(decoded.minimumHeap,90000U);
+  EXPECT_TRUE(!MilestoneV5::decodeRuntimeDetails(wire,sizeof(wire)-1,decoded));
+  memset(wire+2,'1',18);
+  EXPECT_TRUE(!MilestoneV5::decodeRuntimeDetails(wire,sizeof(wire),decoded));
+  for(unsigned icon=0;icon<14;++icon) {
+    const auto activity=static_cast<MilestoneV5::Activity>(icon);
+    for(unsigned row=0;row<12;++row) EXPECT_TRUE(MilestoneV5::activityIcon(activity)[row]<4096);
+    for(unsigned other=0;other<icon;++other)
+      EXPECT_TRUE(memcmp(MilestoneV5::activityIcon(activity),
+                         MilestoneV5::activityIcon(static_cast<MilestoneV5::Activity>(other)),24)!=0);
+  }
+  EXPECT_EQ(MilestoneV5::activityLed(MilestoneV5::Activity::Fault,150),0U);
+  EXPECT_EQ(MilestoneV5::activityLed(MilestoneV5::Activity::Ble,150),0x2080ffU);
   testRadioBroker();
   testProfileController();
   testTaskLease();

@@ -1,4 +1,6 @@
 #pragma once
+#include <MilestoneV5RuntimeDetails.h>
+#include <MilestoneV5Activity.h>
 #include "V5Hardware.h"
 #include <MilestoneV5Calendar.h>
 #include <MilestoneV5Now.h>
@@ -15,7 +17,11 @@
 
 class V5CoreViews {
 public:
-  static constexpr uint8_t kInfoPageCount = 9;
+  static constexpr uint8_t kInfoPageCount = 12;
+  MilestoneV5::RuntimeDetails peerDetails{};
+  bool peerDetailsKnown = false;
+  uint32_t peerDetailsMs = 0, mainLoopMaxMs = 0, linkGood = 0, linkBad = 0, linkRetries = 0;
+  bool sampledButtons = false;
   uint8_t view = 0, infoPage = 0;
   uint16_t year = 2027;
   uint8_t month = 1, day = 1;
@@ -108,7 +114,7 @@ public:
     uint8_t data[256]{};
     memcpy(data, "VC02", 4);
     data[4] = view;
-    data[5] = infoPage;
+    data[5] = infoPage < 9 ? infoPage : 0; // Preserve v5.2.2 persisted page range.
     data[6] = year;
     data[7] = year >> 8;
     data[8] = month;
@@ -344,16 +350,13 @@ public:
         infoHeader(h, "NETWORK", 5);
         // The display path must not wait on the Wi-Fi driver lock. MAIN owns
         // only short radio leases; cached link/status flags are sufficient.
-        const char *mainRadio = h.radioIndicator == 3 ? "SETUP AP"
-                                : h.radioIndicator == 1 ? "BUSY"
-                                : h.radioIndicator == 2 ? "ZERO ONLINE"
-                                                       : "IDLE";
+        const char *mainRadio = MilestoneV5::activityName(h.localActivity);
         infoLine(h, 29, "MAIN", mainRadio);
         infoLine(h, 47, "ZERO", zeroOnline ? "ONLINE" : "OFFLINE");
         infoLine(h, 65, "ZERO WIFI",
                  zeroOnline && zero && (zero->stateFlags & 8) ? "ON" : "OFF");
         infoLine(h, 83, "ZERO BLE",
-                 zeroOnline && zero && (zero->stateFlags & 4) ? "ON" : "WAIT");
+                 zeroOnline && zero ? zeroBleState(zero->stateFlags) : "-");
         infoLine(h, 101, "PROTOCOL",
                  protocolVersion ? String("SPI v") + protocolVersion : "-");
         infoLine(h, 119, "SETUP", "MODE MENU");
@@ -397,10 +400,10 @@ public:
                  zeroOnline && zero ? bytes(zero->freePsram) : "-");
         infoLine(h, 119, "BLE / WIFI",
                  zeroOnline && zero
-                     ? String((zero->stateFlags & 4) ? "ON" : "WAIT") + " / " +
+                     ? String(zeroBleState(zero->stateFlags)) + " / " +
                            ((zero->stateFlags & 8) ? "ON" : "OFF")
                      : "- / -");
-      } else {
+      } else if (infoPage == 8) {
         infoHeader(h, "FIRMWARE / SAFE", 9);
         const esp_partition_t *running = esp_ota_get_running_partition();
         const esp_partition_t *next = esp_ota_get_next_update_partition(nullptr);
@@ -416,12 +419,55 @@ public:
                      : "UNAVAILABLE");
         infoLine(h, 101, "VERIFY", "SIGN + SHA256");
         infoLine(h, 119, "NEXT PAGE", "OK");
+      } else if (infoPage == 9) {
+        infoHeader(h, "ZERO SYSTEM", 10);
+        const bool fresh = zeroOnline && peerDetailsKnown && uint32_t(millis()-peerDetailsMs)<15000;
+        infoLine(h,29,"FW",fresh ? String(peerDetails.firmware) : "UNAVAILABLE");
+        infoLine(h,47,"UP SEC",fresh ? String(peerDetails.uptime) : "-");
+        infoLine(h,65,"CPU MHz",fresh ? String(peerDetails.cpuMHz) : "-");
+        infoLine(h,83,"RESET ID",fresh ? String(peerDetails.reset) : "-");
+        infoLine(h,101,"RSSI dBm",fresh && peerDetails.rssi!=-127 ? String(peerDetails.rssi) : "-");
+        infoLine(h,119,"BOOT",fresh ? bootStateName(peerDetails.bootState) : "-");
+      } else if (infoPage == 10) {
+        infoHeader(h,"ZERO RESOURCES",11);
+        const bool fresh=zeroOnline && peerDetailsKnown && uint32_t(millis()-peerDetailsMs)<15000;
+        infoLine(h,29,"MIN HEAP",fresh ? bytes(peerDetails.minimumHeap) : "-");
+        infoLine(h,47,"MAX BLOCK",fresh ? bytes(peerDetails.largestHeap) : "-");
+        infoLine(h,65,"STACK",fresh ? bytes(peerDetails.stackFree) : "-");
+        infoLine(h,83,"LOOP MAX",fresh ? String(peerDetails.maxLoopMs)+" ms" : "-");
+        infoLine(h,101,"LINK OK",fresh ? String(peerDetails.validFrames) : "-");
+        infoLine(h,119,"LINK BAD",fresh ? String(peerDetails.invalidFrames) : "-");
+      } else {
+        infoHeader(h,"MAIN RESPONSE",12);
+        infoLine(h,29,"LOOP MAX",String(mainLoopMaxMs)+" ms");
+        infoLine(h,47,"TFT MAX",String(h.display.maxFlushUs)+" us");
+        infoLine(h,65,"LINK OK",String(linkGood));
+        infoLine(h,83,"LINK BAD",String(linkBad));
+        infoLine(h,101,"RETRY",String(linkRetries));
+        infoLine(h,119,"BUTTON",sampledButtons ? "5ms / 30ms" : "LOOP FALLBACK");
       }
       break;
     }
   }
 
 private:
+  static const char *zeroBleState(uint16_t flags) {
+    if (flags & MilestoneV5::kStatusBleConnected) return "LINK";
+    if (flags & MilestoneV5::kStatusBleSuspended) return "OFF";
+    if (flags & MilestoneV5::kStatusBleAdvertising) return "ADV";
+    if (flags & MilestoneV5::kStatusBleError) return "ERROR";
+    return "IDLE";
+  }
+  static const char *bootStateName(uint8_t state) {
+    switch (state) {
+    case 0: return "NEW";
+    case 1: return "TESTING";
+    case 2: return "VALID";
+    case 3: return "INVALID";
+    case 4: return "ABORTED";
+    default: return "UNKNOWN";
+    }
+  }
   uint32_t appImageBytes = 0, otaSlotBytes = 0;
   U8G2_SH1107_128X128_F_SW_I2C canvas{U8G2_R0, U8X8_PIN_NONE,
                                       U8X8_PIN_NONE, U8X8_PIN_NONE};

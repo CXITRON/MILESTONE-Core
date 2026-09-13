@@ -1,8 +1,11 @@
 # MILESTONE v5.0.1 legacy parity checklist
 
-This checklist is the release gate for restoring the proven ESP32-S3 Zero
+This checklist records the original v5.0.1 release gate for restoring the proven ESP32-S3 Zero
 single-board behavior inside the v5 MAIN/ZERO architecture.  Live streaming is
-the only intentional omission.
+the only intentional omission. Current v5.2.3 additions (12 information pages,
+profile BLE isolation, detailed icons/LEDs, button sampling and Sync transport)
+are tracked in `v5/WORK_CHECKPOINT_20260913_STABILITY.md`; the checked USB/release
+items below refer to v5.0.1, not an on-device acceptance of the new version.
 
 ## Checkpoint 1 — display and physical input
 

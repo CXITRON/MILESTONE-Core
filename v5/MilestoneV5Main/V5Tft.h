@@ -6,8 +6,10 @@
 
 class SimpleSt7735 : public Adafruit_GFX {
 public:
-  SimpleSt7735(SPIClass &spi, int8_t cs, int8_t dc, int8_t reset)
-      : Adafruit_GFX(128, 160), spi_(spi), cs_(cs), dc_(dc), reset_(reset) {}
+  SimpleSt7735(SPIClass &spi, int8_t cs, int8_t dc, int8_t reset, int8_t sdCs = -1)
+      : Adafruit_GFX(128, 160), spi_(spi), cs_(cs), dc_(dc), reset_(reset), sdCs_(sdCs) {}
+  static constexpr uint32_t kClockHz = 20000000;
+  uint32_t maxFlushUs = 0, flushBytes = 0;
 
   void begin() {
     pinMode(cs_, OUTPUT);
@@ -97,28 +99,34 @@ public:
 
   // Video changes nearly every body tile at once. The incremental UI flusher
   // cannot finish one frame before the next replaces it, so present a decoded
-  // video frame as one bounded SPI transaction and synchronize the shadow copy.
+  // video frame in bounded row bursts and synchronize the shadow copy.
   void flushRegion(int y, int height) {
     if (!frame_ || sleeping_ || y < 0 || height <= 0 || y + height > 160)
       return;
+    const uint32_t began = micros();
     flushing_ = true;
-    startWrite();
-    setWindow(0, y, 127, y + height - 1);
-    const size_t first = size_t(y) * 128U;
     uint8_t rowBytes[256];
-    for (int row = 0; row < height; ++row) {
-      const size_t offset = first + size_t(row) * 128U;
-      for (unsigned col = 0; col < 128; ++col) {
-        const uint16_t original = frame_[offset + col];
-        const uint16_t color = toneColor(original);
-        rowBytes[col * 2] = color >> 8;
-        rowBytes[col * 2 + 1] = color;
-        front_[offset + col] = original;
+    // Release CS at most every eight rows and re-address each burst. SD and
+    // TFT retain distinct settings; loopTask is the sole bus owner.
+    for (int firstRow = 0; firstRow < height; firstRow += 8) {
+      const int rows = min(8, height - firstRow);
+      startWrite();
+      setWindow(0, y + firstRow, 127, y + firstRow + rows - 1);
+      for (int row = 0; row < rows; ++row) {
+        const size_t offset = size_t(y + firstRow + row) * 128U;
+        for (unsigned col = 0; col < 128; ++col) {
+          const uint16_t original = frame_[offset + col];
+          const uint16_t color = toneColor(original);
+          rowBytes[col * 2] = color >> 8;
+          rowBytes[col * 2 + 1] = color;
+          front_[offset + col] = original;
+        }
+        spi_.writeBytes(rowBytes, sizeof(rowBytes));
+        flushBytes += sizeof(rowBytes);
       }
-      // One bounded row transfer replaces 256 separately locked byte calls.
-      spi_.writeBytes(rowBytes, sizeof(rowBytes));
+      endWrite();
     }
-    endWrite();
+    maxFlushUs = max(maxFlushUs, uint32_t(micros() - began));
     flushing_ = false;
   }
 
@@ -126,7 +134,7 @@ public:
   // original page-oriented renderer preserves the established typography and
   // layout while the native TFT framebuffer owns the new status bands.
   void blitMono(const uint8_t *bits, int yOffset, uint16_t color) {
-    if (!bits || yOffset < 0 || yOffset + 128 > 160)
+    if (!bits || !frame_ || yOffset < 0 || yOffset + 128 > 160)
       return;
     for (int y = 0; y < 128; ++y)
       for (int x = 0; x < 128; ++x)
@@ -161,7 +169,8 @@ public:
     if (frame_ && !flushing_)
       return;
     if (transactionDepth_++ == 0) {
-      spi_.beginTransaction(SPISettings(40000000, MSBFIRST, SPI_MODE0));
+      spi_.beginTransaction(SPISettings(kClockHz, MSBFIRST, SPI_MODE0));
+      if (sdCs_ >= 0) digitalWrite(sdCs_, HIGH);
       digitalWrite(cs_, LOW);
     }
   }
@@ -226,8 +235,10 @@ public:
         front_[i] = ~frame_[i];
       invalidate_ = false;
     }
+    const uint32_t began = micros();
     unsigned sent = 0;
-    for (unsigned scanned = 0; scanned < 320 && sent < 48; ++scanned) {
+    for (unsigned scanned = 0; scanned < 320 && sent < 48 &&
+         uint32_t(micros() - began) < 3000; ++scanned) {
       unsigned tile = tile_++ % 320, x = (tile % 16) * 8, y = (tile / 16) * 8;
       bool changed = false;
       for (unsigned row = 0; row < 8 && !changed; ++row)
@@ -238,16 +249,22 @@ public:
       flushing_ = true;
       startWrite();
       setWindow(x, y, x + 7, y + 7);
+      uint8_t pixels[128];
       for (unsigned row = 0; row < 8; ++row)
         for (unsigned col = 0; col < 8; ++col) {
-          unsigned i = (y + row) * 128 + x + col;
-          writeColor(frame_[i], 1);
+          const unsigned i = (y + row) * 128 + x + col;
+          const uint16_t color = toneColor(frame_[i]);
+          pixels[(row * 8 + col) * 2] = color >> 8;
+          pixels[(row * 8 + col) * 2 + 1] = color;
           front_[i] = frame_[i];
         }
+      spi_.writeBytes(pixels, sizeof(pixels));
+      flushBytes += sizeof(pixels);
       endWrite();
       flushing_ = false;
       ++sent;
     }
+    maxFlushUs = max(maxFlushUs, uint32_t(micros() - began));
   }
   void sleep(bool value) {
     if (value == sleeping_)
@@ -258,7 +275,7 @@ public:
 
 private:
   SPIClass &spi_;
-  int8_t cs_, dc_, reset_;
+  int8_t cs_, dc_, reset_, sdCs_;
   uint8_t transactionDepth_ = 0;
   uint8_t tone_[64] = {};
   uint16_t *frame_ = nullptr, *front_ = nullptr;
@@ -266,16 +283,18 @@ private:
   bool invalidate_ = true, flushing_ = false, sleeping_ = false;
 
   void command(uint8_t value) {
-    spi_.beginTransaction(SPISettings(40000000, MSBFIRST, SPI_MODE0));
-    digitalWrite(cs_, LOW);
+    spi_.beginTransaction(SPISettings(kClockHz, MSBFIRST, SPI_MODE0));
+    if (sdCs_ >= 0) digitalWrite(sdCs_, HIGH);
+      digitalWrite(cs_, LOW);
     digitalWrite(dc_, LOW);
     spi_.transfer(value);
     digitalWrite(cs_, HIGH);
     spi_.endTransaction();
   }
   void commandData(uint8_t cmd, const uint8_t *data, size_t length) {
-    spi_.beginTransaction(SPISettings(40000000, MSBFIRST, SPI_MODE0));
-    digitalWrite(cs_, LOW);
+    spi_.beginTransaction(SPISettings(kClockHz, MSBFIRST, SPI_MODE0));
+    if (sdCs_ >= 0) digitalWrite(sdCs_, HIGH);
+      digitalWrite(cs_, LOW);
     digitalWrite(dc_, LOW);
     spi_.transfer(cmd);
     digitalWrite(dc_, HIGH);

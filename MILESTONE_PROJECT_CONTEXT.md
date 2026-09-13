@@ -1,8 +1,8 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v5.2.2
+> Current baseline: MILESTONE Core v5.2.3
 > Legacy baseline: MILESTONE Core v3.3.4
-> V5 firmware baseline: 5.2.2 — dual-board MAIN/ZERO plus independent SAFE
+> V5 firmware baseline: 5.2.3 — dual-board MAIN/ZERO plus independent SAFE
 > Hardware: GOOUUU ESP32-S3 N16R8 MAIN + Waveshare ESP32-S3-Zero companion + ST7735-compatible 128×160 SPI TFT + five tactile switches
 > Repository: `CXITRON/MILESTONE-Core`
 
@@ -18,11 +18,31 @@ network-free SAFE recovery application, with 6MiB MAIN A/B slots and signed SD
 Stable/Backup/Recovery images. The v5 release is a signed 13-asset catalog rather
 than the legacy profile manifest/BIN pairs.
 
-v5.2.2 changes only MAIN's update result/confirmation/progress layout, using
-fixed text, measured UTF-8 wrapping and a large version/percentage hierarchy.
-CORE/MEDIA/NOW/AP/SAFE layouts and OTA/artwork state machines are unchanged.
-ZERO install/self-test stalls and artwork lookup reports remain separate,
-unresolved hardware issues; this UI patch does not claim to repair them.
+v5.2.3 hardens network ownership, shared SPI service and input handling. ZERO
+runs BLE only for NOW with no AP/safety/install isolation; active AMS prevents
+new Internet work and stops pending connect/NTP attempts. MAIN takes bounded
+network work only when AP/media storage work permits it, including fallback
+when ZERO has insufficient HTTPS heap. Profile/AP/safety policy is acknowledged
+before assigning SPI work. Peripheral wiring and protocol v1 remain unchanged.
+
+MAIN samples buttons every 5 ms outside loopTask (30 ms debounce), retaining
+one pending press per button; existing actions and OTA confirmations still run
+on loopTask. TFT and SD retain one loopTask owner with explicit CS isolation,
+20 MHz TFT / 10 MHz SD settings, batched pixel writes and bounded dirty flushes.
+Sync retains 256 KiB browser batches and full MVJ1 CRC/JPEG validation, using a
+raw-body route, offset-based suffix retries and an 8 KiB PSRAM SD write buffer.
+
+OTA preserves signatures, hashes, the MAIN-before-ZERO transaction and boot
+receipts. MAIN now erases its inactive slot as it writes; explicit ZERO boot
+rejection is surfaced after the reboot grace period. HTTPS retries transient
+pre-body failures at most three times; partial bodies are never appended to a
+new response. Stable archival remains a separate signed administrator action.
+
+Activity icons and independent local LEDs distinguish network/media/update
+states. CORE exposes 12 information pages and fresh capability-gated ZERO
+telemetry, also available through `/api/status`. Software tests and signed
+builds do not establish radio, button latency or TFT electrical reliability;
+see `v5/WORK_CHECKPOINT_20260913_STABILITY.md` for evidence and hardware checks.
 
 ## 1. Legacy v3 product scope
 

@@ -1,4 +1,6 @@
 #pragma once
+#include <Arduino.h>
+// The certificate uses Arduino's PROGMEM declaration.
 #include "../../../../UpdateCertificates.h"
 #include <HTTPClient.h>
 #include <NetworkClientSecure.h>
@@ -53,22 +55,36 @@ void run(void *) {
     http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
     const char *headers[] = {"Location"};
     http.collectHeaders(headers, 1);
-    String current = url;
     int code = 0;
-    for (unsigned redirects = 0; redirects < 4 && !cancel.load(); ++redirects) {
-      if (!trustedUrl(current) || !http.begin(client, current))
-        break;
-      http.addHeader("User-Agent", "MILESTONE-v5");
-      http.addHeader("Accept-Encoding", "identity");
-      code = http.GET();
-      if (code == 200)
-        break;
-      if (code != 301 && code != 302 && code != 303 && code != 307 &&
-          code != 308)
-        break;
-      current = http.header("Location");
-      http.end();
+    // Retry only transient failures before publishing any body bytes. Never
+    // append a second response to a partial image or relax redirect/CA checks.
+    for (unsigned attempt = 0; attempt < 3 && !cancel.load(); ++attempt) {
+      String current = url;
+      bool allowed = true;
       code = 0;
+      for (unsigned redirects = 0; redirects < 4 && !cancel.load(); ++redirects) {
+        allowed = trustedUrl(current);
+        if (!allowed || !http.begin(client, current))
+          break;
+        http.addHeader("User-Agent", "MILESTONE-v5");
+        http.addHeader("Accept-Encoding", "identity");
+        code = http.GET();
+        if (code == 200)
+          break;
+        if (code != 301 && code != 302 && code != 303 && code != 307 && code != 308)
+          break;
+        current = http.header("Location");
+        http.end();
+        code = 0;
+      }
+      if (code == 200) break;
+      http.end();
+      const bool transient = code <= 0 || code == 408 || code == 429 ||
+          code == 500 || code == 502 || code == 503 || code == 504;
+      if (!allowed || !transient || attempt == 2) break;
+      const uint32_t pauseAt = millis();
+      while (!cancel.load() && millis() - pauseAt < 250UL * (attempt + 1))
+        vTaskDelay(1);
     }
     const int size = http.getSize();
     if (code == 200 && size > 0 && uint32_t(size) <= limit) {

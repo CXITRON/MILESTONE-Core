@@ -23,28 +23,12 @@ TaskAssignment assignNetworkTask(TaskKind task, const RadioState &state) {
   if (state.otaActive && task != TaskKind::kOtaDownload)
     return result;
 
-  if (task == TaskKind::kOtaDownload) {
-    if (state.zeroStaReady)
-      return {Board::kZero, false, state.zeroBleActive};
-    if (!state.mainPortalHasClient && state.mainStaReady)
-      return {Board::kMain, false, false};
-    return result;
-  }
-
-  if (state.mainPortalActive && state.mainPortalHasClient) {
-    if (state.zeroStaReady &&
-        (!state.zeroBleActive || task == TaskKind::kUserHttp)) {
-      return {Board::kZero, false, false};
-    }
-    return result;
-  }
-
+  // Internet work never preempts an active AMS connection, including explicit
+  // HTTP/OTA requests. MAIN accepts work only when its caller reports it idle.
   if (state.zeroStaReady && !state.zeroBleActive)
     return {Board::kZero, false, false};
-  if (state.mainStaReady)
+  if (!state.mainPortalActive && state.mainStaReady)
     return {Board::kMain, false, false};
-  if (state.zeroStaReady && task == TaskKind::kUserHttp)
-    return {Board::kZero, false, false};
   return result;
 }
 
