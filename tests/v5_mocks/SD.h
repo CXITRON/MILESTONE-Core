@@ -105,6 +105,12 @@ public:
   File openNextFile() {
     return h && h->cursor < h->entries.size() ? File(h->entries[h->cursor++], FILE_READ) : File();
   }
+  String getNextFileName(bool *isDir) {
+    if (!h || h->cursor >= h->entries.size()) return "";
+    const auto &entry = h->entries[h->cursor++];
+    if (isDir) *isDir = std::filesystem::is_directory(entry);
+    return String("/") + std::filesystem::relative(entry, FakeSd::root).generic_string();
+  }
   size_t position() const {
     if (!h) return 0;
     return h->writable ? size_t(h->stream.tellp()) : size_t(h->stream.tellg());

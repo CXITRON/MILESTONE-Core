@@ -1235,8 +1235,14 @@ void loop() {
       (video.playing || portal.sync.occupied() ||
        (portal.media.displayEnabled && portal.media.hasEnabled()));
   // Cache scans/index writes and FAT free-space walks are not playback work.
+  const bool artworkStorageAllowed =
+      !modeMenu.isOpen() && uint32_t(now - lastInteractionMs) >= 1500 &&
+      !bundleDownload.active && !stableChannel.busy() && !portal.downloadRequested &&
+      (portal.active || (profiles.active() == MilestoneV5::Profile::kNow &&
+                         nowMetadata.ready && artwork.settled(now) &&
+                         artwork.stage != 1 && artwork.stage != 2));
   if (!safeModeActive && !bundleUpdate.critical() && !mediaTimingCritical)
-    artwork.maintain(now, hardware.sdMounted);
+    artwork.maintain(now, hardware.sdMounted, artworkStorageAllowed);
   if (!safeModeActive && !bundleUpdate.critical() &&
       profiles.active() == MilestoneV5::Profile::kNow)
     artwork.observe(nowMetadata, now, hardware.sdMounted);

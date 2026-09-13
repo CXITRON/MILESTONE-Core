@@ -1,7 +1,7 @@
 # v5 구현 진행표
 
 기준: 2026-09-13.
-계획한 v5 소프트웨어 경로는 모두 소스에 연결됐다. 현재 소스 기준은 v5.2.4이며,
+계획한 v5 소프트웨어 경로는 모두 소스에 연결됐다. 현재 소스 기준은 v5.2.5이며,
 아래의 호스트·컴파일 검증과 v5.1.0 기본 배선
 실기 검증은 장시간 무선·전원 차단·업데이트 내구 시험을 대신하지 않는다.
 
@@ -32,6 +32,11 @@
 | 독립 SAFE | MilestoneV5Safe/SafetyRuntime | 2MiB factory 앱, 네트워크 없는 TFT·5버튼 메뉴, MAIN A/B 부팅, 서명된 Stable/Backup/Recovery 복원, SD/RTC 진단과 2회 확인 |
 | 파티션·초기 이미지 | partitions.csv/release-v5.sh | MAIN/SAFE 공통 16MiB 표, factory SAFE + 6MiB MAIN A/B, ZERO 4MiB merged image, 고정 offset byte 검증 |
 | 서명·릴리스 | prepare-v5-sd-restore.py/v5-release-assets.py/make-release/milestone-release | P-256 공개키 강제 포함, MAIN/ZERO manifest·bundle·catalog 서명, 역할/버전/스트림 제거/BLE 경계/이미지 offset 검증, 기존 단일 릴리스 명령에 통합 |
+
+## v5.2.5 검증 상태
+
+CORE의 반복 캐시 검사와 한 루프의 다중 파일 조회를 수정했다.
+실기 원인 확인과 수정 후 검증 범위는 [5.2.5 보고](WORK_CHECKPOINT_20260913_LAG.md)를 참조한다.
 
 ## v5.2.4 검증 상태
 

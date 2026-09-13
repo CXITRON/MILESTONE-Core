@@ -1,8 +1,8 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v5.2.4
+> Current baseline: MILESTONE Core v5.2.5
 > Legacy baseline: MILESTONE Core v3.3.4
-> V5 firmware baseline: 5.2.4 — dual-board MAIN/ZERO plus independent SAFE
+> V5 firmware baseline: 5.2.5 — dual-board MAIN/ZERO plus independent SAFE
 > Hardware: GOOUUU ESP32-S3 N16R8 MAIN + Waveshare ESP32-S3-Zero companion + ST7735-compatible 128×160 SPI TFT + five tactile switches
 > Repository: `CXITRON/MILESTONE-Core`
 
@@ -17,6 +17,12 @@ CRC-protected SPI link. The MAIN factory partition contains the independent
 network-free SAFE recovery application, with 6MiB MAIN A/B slots and signed SD
 Stable/Backup/Recovery images. The v5 release is a signed 13-asset catalog rather
 than the legacy profile manifest/BIN pairs.
+
+v5.2.5 removes periodic artwork inventory scans from CORE. Inventory is rebuilt
+on demand in NOW after BLE metadata is ready, or in the setup portal, with one
+metadata lookup per loop and pauses during input/menu/update/media work. The
+cache budget, custom-image protection and verified A/B index remain in place.
+See `v5/WORK_CHECKPOINT_20260913_LAG.md` for evidence and validation limits.
 
 v5.2.4 fixes a v5.2.3 regression: MAIN must sample time again after link/HTTP
 callbacks and TFT service before calculating peer age. A callback's newer

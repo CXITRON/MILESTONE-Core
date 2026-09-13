@@ -2,7 +2,17 @@
 // test doubles; these tests do not claim a measured hardware frame rate.
 #include <V5TestDisplay.h>
 #include "../v5/MilestoneV5Main/V5SyncMedia.h"
+#include <sys/stat.h>
+static unsigned metadataLookups = 0;
+static bool metadataError = false;
+static int countedMetadataStat(const char *path, struct stat *out) {
+  ++metadataLookups;
+  if (metadataError) { errno = EIO; return -1; }
+  return ::stat(path, out);
+}
+#define stat(...) countedMetadataStat(__VA_ARGS__)
 #include "../v5/MilestoneV5Main/V5Artwork.h"
+#undef stat
 #include <cassert>
 #include <vector>
 
@@ -79,7 +89,7 @@ static void artwork() {
   art.invalidate();
   FakeSd::used = FakeSd::total - 50 * 1024 * 1024;
   FakeSd::spaceQueries = 0;
-  for (unsigned i=0;i<20;++i) art.maintain(62000+i, true);
+  for (unsigned i=0;i<256;++i) art.maintain(62000+i, true);
   assert((SD.exists(stored)) && "low SD free space alone must not delete cached art");
   assert((FakeSd::spaceQueries == 0) && "periodic cache scans must not walk SD free space");
 
@@ -107,7 +117,7 @@ static void artwork() {
   writeFile(over, {0});
   std::filesystem::resize_file(FakeSd::path(over), 2ULL * 1024 * 1024 * 1024 + 1);
   art.requestRecount();
-  for (unsigned i=0;i<20;++i) art.maintain(130000+i, true);
+  for (unsigned i=0;i<256;++i) art.maintain(130000+i, true);
   assert((!SD.exists(over) && SD.exists(stored)) && "budget eviction must preserve user-pinned images");
   FakeSd::used = 1024 * 1024; // Ample SD space in all following failure cases.
   V5Artwork downloaded;
@@ -164,6 +174,46 @@ static void artwork() {
   free(downloaded.packet); free(staged.packet); free(recovered.packet);
   free(art.packet); free(rebooted.packet);
 }
+static void artworkMaintenance() {
+  const auto previousRoot = FakeSd::root;
+  FakeSd::root /= "maintenance";
+  std::filesystem::create_directories(FakeSd::root / "now/art-cache");
+  for (unsigned i = 0; i < 80; ++i) {
+    char key[65]; snprintf(key, sizeof(key), "%064x", i + 1);
+    const String base = String("/now/art-cache/") + key;
+    writeFile(base + ".mac", {1,2,3});
+    writeFile(base + ".meta", {1});
+    writeFile(base + ".use", {1});
+    if (i == 0) { writeFile(base + ".custom", {1}); writeFile(base + ".blocked", {1}); }
+  }
+  V5Artwork art;
+  metadataLookups = 0;
+  for (unsigned i = 0; i < 100; ++i) art.maintain(100000 + i, true, false);
+  assert(!art.cacheKnown && metadataLookups == 0);
+  for (unsigned i = 0; i < 1800; ++i) {
+    const auto before = metadataLookups;
+    art.maintain(110000 + i, true);
+    assert(metadataLookups - before <= 1);
+    // Pausing a partial scan must neither query SD nor lose its cursor.
+    art.maintain(110000 + i, true, false);
+    assert(metadataLookups - before <= 1);
+  }
+  assert(art.cacheKnown && art.cacheCount == 80 && art.cacheBytes == 240);
+  assert(art.index.known && art.index.images == 80 && art.index.bytes == 240);
+  assert(metadataLookups > 0);
+  const auto completed = metadataLookups;
+  for (unsigned i = 0; i < 100; ++i) art.maintain(300000 + i * 60000, true);
+  assert(metadataLookups == completed); // No minute-triggered full rescans.
+  art.requestRecount();
+  metadataError = true;
+  for (unsigned i = 0; i < 30; ++i) art.maintain(7000000 + i, true);
+  assert(!art.cacheKnown); // An I/O failure cannot publish a partial inventory.
+  assert(art.index.known && art.index.images == 80);
+  metadataError = false;
+  for (unsigned i = 0; i < 1800; ++i) art.maintain(7001000 + i, true);
+  assert(art.cacheKnown && art.cacheCount == 80);
+  FakeSd::root = previousRoot;
+}
 static void uploadCheckpoints() {
   V5SyncMedia sync;
   sync.begin(true);
@@ -198,6 +248,7 @@ int main(int argc, char **argv) {
   FakeSd::root = std::filesystem::path(argv[1]) / "media-runtime";
   playback();
   artwork();
+  artworkMaintenance();
   uploadCheckpoints();
   puts("v5 SD playback and persistent artwork runtime tests passed");
 }

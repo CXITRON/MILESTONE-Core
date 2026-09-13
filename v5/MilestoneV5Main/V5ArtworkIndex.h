@@ -99,6 +99,7 @@ public:
     writeCrc = 0xFFFFFFFFU;
     return true;
   }
+  bool canSnapshot() const { return bootDone && !checking && !writing; }
   void add(const String &key, uint8_t state, uint32_t size, uint64_t accessed) {
     if (!writing)
       return;

@@ -10,6 +10,9 @@ root = pathlib.Path(__file__).resolve().parents[1]
 out = pathlib.Path(sys.argv[1])
 main = (root / "v5/MilestoneV5Main/MilestoneV5Main.ino").read_text()
 portal = (root / "v5/MilestoneV5Main/V5Portal.h").read_text()
+start = main.index("  const bool artworkStorageAllowed =")
+end = main.index("  if (!safeModeActive", main.index("artwork.maintain", start))
+(out / "main_artwork_admission.inc").write_text(main[start:end])
 
 start = main.rindex("  serviceCompanion(millis());")
 end = main.index("  delay(1);", start)

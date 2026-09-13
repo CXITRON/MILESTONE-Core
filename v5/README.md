@@ -1,16 +1,22 @@
-# MILESTONE v5.2.4
+# MILESTONE v5.2.5
 
 This is the release source for the dual-ESP v5 hardware. It remains separate
 from the legacy v3.3.4 firmware and uses its own signed MAIN/ZERO/SAFE release
 catalog. Initial installation requires the merged USB images; subsequent
 updates use the signed companion bundle.
 
-The current source baseline is v5.2.4. Its release path keeps the fixed
+The current source baseline is v5.2.5. Its release path keeps the fixed
 13-asset signed catalog and the existing MAIN/ZERO companion protocol v1.
 v5.2.0 separates signed version checks from firmware transfers and introduces
 an explicitly signed administrator stable designation. Hardware
 acceptance is required after the signed build is installed on the assembled
 boards.
+
+v5.2.5 removes the minute-triggered artwork directory rebuild. CORE does not
+run the inventory; NOW waits for usable BLE metadata and foreground work pauses
+it. One metadata lookup is serviced per loop, using VFS stat instead of repeated
+file opens. Cache limits, custom images, and A/B verification are retained.
+See [lag investigation](WORK_CHECKPOINT_20260913_LAG.md).
 
 v5.2.4 corrects false ZERO link expiry caused by comparing callback timestamps
 with an older loop clock. It also permits Sync during post-OTA observation,

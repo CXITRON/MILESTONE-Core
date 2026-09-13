@@ -24,6 +24,9 @@ fi
 
 python3 "$project_dir/tests/extract_v5_runtime_fixtures.py" "$build_dir"
 "$cxx" "${common_flags[@]}" -I"$build_dir" \
+  "$project_dir/tests/test_v5_artwork_admission.cpp" -o "$build_dir/test_v5_artwork_admission"
+"$build_dir/test_v5_artwork_admission"
+"$cxx" "${common_flags[@]}" -I"$build_dir" \
   "$project_dir/tests/test_v5_main_link_clock.cpp" -o "$build_dir/test_v5_main_link_clock"
 "$build_dir/test_v5_main_link_clock"
 "$cxx" -I"$project_dir/tests/v5_mocks" "${common_flags[@]}" -std=c++17 -I"$build_dir" \

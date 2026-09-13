@@ -1,10 +1,10 @@
 # MILESTONE Core — MILESTONE D1
 
-현재 소스는 **v5.2.4**입니다. 실기 OTA·무선·TFT 부하 검증은 별도 진행합니다. GOOUUU ESP32-S3 N16R8 MAIN과
+현재 소스는 **v5.2.5**입니다. 실기 OTA·무선·TFT 부하 검증은 별도 진행합니다. GOOUUU ESP32-S3 N16R8 MAIN과
 Waveshare ESP32-S3-Zero ZERO를 함께 사용하며, 기존 v3.3.4의 CORE·MEDIA·NOW
 인터페이스를 듀얼 보드 구조 안에서 실행합니다.
 
-- 최신 릴리스: [MILESTONE Core v5.2.4](https://github.com/CXITRON/MILESTONE-Core/releases/tag/v5.2.4)
+- 최신 릴리스: [MILESTONE Core v5.2.5](https://github.com/CXITRON/MILESTONE-Core/releases/tag/v5.2.5)
 - 설치·OTA·복구: [v5/README.md](v5/README.md)
 - 구현·검증 범위: [v5/IMPLEMENTATION_STATUS.md](v5/IMPLEMENTATION_STATUS.md)
 - v3.3.4 설치·사용법·변경 이력: [docs/LEGACY_V3.md](docs/LEGACY_V3.md)
@@ -95,6 +95,17 @@ milestone-release local X.Y.Z "release note"
 
 모든 버튼은 `INPUT_PULLUP` active-low이며 두 보드는 GND를 공통으로 연결합니다.
 TFT와 microSD는 MAIN의 MOSI/SCK를 공유하고 각각 별도의 CS를 사용합니다.
+
+## v5.2.5 업데이트 안내
+
+- CORE에서도 매분 앨범아트 폴더를 전수 검사해 시계·버튼 처리를 지연시키던
+  경로 수정. 캐시가 바뀌었거나 집계가 필요한 경우에만 검사
+- NOW의 BLE 메타데이터 준비 후 또는 설정 포털에서 검사하며, 메뉴·버튼 조작
+  직후·업데이트 확인·MEDIA 전송/재생 중에는 보류. 진행 중인 검사 위치 유지
+- 긴 파일명을 반복해서 열던 처리를 이름 순회와 단일 메타데이터 조회로 나누고,
+  루프당 조회 1회로 제한. 2GiB 캐시 한도·사용자 커버 보호·A/B 목록 검증 유지
+- 5.2.4 실기 호출 스택에서 SD 캐시 검사 병목 확인. 새 버전의 장시간 실사용과
+  화면 깨짐 완전 해소 여부는 추가 확인 필요. [검증 보고](v5/WORK_CHECKPOINT_20260913_LAG.md)
 
 ## v5.2.4 업데이트 안내
 

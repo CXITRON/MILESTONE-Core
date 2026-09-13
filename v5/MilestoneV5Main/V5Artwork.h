@@ -1,5 +1,6 @@
 #pragma once
 #include "V5ArtworkIndex.h"
+#include "V5SdMetadata.h"
 #ifndef MILESTONE_V5_TFT_DECLARED
 #include "V5Tft.h"
 #endif
@@ -52,8 +53,11 @@ public:
   void requestRecount() {
     scan.close();
     index.abort();
+    scanPhase = ScanPhase::Entry;
+    snapshotRequested = true;
     cacheKnown = false;
   }
+  bool settled(uint32_t now) const { return uint32_t(now - changed) >= 2500; }
   bool queueRefresh(const String &id) {
     if (!validKey(id) || manual || !cacheKnown)
       return false;
@@ -92,16 +96,21 @@ public:
       ++generation;
     return true;
   }
-  void maintain(uint32_t now, bool mounted) {
+  void maintain(uint32_t now, bool mounted, bool storageAllowed = true) {
     if (manual && now - requestStarted > 60000) {
       lastError = "Manual artwork timeout";
       invalidate();
     }
     if (!mounted) {
       scan.close();
+      scanPhase = ScanPhase::Entry;
       cacheKnown = false;
       return;
     }
+    // Profile/menu/BLE startup and foreground transfers take priority. Keep
+    // the scan cursor so pausing does not restart a directory walk.
+    if (!storageAllowed)
+      return;
     if (visible && !persisted && packet && received == MilestoneV5::kArtworkBytes &&
         now - lastSaveAttempt >= 2000)
       commit();
@@ -114,26 +123,37 @@ public:
       }
     }
     if (!scan) {
-      if (cacheKnown && now - lastScan < 60000)
+      if (cacheKnown && !snapshotRequested)
+        return;
+      if (!index.canSnapshot())
         return;
       scan = SD.open("/now/art-cache");
       if (!scan)
         return;
-      index.beginSnapshot();
+      if (!index.beginSnapshot()) {
+        scan.close();
+        return;
+      }
       scannedBytes = 0;
       scannedCount = 0;
       oldest = "";
       oldestTime = UINT64_MAX;
+      scanPhase = ScanPhase::Entry;
+      snapshotRequested = false;
+      return;
     }
-    for (unsigned i = 0; i < 4; ++i) {
-      File f = scan.openNextFile();
-      if (!f) {
+    // One directory entry OR one metadata lookup per loop. openNextFile()
+    // reopens each long filename and each exists() walks the directory again;
+    // four entries previously performed dozens of synchronous FAT searches.
+    if (scanPhase == ScanPhase::Entry) {
+      bool directory = false;
+      String entry = scan.getNextFileName(&directory);
+      if (entry.isEmpty()) {
         scan.close();
         index.finish();
         cacheBytes = scannedBytes;
         cacheCount = scannedCount;
         cacheKnown = true;
-        lastScan = now;
         // Only the artwork cache budget permits automatic eviction. Low free
         // SD space blocks new cache writes; it must not delete existing art.
         if ((cacheBytes + (needSpace ? MilestoneV5::kArtworkBytes : 0) >
@@ -146,7 +166,7 @@ public:
             cacheKnown = false;
           }
         }
-        if ((visible || (manual && stage == 3)) && packet &&
+        if (!persisted && (visible || (manual && stage == 3)) && packet &&
             received == MilestoneV5::kArtworkBytes) {
           commit();
           if (manual && SD.exists(path(".mac")))
@@ -154,40 +174,66 @@ public:
         }
         return;
       }
-      String name = f.name();
-      bool metadata = name.endsWith(".meta");
-      if (f.isDirectory() || (!name.endsWith(".mac") && !metadata)) {
-        f.close();
-        continue;
+      const String prefix = "/now/art-cache/";
+      scanMetadata = entry.endsWith(".meta");
+      if (directory || !entry.startsWith(prefix) ||
+          (!entry.endsWith(".mac") && !scanMetadata)) return;
+      scanKey = entry.substring(prefix.length(), entry.length() - (scanMetadata ? 5 : 4));
+      if (!validKey(scanKey)) return;
+      scanBase = prefix + scanKey;
+      scanSize = 0;
+      scanFlags = 0;
+      scanAccessed = 0;
+      scanPhase = ScanPhase::Details;
+      return;
+    }
+    if (scanPhase == ScanPhase::Add) {
+      scannedBytes += scanSize;
+      if (scanSize) ++scannedCount;
+      index.add(scanKey, scanFlags, scanSize, scanAccessed);
+      if (scanSize && scanKey != key && !(scanFlags & 2) && scanAccessed < oldestTime) {
+        oldestTime = scanAccessed;
+        oldest = scanKey;
       }
-      String id = name.substring(0, name.length() - (metadata ? 5 : 4));
-      if (!validKey(id)) {
-        f.close();
-        continue;
-      }
-      uint32_t size = metadata ? 0 : f.size();
-      uint64_t accessed = f.getLastWrite();
-      f.close();
-      String base = String("/now/art-cache/") + id;
-      if (metadata && SD.exists(base + ".mac"))
-        continue;
-      scannedBytes += size;
-      if (size)
-        ++scannedCount;
-      bool custom = SD.exists(base + ".custom");
-      bool blocked = SD.exists(base + ".blocked");
-      File used = SD.open(base + ".use", FILE_READ);
-      if (used)
-        accessed = used.getLastWrite();
-      used.close();
-      index.add(id, (size ? 1 : 0) | (custom ? 2 : 0) | (blocked ? 4 : 0), size,
-                accessed);
-      if (!size || id == key || custom)
-        continue;
-      if (accessed < oldestTime) {
-        oldestTime = accessed;
-        oldest = id;
-      }
+      scanPhase = ScanPhase::Entry;
+      return;
+    }
+    const char *suffix = scanPhase == ScanPhase::Details ? (scanMetadata ? ".meta" : ".mac") :
+        scanPhase == ScanPhase::Duplicate ? ".mac" : scanPhase == ScanPhase::Custom ? ".custom" :
+        scanPhase == ScanPhase::Blocked ? ".blocked" : ".use";
+    V5SdMetadata info;
+    const auto result = V5SdMetadata::read(scanBase + suffix, info);
+    if (result == V5SdMetadata::Error) {
+      // An I/O error is not proof that a custom marker is absent. Preserve
+      // the previous index and all files; retry after the next allowed pass.
+      requestRecount();
+      return;
+    }
+    const bool found = result == V5SdMetadata::Found;
+    switch (scanPhase) {
+    case ScanPhase::Details:
+      if (!found || info.directory) { scanPhase = ScanPhase::Entry; break; }
+      scanSize = scanMetadata ? 0 : info.size;
+      scanAccessed = info.modified;
+      scanFlags = scanSize ? 1 : 0;
+      scanPhase = scanMetadata ? ScanPhase::Duplicate : ScanPhase::Custom;
+      break;
+    case ScanPhase::Duplicate:
+      scanPhase = found ? ScanPhase::Entry : ScanPhase::Custom;
+      break;
+    case ScanPhase::Custom:
+      if (found) scanFlags |= 2;
+      scanPhase = ScanPhase::Blocked;
+      break;
+    case ScanPhase::Blocked:
+      if (found) scanFlags |= 4;
+      scanPhase = ScanPhase::Used;
+      break;
+    case ScanPhase::Used:
+      if (found) scanAccessed = info.modified;
+      scanPhase = ScanPhase::Add;
+      break;
+    default: break;
     }
   }
   void observe(const MilestoneV5::NowMetadata &m, uint32_t now, bool mounted) {
@@ -235,6 +281,7 @@ public:
         if (f) {
           f.write(data, n);
           f.flush();
+          snapshotRequested = true;
         }
       }
     }
@@ -399,9 +446,16 @@ private:
   uint32_t changed = 0, requestStarted = 0, cacheRetryAt = 0, lastSaveAttempt = 0;
   bool attempted = false, indexRestored = false;
   bool needSpace = false;
+  enum class ScanPhase { Entry, Details, Duplicate, Custom, Blocked, Used, Add };
+  ScanPhase scanPhase = ScanPhase::Entry;
+  bool snapshotRequested = true, scanMetadata = false;
+  String scanKey, scanBase;
+  uint32_t scanSize = 0;
+  uint64_t scanAccessed = 0;
+  uint8_t scanFlags = 0;
   File scan;
   uint64_t scannedBytes = 0, oldestTime = UINT64_MAX;
-  uint32_t scannedCount = 0, lastScan = 0;
+  uint32_t scannedCount = 0;
   String oldest;
   MilestoneV5::NowMetadata track{};
   String path(const char *suffix) {
@@ -412,12 +466,17 @@ private:
     if (f) {
       f.write(uint8_t(1));
       f.flush();
+      snapshotRequested = true;
     }
   }
   void commit() {
     if (!validKey(key) || received != MilestoneV5::kArtworkBytes)
       return;
     lastSaveAttempt = millis();
+    if (!cacheKnown) {
+      storageStatus = "화면 표시 중 · SD 저장 대기 (캐시 집계 중)";
+      return;
+    }
     // Never overwrite a custom entry. Atomic new-name publication keeps older
     // data.
     if (SD.exists(path(".custom")) || SD.exists(path(".mac"))) {
@@ -425,10 +484,6 @@ private:
         persisted = true;
         storageStatus = "SD 캐시 저장·재검증 완료";
       }
-      return;
-    }
-    if (!cacheKnown) {
-      storageStatus = "화면 표시 중 · SD 저장 대기 (캐시 집계 중)";
       return;
     }
     if (cacheBytes + MilestoneV5::kArtworkBytes > 2ULL * 1024 * 1024 * 1024) {
