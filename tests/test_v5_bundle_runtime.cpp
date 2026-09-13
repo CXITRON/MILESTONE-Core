@@ -101,6 +101,7 @@ int main(int argc, char **argv) {
   V5BundleUpdate bundle;
   bundle.beginBoot(hardware, main, zero);
   assert(bundle.start());
+  assert(bundle.blocksMediaUpload());
   assert(FakeOta::beginCalls == 0);
   assert(zero.state == V5ZeroUpdate::State::Idle);
   installMain(bundle, main);
@@ -122,12 +123,14 @@ int main(int argc, char **argv) {
   resumed.service(millis(), true, true, true);
   resumed.service(millis(), true, true, true);
   assert(resumed.phase == V5BundleUpdate::Phase::UpdatingZero);
+  assert(resumed.blocksMediaUpload());
   assert(resumedZero.state == V5ZeroUpdate::State::Hashing);
   // A receiver-confirmed completion is the coordinator's external event.
   resumedZero.state = V5ZeroUpdate::State::Done;
   resumed.service(millis(), true, true, true);
   assert(resumed.phase == V5BundleUpdate::Phase::StabilityHold);
   assert(!resumed.installing());
+  assert(resumed.active() && !resumed.blocksMediaUpload());
   assert(!SD.exists("/firmware/index-b"));
   assert(SD.exists("/firmware/index-a"));
   // Missing/unhealthy ZERO resets the hold, even after the nominal interval.

@@ -68,6 +68,7 @@ public:
   uint32_t bundleRequestedMs = 0;
   String stableStatus = "아직 확인하지 않음", stableVersion;
   bool stableBusy = false;
+  bool bundleMediaBlocked = false;
   String bundleStatus = "idle", bundleError;
   bool downloadRequested = false, downloadBusy = false, downloadReady = false,
        downloadCurrent = false, downloadAutomatic = false,
@@ -940,6 +941,7 @@ private:
   bool wifiScanRunning = false;
   bool mediaUploadRejected = false;
   bool syncUploadRejected = false, syncUploadFinalize = false;
+  String syncUploadError;
   uint32_t resetRequestedMs = 0;
   void touch() { lastActivity = millis(); }
   static String escape(String value) {
@@ -997,13 +999,27 @@ private:
     server.sendHeader("Cache-Control", "no-store");
     server.send(status, "application/json; charset=utf-8", body);
   }
+  String syncUploadBlockReason() const {
+    if (profile != MilestoneV5::Profile::kMedia)
+      return "MEDIA 프로필에서 전송하세요";
+    if (bundleMediaBlocked)
+      return "펌웨어 설치 또는 파일 작업이 끝난 뒤 전송하세요";
+    if (downloadBusy)
+      return "업데이트 다운로드가 끝난 뒤 전송하세요";
+    if (wifiPending)
+      return "Wi-Fi 연결 시험이 끝난 뒤 전송하세요";
+    return "";
+  }
   void sendSyncStatus() {
     const uint32_t nowMs = millis();
+    const String blocked = syncUploadBlockReason();
     String body = "{\"state\":\"" + String(sync.stateName()) +
                   "\",\"frames\":" + String(sync.info.frames) +
                   ",\"fps\":" + String(sync.info.fps) +
                   ",\"indexed_frames\":" + String(sync.indexedFrames) +
                   ",\"written_bytes\":" + String(sync.writtenBytes) +
+                  ",\"upload_allowed\":" + String(blocked.isEmpty() ? "true" : "false") +
+                  ",\"upload_error\":\"" + jsonEscape(blocked) + "\"" +
                   ",\"streaming_upload\":" +
                   String(sync.uploadOpenEnded ? "true" : "false") +
                   ",\"duration_ms\":" + String(sync.durationMs()) +
@@ -1410,8 +1426,11 @@ private:
       const bool accepted = localRequest() &&
           server.header("Content-Type") == "application/octet-stream" && !syncUploadRejected &&
           (!syncUploadFinalize || sync.finishUpload());
+      const String message = !syncUploadError.isEmpty() ? syncUploadError :
+          !sync.error.isEmpty() ? sync.error : String("동기화 전송 거부");
       syncUploadRejected = syncUploadFinalize = false;
-      if (!accepted) sendJson(409, "{\"error\":\"동기화 전송 거부\"}");
+      syncUploadError = "";
+      if (!accepted) sendJson(409, "{\"error\":\"" + jsonEscape(message) + "\"}");
       else sendSyncStatus();
     }, [this] {
       // The same WebServer callback is also used for multipart uploads. Never
@@ -1425,15 +1444,25 @@ private:
       if (part.status == RAW_START) {
         uint32_t offset = 0, bytes = 0;
         syncUploadFinalize = server.header("X-Sync-Final") == "1";
-        const bool allowed = localRequest() && profile == MilestoneV5::Profile::kMedia &&
-            !bundleBusy && !downloadBusy && !wifiPending &&
+        syncUploadError = "";
+        const bool validRequest = localRequest() &&
             unsignedInteger(server.header("X-Sync-Offset"), offset) &&
             unsignedInteger(server.header("Content-Length"), bytes) && bytes <= 327680 &&
             (server.header("X-Sync-Final") == "0" || syncUploadFinalize);
-        syncUploadRejected = !allowed ||
-            !(offset == 0 ? sync.beginUpload(0, true) :
+        if (!validRequest) {
+          syncUploadRejected = true;
+          server.client().stop();
+          return;
+        }
+        syncUploadError = syncUploadBlockReason();
+        syncUploadRejected = !syncUploadError.isEmpty();
+        if (!syncUploadRejected) {
+          syncUploadRejected = !(offset == 0 ? sync.beginUpload(0, true) :
               sync.state == V5SyncMedia::State::Uploading && sync.uploadOpenEnded &&
               sync.writtenBytes == offset);
+          if (syncUploadRejected)
+            syncUploadError = sync.error.isEmpty() ? String("기기 저장 위치 불일치") : sync.error;
+        }
         server.client().setTimeout(2000);
       } else if (part.status == RAW_WRITE) {
         if (!syncUploadRejected && !sync.writeUpload(part.buf, part.currentSize))
@@ -1446,8 +1475,10 @@ private:
       touch();
       if (transferService && !transferService()) {
         sync.abortUpload(); syncUploadRejected = true; closeRequested = true;
+        server.client().stop();
       }
-      if (syncUploadRejected) server.client().stop();
+      // Drain a bounded, well-formed request even when busy or SD writes fail.
+      // Closing it early hides the reason behind Safari's "Load Failed".
     });
     server.on(
         "/api/sync/upload", HTTP_POST,
@@ -1477,7 +1508,7 @@ private:
             syncUploadFinalize = server.arg("final") == "1";
             const bool permitted = localRequest() &&
                                    profile == MilestoneV5::Profile::kMedia &&
-                                   !bundleBusy && !downloadBusy && !wifiPending;
+                                   !bundleMediaBlocked && !downloadBusy && !wifiPending;
             bool validPosition = false;
             if (permitted &&
                 unsignedInteger(server.arg("total"), expected) &&

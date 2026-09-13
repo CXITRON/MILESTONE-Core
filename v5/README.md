@@ -1,18 +1,24 @@
-# MILESTONE v5.2.3
+# MILESTONE v5.2.4
 
 This is the release source for the dual-ESP v5 hardware. It remains separate
 from the legacy v3.3.4 firmware and uses its own signed MAIN/ZERO/SAFE release
 catalog. Initial installation requires the merged USB images; subsequent
 updates use the signed companion bundle.
 
-The current source baseline is v5.2.3. Its release path keeps the fixed
+The current source baseline is v5.2.4. Its release path keeps the fixed
 13-asset signed catalog and the existing MAIN/ZERO companion protocol v1.
 v5.2.0 separates signed version checks from firmware transfers and introduces
 an explicitly signed administrator stable designation. Hardware
 acceptance is required after the signed build is installed on the assembled
 boards.
 
-v5.2.3 addresses OTA/radio contention, shared TFT/SD service, missed button
+v5.2.4 corrects false ZERO link expiry caused by comparing callback timestamps
+with an older loop clock. It also permits Sync during post-OTA observation,
+checks upload admission before conversion, and returns useful errors for
+bounded rejected uploads. Actual install/firmware file operations remain
+exclusive. See the [urgent patch report](WORK_CHECKPOINT_20260913_HOTFIX.md).
+
+v5.2.3 introduced changes for OTA/radio contention, shared TFT/SD service, missed button
 presses, Sync upload overhead and runtime observability. See the detailed
 [2026-09-13 report](WORK_CHECKPOINT_20260913_STABILITY.md) for findings, tests,
 activity/LED meanings and hardware acceptance work. The v5.2.2 update-screen
@@ -35,7 +41,8 @@ capabilities expose ZERO details and bounded manual NTP without closing AP.
 
 Sync still converts into 256 KiB batches (a final JPEG record may exceed this
 threshold), but sends raw binary to `/api/sync/data` with collected
-`X-Sync-Offset`, `X-Sync-Final`, `Content-Length` and CSRF headers. An 8 KiB
+`X-Sync-Offset`, `X-Sync-Final`, `Content-Length` and `Content-Type` headers.
+Admission uses the existing setup-AP local-interface check. An 8 KiB
 PSRAM buffer coalesces SD writes; each request checkpoints its suffix before
 acknowledging. Up to three browser attempts query the exact saved offset after
 response loss, and may send a zero-byte finalization request. Multipart

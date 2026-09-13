@@ -1048,7 +1048,7 @@ void exchangeHeartbeat(uint32_t now) {
       ++linkValidResponses;
       if (txHeartbeat) acknowledgedPolicy = txPolicy;
       lastZeroSequence = decoded.fields.sequence;
-      lastValidLinkMs = now;
+      lastValidLinkMs = millis();
       awaitingAck = false;
       txLeaseId = 0;
     }
@@ -1163,7 +1163,7 @@ void setup() {
 }
 
 void loop() {
-  const uint32_t now = millis();
+  uint32_t now = millis();
   static uint32_t previousLoop = now;
   coreViews.mainLoopMaxMs=max(coreViews.mainLoopMaxMs,uint32_t(now-previousLoop));
   previousLoop=now;
@@ -1212,6 +1212,7 @@ void loop() {
   if (bundleUpdate.phase != previousBundlePhase)
     portal.note(7, static_cast<unsigned>(bundleUpdate.phase));
   portal.bundleBusy = bundleUpdate.active();
+  portal.bundleMediaBlocked = bundleUpdate.blocksMediaUpload();
   portal.bundleStatus = String(static_cast<unsigned>(bundleUpdate.phase));
   portal.bundleError = bundleUpdate.error;
   if (portal.bundleRequested) {
@@ -1386,6 +1387,9 @@ void loop() {
     portal.close();
   serviceCompanion(millis());
   portal.service();
+  // Link/HTTP callbacks can stamp state after this loop's initial sample.
+  // Reusing that older sample makes unsigned elapsed time wrap to ~49 days.
+  now = millis();
   if (portal.rescanRequested) {
     video.stop();
     hardware.scanPhotos(videoCategory);
@@ -1555,6 +1559,7 @@ void loop() {
   }
   serviceCompanion(millis());
   hardware.display.flush();
+  now = millis(); // Expiry must follow the latest accepted companion response.
   if (lastValidLinkMs != 0 &&
       now - lastValidLinkMs > MilestoneV5::kLinkStaleMs) {
     portal.note(4);

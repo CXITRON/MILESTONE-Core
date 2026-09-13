@@ -1,10 +1,10 @@
 # MILESTONE Core — MILESTONE D1
 
-현재 소스는 **v5.2.3**입니다. 실기 OTA·무선·TFT 부하 검증은 별도 진행합니다. GOOUUU ESP32-S3 N16R8 MAIN과
+현재 소스는 **v5.2.4**입니다. 실기 OTA·무선·TFT 부하 검증은 별도 진행합니다. GOOUUU ESP32-S3 N16R8 MAIN과
 Waveshare ESP32-S3-Zero ZERO를 함께 사용하며, 기존 v3.3.4의 CORE·MEDIA·NOW
 인터페이스를 듀얼 보드 구조 안에서 실행합니다.
 
-- 최신 릴리스: [MILESTONE Core v5.2.3](https://github.com/CXITRON/MILESTONE-Core/releases/tag/v5.2.3)
+- 최신 릴리스: [MILESTONE Core v5.2.4](https://github.com/CXITRON/MILESTONE-Core/releases/tag/v5.2.4)
 - 설치·OTA·복구: [v5/README.md](v5/README.md)
 - 구현·검증 범위: [v5/IMPLEMENTATION_STATUS.md](v5/IMPLEMENTATION_STATUS.md)
 - v3.3.4 설치·사용법·변경 이력: [docs/LEGACY_V3.md](docs/LEGACY_V3.md)
@@ -95,6 +95,22 @@ milestone-release local X.Y.Z "release note"
 
 모든 버튼은 `INPUT_PULLUP` active-low이며 두 보드는 GND를 공통으로 연결합니다.
 TFT와 microSD는 MAIN의 MOSI/SCK를 공유하고 각각 별도의 CS를 사용합니다.
+
+## v5.2.4 업데이트 안내
+
+- 5.2.3에서 정상 ZERO 응답 직후 이전 루프 시각으로 연결 만료를 계산하여
+  ZERO 링크·하단 온도를 지우던 오류 수정. 콜백/화면 처리 후 현재 시각으로
+  판정하며 실제 5초 무응답의 오프라인 처리와 재협상은 유지
+- 잘못된 오프라인 판정으로 OTA 후 10분 관찰 대기가 반복되던 원인 제거.
+  관찰 대기에는 Sync 업로드 허용, 실제 설치·펌웨어 파일 작업은 계속 차단
+- Sync 첫 약 0.2 MiB 변환 뒤 업로드 거절 시 연결을 끊어 `Load Failed`만
+  표시하던 경로 수정. 변환 전 수신 가능 상태 확인, 제한 내 요청의 작업 충돌·
+  저장 위치·SD 기록 실패를 HTTP 오류로 반환. 256 KiB 묶음·부분 재개·전체 검증 유지
+- 실제 MAIN 루프 일부와 HTTP 콜백/SD 수신 코드를 실행하는 회귀 검사 추가.
+  기존 코드의 실패, 유휴·콜백 지연·시각 wrap·실제 무응답, 관찰 대기 중 첫
+  업로드, 1 MiB 이상 저장 후 인덱스 검증을 확인하는 검사
+- 간소화한 Wi-Fi 아이콘, 기기 정보, 독립 LED, 프로필별 BLE 정책 유지.
+  상세 원인과 실기 확인 범위: [5.2.4 긴급 수정 보고](v5/WORK_CHECKPOINT_20260913_HOTFIX.md)
 
 ## v5.2.3 업데이트 안내
 

@@ -1,8 +1,8 @@
 # MILESTONE Core — Project Context
 
-> Current baseline: MILESTONE Core v5.2.3
+> Current baseline: MILESTONE Core v5.2.4
 > Legacy baseline: MILESTONE Core v3.3.4
-> V5 firmware baseline: 5.2.3 — dual-board MAIN/ZERO plus independent SAFE
+> V5 firmware baseline: 5.2.4 — dual-board MAIN/ZERO plus independent SAFE
 > Hardware: GOOUUU ESP32-S3 N16R8 MAIN + Waveshare ESP32-S3-Zero companion + ST7735-compatible 128×160 SPI TFT + five tactile switches
 > Repository: `CXITRON/MILESTONE-Core`
 
@@ -18,7 +18,16 @@ network-free SAFE recovery application, with 6MiB MAIN A/B slots and signed SD
 Stable/Backup/Recovery images. The v5 release is a signed 13-asset catalog rather
 than the legacy profile manifest/BIN pairs.
 
-v5.2.3 hardens network ownership, shared SPI service and input handling. ZERO
+v5.2.4 fixes a v5.2.3 regression: MAIN must sample time again after link/HTTP
+callbacks and TFT service before calculating peer age. A callback's newer
+receive timestamp must not be subtracted from the loop's older timestamp.
+The resulting false stale events also kept the 10-minute post-OTA observation
+active indefinitely. Sync now permits uploads during observation, while real
+installation/firmware file work remains exclusive; bounded rejected requests
+return an HTTP error, and the browser checks admission before conversion.
+See `v5/WORK_CHECKPOINT_20260913_HOTFIX.md` for reproduction and validation.
+
+The v5.2.3 network, SPI and input policies remain in place. ZERO
 runs BLE only for NOW with no AP/safety/install isolation; active AMS prevents
 new Internet work and stops pending connect/NTP attempts. MAIN takes bounded
 network work only when AP/media storage work permits it, including fallback

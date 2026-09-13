@@ -43,6 +43,11 @@ public:
   bool installing() const {
     return !archiveOnly && active() && phase != Phase::StabilityHold;
   }
+  bool blocksMediaUpload() const {
+    // Post-boot observation keeps the journal active but performs no image
+    // transfer. Keep real installation and signed SD archival exclusive.
+    return active() && phase != Phase::StabilityHold;
+  }
   void beginBoot(V5Hardware &h, V5SdUpdate &main, V5ZeroUpdate &zero) {
     hardware = &h;
     mainUpdate = &main;

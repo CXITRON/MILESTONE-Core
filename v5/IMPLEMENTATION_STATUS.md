@@ -1,7 +1,7 @@
 # v5 구현 진행표
 
 기준: 2026-09-13.
-계획한 v5 소프트웨어 경로는 모두 소스에 연결됐다. 현재 소스 기준은 v5.2.3이며,
+계획한 v5 소프트웨어 경로는 모두 소스에 연결됐다. 현재 소스 기준은 v5.2.4이며,
 아래의 호스트·컴파일 검증과 v5.1.0 기본 배선
 실기 검증은 장시간 무선·전원 차단·업데이트 내구 시험을 대신하지 않는다.
 
@@ -33,11 +33,12 @@
 | 파티션·초기 이미지 | partitions.csv/release-v5.sh | MAIN/SAFE 공통 16MiB 표, factory SAFE + 6MiB MAIN A/B, ZERO 4MiB merged image, 고정 offset byte 검증 |
 | 서명·릴리스 | prepare-v5-sd-restore.py/v5-release-assets.py/make-release/milestone-release | P-256 공개키 강제 포함, MAIN/ZERO manifest·bundle·catalog 서명, 역할/버전/스트림 제거/BLE 경계/이미지 offset 검증, 기존 단일 릴리스 명령에 통합 |
 
-## v5.2.3 검증 상태
+## v5.2.4 검증 상태
 
-현재 검증 결과와 실제 기기에서 확인할 항목은
-[2026-09-13 작업 보고](WORK_CHECKPOINT_20260913_STABILITY.md)에 기록한다.
-아래 수치·유선 업로드·게시 기록은 해당 버전 당시 결과이며 v5.2.3 실기 검증을 뜻하지 않는다.
+5.2.3 실사용에서 ZERO 링크 유실·Sync 업로드 거절이 보고되었다.
+긴급 패치의 재현, 수정 및 검증은 [5.2.4 보고](WORK_CHECKPOINT_20260913_HOTFIX.md)에,
+이전 변경 범위는 [5.2.3 보고](WORK_CHECKPOINT_20260913_STABILITY.md)에 기록한다.
+아래 수치·유선 업로드·게시 기록은 해당 버전 당시 결과이며 v5.2.4 실기 검증을 뜻하지 않는다.
 
 ## 기존 버전 자동 검증 기록
 

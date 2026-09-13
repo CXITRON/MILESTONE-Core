@@ -39,6 +39,8 @@ assert "'X-Sync-Offset':String(cursor)" in page
 assert 'server.header("X-Sync-Offset")' in portal
 assert 'HTTPRaw &part = server.raw()' in portal
 assert 'sync.checkpointUpload()' in portal
+assert 'portal.bundleMediaBlocked = bundleUpdate.blocksMediaUpload();' in main
+assert 'syncUploadBlockReason()' in portal and 'admission.upload_allowed===false' in page
 assert 'server.arg("total")' in portal
 assert 'server.arg("offset")' in portal
 assert 'server.arg("stream") == "1"' in portal
